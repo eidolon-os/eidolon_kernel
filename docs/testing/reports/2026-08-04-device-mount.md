@@ -46,7 +46,7 @@ E2E 使用明确注入的 Companion authority fake，因为生产 Companion cont
 ## 剩余风险 / Blocker
 
 1. Companion authority 尚无稳定 versioned contract，production Mount fail closed（ADR-0002）。
-2. 统一 Kernel identity root 尚未建立；trusted-local hints 只适用于 loopback/已认证同机 ingress（ADR-0003）。
+2. Kernel 没有直接不可信网络认证；trusted-local hints 只适用于 loopback/已认证同机 ingress。固定单机 local-only 部署接受该 threat model；直接网络暴露或跨 Host 前必须替换 authorizer（ADR-0003）。
 3. 外部 Device/Companion authority 校验与 Kernel commit 之间没有分布式事务；事实可在校验后立即变化。后续需定义 revoke/inactivate 到 mount reconciliation 的契约，而不是引入通用 bus。
 4. SQLite + projection 只支持单 Host、单进程；当前没有多实例需求证据。
 5. 开发期不支持旧 DB migration，这是锁定的项目边界，不是遗漏。
@@ -54,6 +54,6 @@ E2E 使用明确注入的 Companion authority fake，因为生产 Companion cont
 ## 下一步门槛
 
 - Companion 事实拥有方先发布严格 read/lifecycle/auth contract，Kernel 再增加 production consumer 和 provider/consumer contract test。
-- 统一 identity authority 先发布可验证 principal contract，再替换 authorizer adapter。
+- 仅当 Kernel 需要直接接入不可信网络、跨 Host 或同机不可信进程时，先定义可验证 principal 与信任通道，再替换 authorizer adapter；不新增通用 JWT。
 - Hub 对接任务根据稳定 Kernel contract 实现 onboarding 后 Mount，以及 revoked 后的定向 reconciliation；保持 Hub 与 Kernel DB 各自独占。
 - 收集真实 Mount/Resolve 延迟和故障数据；只有证据表明 HTTP/JSON 或单机 authority 不足时再作 transport/storage ADR。

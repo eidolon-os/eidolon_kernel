@@ -19,7 +19,20 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 Device Mount 的 domain、application、SQLite、projection、Hub consumer 和 HTTP V1 已形成完整、可注入验证的闭环。生产 composition 对 Companion 校验 **fail closed**：现有代码没有独立、版本化、带明确认证和 lifecycle enum 的 Companion authority contract，因此写请求返回 `503`，直到该契约由其事实拥有方发布。详见 [ADR-0002](docs/adr/0002-companion-authority-blocker.md)。测试 fake 只存在于测试目录，不进入生产组合。
 
-Kernel identity root 同样尚未统一。V1 只允许 loopback / trusted same-host ingress，把显式 actor hints 交给 `ActorAuthorizer` Port；这不是网络认证。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
+Kernel 不建立新的 JWT 或 identity service。V1 只允许 loopback / trusted same-host ingress，把显式 actor hints 交给 `ActorAuthorizer` Port；这些 hints 用于 owner scope 和审计归因，不是登录凭证。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证小程序、LiveKit 或 Agent runtime token。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
+
+## 收敛原则
+
+Kernel 以 `Port + Contract + Adapter` 定义 System Service：领域 Port 表达稳定能力，wire contract 由事实拥有方发布，HTTP/SQLite 等 adapter 只处理传输和基础设施。协议不是领域边界，调用方也不通过通用 `ipc.call(service, method, payload)` 访问 Kernel。
+
+认证只发生在真实信任边界，不按进程数量重复堆叠 JWT：
+
+- 小程序、Web 或 Admin 的用户身份由产品 ingress 验证，再经受信本机通道传递最小 principal；Kernel 只做自身 action/scope 授权和审计。
+- Kernel 调用 Hub 时使用 Hub 当前 management API 要求的服务凭证；这不是 Kernel identity，也不能传播成全局万能 token。
+- LiveKit、Agent runtime 等专用 token 留在所属链路，Kernel 不解析、不签发，也不复制其 shared secret。
+- 单机本地部署先接受明确的 trusted-local threat model。若以后需要防御同机不可信进程，再根据证据评估 Unix domain socket peer credential、mTLS 或 capability，而不是预建认证体系。
+
+HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统一稳定 ID、principal/request context 和领域错误等必要语义，不统一 payload envelope，不实现 Binder daemon、动态 Service Manager 或通用消息总线。依据和引入门槛见 [ADR-0004](docs/adr/0004-system-service-contracts-without-binder.md)。
 
 ## 目录
 
@@ -144,7 +157,7 @@ uv run pytest --cov=eidolon_kernel --cov-report=term-missing -q
 ## 后续演进门槛
 
 - 先由 Companion 事实拥有方发布 versioned read contract、lifecycle enum、认证方式和兼容策略，再增加生产 Companion adapter。
-- 先建立统一 Kernel identity root 和可验证 principal，再替换 trusted-local authorizer；不得把 header hints 包装成“认证”。
+- 保持 Kernel local-only 时，trusted-local authorizer 是明确部署假设而不是产品化 blocker；若要直接接入不可信网络或跨 Host，必须先定义可验证 principal 和 ingress-to-Kernel 信任通道，再替换 adapter。不得把 header hints 包装成“认证”。
 - Capability/Lease、Service Registry 或其他 namespace 模块必须先证明其事实确需跨服务全局权威，并更新 ADR/架构测试。
-- 只有出现多进程/多 Host 的实际一致性需求和基准证据，才评估 IPC middleware；不得预建通用消息总线或共享黑板。
+- 只有出现动态服务发现、跨 Host 服务迁移、能力句柄、服务死亡通知等实际需求，才评估 Binder-like IPC runtime；“已经用了多种协议”本身不是引入依据。
 - 只有 HTTP/JSON 的测量结果无法满足控制面 SLA 时，才评估 gRPC；媒体热路径永远不经 Device Mount API。
