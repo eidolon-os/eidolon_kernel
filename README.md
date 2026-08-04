@@ -19,17 +19,17 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 Device Mount 的 domain、application、SQLite、projection、Hub consumer 和 HTTP V1 已形成完整、可注入验证的闭环。生产 composition 对 Companion 校验 **fail closed**：现有代码没有独立、版本化、带明确认证和 lifecycle enum 的 Companion authority contract，因此写请求返回 `503`，直到该契约由其事实拥有方发布。详见 [ADR-0002](docs/adr/0002-companion-authority-blocker.md)。测试 fake 只存在于测试目录，不进入生产组合。
 
-Kernel 不建立新的 JWT 或 identity service。V1 只允许 loopback / trusted same-host ingress，把显式 actor hints 交给 `ActorAuthorizer` Port；这些 hints 用于 owner scope 和审计归因，不是登录凭证。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证小程序、LiveKit 或 Agent runtime token。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
+Kernel 不建立新的 token issuer、账号系统或 identity service。V1 只允许 loopback / trusted same-host ingress，把显式 actor hints 交给 `ActorAuthorizer` Port；这些 hints 用于 Owner scope 和审计归因，不是登录凭证。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
 ## 收敛原则
 
 Kernel 以 `Port + Contract + Adapter` 定义 System Service：领域 Port 表达稳定能力，wire contract 由事实拥有方发布，HTTP/SQLite 等 adapter 只处理传输和基础设施。协议不是领域边界，调用方也不通过通用 `ipc.call(service, method, payload)` 访问 Kernel。
 
-认证只发生在真实信任边界，不按进程数量重复堆叠 JWT：
+`owner_id` 是 OS 中唯一、稳定、可持久化的 Owner principal，类似 UID；token 只是可过期、轮换和撤销的 credential，不是 Owner identity。认证只发生在真实信任边界，不按进程数量重复堆叠 token：
 
-- 小程序、Web 或 Admin 的用户身份由产品 ingress 验证，再经受信本机通道传递最小 principal；Kernel 只做自身 action/scope 授权和审计。
-- Kernel 调用 Hub 时使用 Hub 当前 management API 要求的服务凭证；这不是 Kernel identity，也不能传播成全局万能 token。
-- LiveKit、Agent runtime 等专用 token 留在所属链路，Kernel 不解析、不签发，也不复制其 shared secret。
+- 产品 ingress 可以为同一 Owner 的不同登录会话签发多枚 credential；Kernel 只接收受信本机通道传递的最小 Owner/Actor context，执行自身 action/scope 授权和审计。
+- `actor_id` 表示本次操作主体：Owner 直接操作时可等于 `owner_id`；受信编排服务代为操作时记录服务 actor，但不能越过 Owner scope。
+- Kernel 调用外部 authority 使用服务身份，不冒充 Owner credential。当前 Hub adapter 只能按 Hub 已发布的 management API 携带其要求的 credential；该凭证不进入 Domain、SQLite 或下游调用。
 - 单机本地部署先接受明确的 trusted-local threat model。若以后需要防御同机不可信进程，再根据证据评估 Unix domain socket peer credential、mTLS 或 capability，而不是预建认证体系。
 
 HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统一稳定 ID、principal/request context 和领域错误等必要语义，不统一 payload envelope，不实现 Binder daemon、动态 Service Manager 或通用消息总线。依据和引入门槛见 [ADR-0004](docs/adr/0004-system-service-contracts-without-binder.md)。

@@ -27,6 +27,13 @@ def require_utc(name: str, value: datetime) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class Actor:
+    """Caller attribution inside an Owner scope, never a persisted credential.
+
+    ``owner_id`` is the stable OS principal/namespace identifier. ``actor_id``
+    identifies who performed the operation and may equal the Owner ID or name a
+    trusted local orchestrator acting inside that Owner scope.
+    """
+
     actor_id: str
     owner_id: str
     source: str
