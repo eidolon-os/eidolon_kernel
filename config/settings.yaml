@@ -3,6 +3,11 @@ persistence:
 hub:
   base_url: http://127.0.0.1:8082
   timeout_seconds: 3.0
+companion_authority:
+  base_url: http://127.0.0.1:8084
+  timeout_seconds: 3.0
+reconciliation:
+  interval_seconds: 30.0
 deployment:
   mode: trusted-local
   trusted_local_ingress: true

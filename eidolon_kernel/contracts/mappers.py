@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from eidolon_kernel.contracts.bindings import (
     AuditEventWire,
+    CompanionIdentityWire,
     DeviceMountWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
@@ -11,7 +12,12 @@ from eidolon_kernel.contracts.bindings import (
     UnmountDeviceRequestWire,
 )
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
-from eidolon_kernel.domain.model import AuditEvent, DeviceAdmission, DeviceMount
+from eidolon_kernel.domain.model import (
+    AuditEvent,
+    CompanionIdentity,
+    DeviceAdmission,
+    DeviceMount,
+)
 from eidolon_kernel.ports.runtime import CommitResult
 
 
@@ -85,4 +91,12 @@ def hub_device_to_domain(wire: HubDeviceDirectoryEntryWire) -> DeviceAdmission:
         owner_id=wire.owner_scope,
         status=wire.lifecycle_state,
         manifest_revision=wire.manifest_revision,
+    )
+
+
+def companion_identity_to_domain(wire: CompanionIdentityWire) -> CompanionIdentity:
+    return CompanionIdentity(
+        companion_id=wire.companion_id,
+        owner_id=wire.owner_id,
+        status=wire.lifecycle_state,
     )

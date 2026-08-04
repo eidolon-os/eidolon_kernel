@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
 from eidolon_kernel.contracts.bindings import (
+    CompanionIdentityWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
 )
@@ -24,7 +25,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 8
+    assert len(files) == len(registry.schema_names) == 9
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -131,3 +132,18 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
         ContractRegistry().validate(
             "external/hub-device-directory-entry.schema.json", malformed_manifest
         )
+
+
+def test_consumed_companion_contract_is_a_strict_identity_subset() -> None:
+    document = {
+        "operation": "companion.identity",
+        "companion_id": "companion-1",
+        "owner_id": "owner-1",
+        "lifecycle_state": "active",
+    }
+    ContractRegistry().validate("external/companion-identity.schema.json", document)
+    assert CompanionIdentityWire.model_validate(document).lifecycle_state == "active"
+
+    document["profile_json"] = {"must": "not leak"}
+    with pytest.raises(ValidationError):
+        ContractRegistry().validate("external/companion-identity.schema.json", document)

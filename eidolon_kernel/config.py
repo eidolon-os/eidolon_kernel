@@ -29,6 +29,22 @@ class HubSettings(SettingsModel):
         return value.rstrip("/")
 
 
+class CompanionAuthoritySettings(SettingsModel):
+    base_url: str = "http://127.0.0.1:8084"
+    timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("companion_authority.base_url must be HTTP(S)")
+        return value.rstrip("/")
+
+
+class ReconciliationSettings(SettingsModel):
+    interval_seconds: float = Field(default=30.0, ge=1.0, le=3600.0)
+
+
 class DeploymentSettings(SettingsModel):
     mode: str = "trusted-local"
     trusted_local_ingress: bool = True
@@ -44,6 +60,8 @@ class DeploymentSettings(SettingsModel):
 class KernelSettings(SettingsModel):
     persistence: PersistenceSettings = PersistenceSettings()
     hub: HubSettings = HubSettings()
+    companion_authority: CompanionAuthoritySettings = CompanionAuthoritySettings()
+    reconciliation: ReconciliationSettings = ReconciliationSettings()
     deployment: DeploymentSettings = DeploymentSettings()
 
 
@@ -60,6 +78,19 @@ def load_settings(path: Path | None = None) -> KernelSettings:
 
 def load_hub_token() -> str:
     token = (os.environ.get("EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN") or "").strip()
-    if not token:
-        raise RuntimeError("EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN is required")
+    if len(token.encode()) < 32:
+        raise RuntimeError(
+            "EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN must contain at least 32 bytes"
+        )
+    return token
+
+
+def load_companion_authority_token() -> str:
+    token = (
+        os.environ.get("EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN") or ""
+    ).strip()
+    if len(token) < 24:
+        raise RuntimeError(
+            "EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN must contain at least 24 characters"
+        )
     return token

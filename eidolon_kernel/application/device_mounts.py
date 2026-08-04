@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
 from eidolon_kernel.domain.errors import (
     AuthorityRejected,
+    AuthorityUnavailable,
     Conflict,
     IdempotencyConflict,
     NotFound,
     RevisionConflict,
 )
-from eidolon_kernel.domain.model import DeviceMount
+from eidolon_kernel.domain.model import DeviceMount, request_fingerprint
 from eidolon_kernel.ports.authorities import CompanionAuthority, DeviceAuthority
 from eidolon_kernel.ports.runtime import Clock, CommitResult, MountProjection, MountStore
 
@@ -195,3 +197,113 @@ class UnmountDevice:
         )
         _project_committed(self.store, self.projection, result.mount)
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationResult:
+    checked: int
+    unmounted: int
+    deferred: int
+
+
+@dataclass(slots=True)
+class ReconcileMountPrerequisites:
+    """Tombstone mounts rejected by their current Device or Companion authority."""
+
+    store: MountStore
+    projection: MountProjection
+    devices: DeviceAuthority
+    companions: CompanionAuthority
+    clock: Clock
+
+    async def execute(self) -> ReconciliationResult:
+        checked = 0
+        unmounted = 0
+        deferred = 0
+        for snapshot in self.store.list_all():
+            if not snapshot.active:
+                continue
+            checked += 1
+            try:
+                reason = await self._rejection_reason(snapshot)
+            except AuthorityUnavailable:
+                # Transport/auth/provider outages are not authoritative revocations.
+                deferred += 1
+                continue
+            if reason is None:
+                continue
+
+            # Re-read after awaiting external authorities. A concurrent user mutation
+            # wins; the next scan evaluates its newer revision.
+            current = self.store.get(snapshot.device_id)
+            if (
+                current is None
+                or not current.active
+                or current.owner_id != snapshot.owner_id
+                or current.revision != snapshot.revision
+            ):
+                continue
+            request_id = self._request_id(current)
+            fingerprint = request_fingerprint(
+                "device.reconcile-unmount",
+                {
+                    "device_id": current.device_id,
+                    "owner_id": current.owner_id,
+                    "expected_revision": current.revision,
+                },
+            )
+            tombstone = current.unmounted(
+                at=self.clock.now(),
+                request_id=request_id,
+                fingerprint=fingerprint,
+            )
+            try:
+                result = self.store.commit(
+                    mount=tombstone,
+                    expected_revision=current.revision,
+                    operation="device.reconcile-unmount",
+                    event_type="eidolon.kernel.device-unmounted-by-authority.v1",
+                    event_data={
+                        "previous_revision": current.revision,
+                        "reason": reason,
+                    },
+                )
+            except (IdempotencyConflict, RevisionConflict):
+                continue
+            _project_committed(self.store, self.projection, result.mount)
+            unmounted += 1
+        return ReconciliationResult(checked, unmounted, deferred)
+
+    async def _rejection_reason(self, mount: DeviceMount) -> str | None:
+        try:
+            device = await self.devices.get_device(
+                owner_id=mount.owner_id,
+                device_id=mount.device_id,
+            )
+        except AuthorityRejected:
+            return "device-missing-from-owner-scope"
+        if (
+            device.device_id != mount.device_id
+            or device.owner_id != mount.owner_id
+            or device.status != "approved"
+        ):
+            return "device-not-approved"
+
+        try:
+            companion = await self.companions.get_companion(
+                companion_id=mount.companion_id
+            )
+        except AuthorityRejected:
+            return "companion-missing"
+        if (
+            companion.companion_id != mount.companion_id
+            or companion.owner_id != mount.owner_id
+            or companion.status != "active"
+        ):
+            return "companion-not-active"
+        return None
+
+    @staticmethod
+    def _request_id(mount: DeviceMount) -> str:
+        source = f"{mount.device_id}\0{mount.owner_id}\0{mount.revision}".encode()
+        return "reconcile-device-" + hashlib.sha256(source).hexdigest()

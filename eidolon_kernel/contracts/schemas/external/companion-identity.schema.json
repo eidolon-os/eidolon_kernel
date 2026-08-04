@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/consumed-contracts/data/companion-identity-v1.schema.json",
+  "title": "Consumed Companion Identity V1",
+  "description": "Pinned contract for Eidolon Data GET /api/companion-authority/v1/companions/{companion_id}; copied on 2026-08-05.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "companion_id", "owner_id", "lifecycle_state"],
+  "properties": {
+    "operation": {"const": "companion.identity"},
+    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "lifecycle_state": {"enum": ["active", "inactive"]}
+  }
+}

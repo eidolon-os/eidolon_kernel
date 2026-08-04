@@ -3,10 +3,15 @@ import asyncio
 import pytest
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
-from eidolon_kernel.application.device_mounts import MountDevice, UnmountDevice
+from eidolon_kernel.application.device_mounts import (
+    MountDevice,
+    ReconcileMountPrerequisites,
+    UnmountDevice,
+)
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
 from eidolon_kernel.domain.errors import (
     AuthorityRejected,
+    AuthorityUnavailable,
     Conflict,
     IdempotencyConflict,
     NotFound,
@@ -225,3 +230,67 @@ async def test_concurrent_identical_mounts_share_one_stable_outcome() -> None:
     assert {result.audit_position for result in results} == {1}
     assert sorted(result.replayed for result in results) == [False, True]
     assert len(store.events) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_status", "companion_status", "reason"),
+    [
+        ("revoked", "active", "device-not-approved"),
+        ("approved", "inactive", "companion-not-active"),
+    ],
+)
+async def test_reconciliation_tombstones_rejected_mount_prerequisites(
+    device_status, companion_status, reason
+) -> None:
+    devices = FakeDeviceAuthority()
+    companions = FakeCompanionAuthority()
+    mount, _, store, projection = handler(
+        devices=devices,
+        companions=companions,
+    )
+    await mount.execute(
+        MountDeviceCommand("mount", "device-1", "owner-1", "companion-1", 0)
+    )
+    devices.status = device_status
+    companions.status = companion_status
+
+    result = await ReconcileMountPrerequisites(
+        store,
+        projection,
+        devices,
+        companions,
+        MutableClock(),
+    ).execute()
+
+    assert result.checked == result.unmounted == 1
+    assert result.deferred == 0
+    assert store.get("device-1").active is False
+    assert projection.get("device-1").revision == 2
+    assert store.events[-1].event_type == (
+        "eidolon.kernel.device-unmounted-by-authority.v1"
+    )
+    assert store.events[-1].data["reason"] == reason
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_defers_outages_without_revoking_mount() -> None:
+    class OfflineDeviceAuthority(FakeDeviceAuthority):
+        async def get_device(self, **kwargs):
+            raise AuthorityUnavailable("Hub offline")
+
+    mount, _, store, projection = handler()
+    await mount.execute(
+        MountDeviceCommand("mount", "device-1", "owner-1", "companion-1", 0)
+    )
+    result = await ReconcileMountPrerequisites(
+        store,
+        projection,
+        OfflineDeviceAuthority(),
+        FakeCompanionAuthority(),
+        MutableClock(),
+    ).execute()
+
+    assert result.checked == result.deferred == 1
+    assert result.unmounted == 0
+    assert store.get("device-1").active is True

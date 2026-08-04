@@ -3,7 +3,6 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from eidolon_kernel.adapters.companion.unavailable import UnavailableCompanionAuthority
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.composition.app import build_services, create_http_app
@@ -12,6 +11,7 @@ from tests.support import (
     FakeDeviceAuthority,
     MemoryStore,
     MutableClock,
+    OfflineCompanionAuthority,
     headers,
     mount_body,
 )
@@ -105,7 +105,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
 async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(
-            app=app(companions=UnavailableCompanionAuthority())
+            app=app(companions=OfflineCompanionAuthority())
         ),
         base_url="http://kernel.test",
     ) as client:

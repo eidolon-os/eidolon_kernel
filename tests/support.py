@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
+from eidolon_kernel.domain.errors import (
+    AuthorityUnavailable,
+    IdempotencyConflict,
+    RevisionConflict,
+)
 from eidolon_kernel.domain.model import (
     AuditEvent,
     CompanionIdentity,
@@ -53,6 +57,11 @@ class FakeCompanionAuthority:
             owner_id=self.actual_owner,
             status=self.status,
         )
+
+
+class OfflineCompanionAuthority:
+    async def get_companion(self, *, companion_id: str) -> CompanionIdentity:
+        raise AuthorityUnavailable("Companion authority is offline")
 
 
 @dataclass

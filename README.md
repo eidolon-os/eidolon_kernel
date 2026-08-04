@@ -10,14 +10,14 @@ Eidolon Kernel 是 Eidolon OS 的 **Sovereign Microkernel 控制面**。它只�
 |---|---|
 | Hub | Device onboarding、registry、`approved/revoked`、owner、manifest；Kernel 只消费其稳定 owner-scoped Device GET |
 | Kernel | 全局 namespace、Device Mount、revision/CAS、幂等结果、authoritative state、audit |
-| Companion authority | Companion 是否存在、是否 active、owner；当前尚缺稳定跨项目契约 |
+| Companion authority (`eidolon_data`) | Companion 是否存在、是否 active、owner；Kernel 只消费稳定精确 Identity GET |
 | Channel / Agent / Admin / Data | Kernel 的消费者或编排方，不把业务语义放入 Kernel |
 
 Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/media、Agent、模型、Memory、Persona，也不引入 NATS、Redis、gRPC、通用消息总线或共享黑板。Mount/Resolve 是低频 HTTP/JSON 控制面，不是媒体热路径。
 
 ## 当前状态
 
-Device Mount 的 domain、application、SQLite、projection、Hub consumer 和 HTTP V1 已形成完整、可注入验证的闭环。生产 composition 对 Companion 校验 **fail closed**：现有代码没有独立、版本化、带明确认证和 lifecycle enum 的 Companion authority contract，因此写请求返回 `503`，直到该契约由其事实拥有方发布。详见 [ADR-0002](docs/adr/0002-companion-authority-blocker.md)。测试 fake 只存在于测试目录，不进入生产组合。
+Device Mount 的 domain、application、SQLite、projection、Hub consumer、Companion Authority consumer 和 HTTP V1 已形成完整闭环。Hub 与 Data consumer 都使用精确 GET、严格 consumed JSON Schema 和独立服务凭证；生产 composition 不导入或直连兄弟项目数据库。
 
 Kernel V1 只有一个安全主体：Owner。`owner_id` 是稳定、opaque 的 namespace principal，类似 OS UID；它不是账号资料、Persona、Companion 或业务对象。Kernel 不建立 token issuer、账号/profile authority 或 identity service。V1 只允许 loopback / trusted same-host ingress，由 `OwnerAuthorizer` 从受信本机安全上下文取得 Owner；request body/query 不能另行指定目标 Owner。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
@@ -41,7 +41,7 @@ eidolon_kernel/
 ├── domain/          # DeviceMount、Command、不变量和稳定错误
 ├── application/     # Mount/Unmount use case、Get/Resolve/List/Audit query
 ├── ports/           # Hub、Companion、Authorizer、Store、Projection、Clock
-├── adapters/        # SQLite、内存投影、Hub HTTP、fail-closed Companion、本机信任
+├── adapters/        # SQLite、内存投影、Hub/Data Authority HTTP、本机信任、定向对账
 ├── interfaces/http/ # /api/kernel/v1 HTTP/JSON
 ├── composition/     # 唯一依赖组装与生命周期管理点
 ├── contracts/       # Normative JSON Schema、严格 wire binding、显式 mapper
@@ -108,7 +108,24 @@ Kernel 的 Hub adapter 只调用：
 GET {hub.base_url}/api/device-management/v1/owners/{owner_id}/devices/{device_id}
 ```
 
-并透传 `EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN`。它不签发 Hub JWT，不消费 Approval、Revocation、Events、Enrollment 或 Provider API。
+并透传 `EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN`。该值必须与 Hub 的
+`EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN` 相同，是只能执行精确 Device Get 的
+opaque capability；它不是 Owner token，也不是不可续期的静态 JWT。Kernel 不消费
+Approval、Revocation、Events、Enrollment 或 Provider API。
+
+Kernel 的 Companion adapter 只调用：
+
+```text
+GET {companion_authority.base_url}/api/companion-authority/v1/companions/{companion_id}
+```
+
+并透传 `EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN`。该值必须与 Data Authority 的
+`EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN` 相同。两个 consumer 都只接受各自固定的
+consumed JSON Schema，wire DTO 再显式映射为 Kernel domain identity。
+
+生产 composition 会立即并周期性重验所有 active Mount。Device revoked/缺失/Owner
+不匹配，或 Companion inactive/缺失时，Kernel 以当前 revision 做 CAS，写入 inactive
+tombstone 和审计；网络、认证、5xx 或契约故障只延后本轮，不伪造撤销。
 
 ## 存储
 
@@ -139,11 +156,12 @@ SQLite 是唯一权威；projection 不是第二事实源。当前 schema versio
 
 ```bash
 uv sync --all-groups
-export EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN='<Hub-issued token>'
+export EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN='<same opaque token as Hub registry reader>'
+export EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN='<same opaque token as Data authority>'
 uv run uvicorn eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 8083
 ```
 
-V1 必须绑定 loopback 或置于已经完成身份认证的同机 ingress 后；不得直接监听不可信网络。当前 production health 是 `degraded`，并明确报告 `companion-authority-contract` blocker。
+V1 必须绑定 loopback 或置于已经完成身份认证的同机 ingress 后；不得直接监听不可信网络。Companion Authority 默认由 `127.0.0.1:8084` 提供。
 
 ## 验证
 
@@ -154,11 +172,12 @@ uv run pytest -q
 uv run pytest --cov=eidolon_kernel --cov-report=term-missing -q
 ```
 
-测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见 [Device Mount 测试报告](docs/testing/reports/2026-08-04-device-mount.md)。
+测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
+[Authority 集成与对账测试报告](docs/testing/reports/2026-08-05-authority-integration.md)。
 
 ## 后续演进门槛
 
-- 先由 Companion 事实拥有方发布 versioned read contract、lifecycle enum、认证方式和兼容策略，再增加生产 Companion adapter。
+- Companion Authority producer/consumer schema 必须保持兼容，并由跨项目契约门禁检测漂移。
 - Kernel 不拥有 Owner profile/account；未来即使需要读取 Owner lifecycle，也必须由事实拥有方先发布窄且稳定的 authority contract，不能直连兄弟 DB 或在 Kernel 发明用户资料 API。
 - 保持 Kernel local-only 时，trusted-local authorizer 是明确部署假设而不是产品化 blocker；若要直接接入不可信网络或跨 Host，必须先定义可验证 principal 和 ingress-to-Kernel 信任通道，再替换 adapter。不得把 header hints 包装成“认证”。
 - Capability/Lease、Service Registry 或其他 namespace 模块必须先证明其事实确需跨服务全局权威，并更新 ADR/架构测试。

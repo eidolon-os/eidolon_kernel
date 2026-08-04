@@ -1,5 +1,9 @@
 # Device Mount V1 测试与结构反思报告
 
+> 历史基线：Companion Authority blocker 与 lifecycle reconciliation 缺口已于
+> 2026-08-05 关闭。当前结果见
+> [Authority 集成与对账测试报告](2026-08-05-authority-integration.md)。
+
 - 日期：2026-08-04
 - 范围：首个 Device Mount 最小纵向闭环
 - Python：3.13.13（项目声明支持 `>=3.11`）

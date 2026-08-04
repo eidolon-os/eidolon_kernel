@@ -7,6 +7,8 @@ from eidolon_kernel.adapters.device_registry.hub_http import HubHttpDeviceAuthor
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.domain.errors import AuthorityRejected, AuthorityUnavailable
 
+HUB_READER_TOKEN = "hub-device-registry-reader-token-0001"
+
 
 def document(**overrides):
     value = {
@@ -35,8 +37,9 @@ def document(**overrides):
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"base_url": "file:///hub", "bearer_token": "token"},
+        {"base_url": "file:///hub", "bearer_token": HUB_READER_TOKEN},
         {"base_url": "https://hub.example", "bearer_token": "  "},
+        {"base_url": "https://hub.example", "bearer_token": "short"},
     ],
 )
 def test_hub_adapter_rejects_invalid_configuration(arguments) -> None:
@@ -50,13 +53,13 @@ async def test_hub_adapter_consumes_only_owner_scoped_device_get() -> None:
         assert request.url.raw_path == (
             b"/api/device-management/v1/owners/owner%20one/devices/device%20one"
         )
-        assert request.headers["Authorization"] == "Bearer hub-issued-token"
+        assert request.headers["Authorization"] == f"Bearer {HUB_READER_TOKEN}"
         return httpx.Response(200, json=document())
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = HubHttpDeviceAuthority(
         base_url="https://hub.example/",
-        bearer_token="hub-issued-token",
+        bearer_token=HUB_READER_TOKEN,
         contracts=ContractRegistry(),
         client=client,
     )
@@ -85,7 +88,7 @@ async def test_hub_adapter_maps_policy_and_contract_failures(status, body, error
     )
     adapter = HubHttpDeviceAuthority(
         base_url="https://hub.example",
-        bearer_token="token",
+        bearer_token=HUB_READER_TOKEN,
         contracts=ContractRegistry(),
         client=client,
     )
@@ -104,7 +107,7 @@ async def test_hub_adapter_maps_transport_and_non_object_json_failures() -> None
     client = httpx.AsyncClient(transport=httpx.MockTransport(disconnected))
     adapter = HubHttpDeviceAuthority(
         base_url="https://hub.example",
-        bearer_token="token",
+        bearer_token=HUB_READER_TOKEN,
         contracts=ContractRegistry(),
         client=client,
     )
@@ -117,7 +120,7 @@ async def test_hub_adapter_maps_transport_and_non_object_json_failures() -> None
     )
     adapter = HubHttpDeviceAuthority(
         base_url="https://hub.example",
-        bearer_token="token",
+        bearer_token=HUB_READER_TOKEN,
         contracts=ContractRegistry(),
         client=client,
     )

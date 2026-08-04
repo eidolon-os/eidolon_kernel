@@ -1,16 +1,15 @@
 import pytest
 
-from eidolon_kernel.adapters.companion.unavailable import UnavailableCompanionAuthority
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.domain.errors import AuthorityUnavailable, AuthorizationDenied
-from tests.support import sample_mount
+from tests.support import OfflineCompanionAuthority, sample_mount
 
 
 @pytest.mark.asyncio
-async def test_companion_adapter_fails_closed_until_contract_exists() -> None:
-    with pytest.raises(AuthorityUnavailable, match="ADR-0002"):
-        await UnavailableCompanionAuthority().get_companion(companion_id="companion")
+async def test_offline_companion_authority_fake_fails_closed() -> None:
+    with pytest.raises(AuthorityUnavailable, match="offline"):
+        await OfflineCompanionAuthority().get_companion(companion_id="companion")
 
 
 @pytest.mark.asyncio

@@ -98,3 +98,10 @@ class HubDeviceDirectoryEntryWire(ContractModel):
     lifecycle_state: Literal["pending-approval", "approved", "revoked"]
     enrolled_at: datetime
     updated_at: datetime
+
+
+class CompanionIdentityWire(ContractModel):
+    operation: Literal["companion.identity"]
+    companion_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    lifecycle_state: Literal["active", "inactive"]

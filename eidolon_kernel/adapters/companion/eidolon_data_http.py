@@ -1,4 +1,4 @@
-"""Narrow consumer of Hub's stable owner-scoped device GET."""
+"""Narrow consumer of Eidolon Data's Companion Authority V1."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import httpx
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
-from eidolon_kernel.contracts.bindings import HubDeviceDirectoryEntryWire
-from eidolon_kernel.contracts.mappers import hub_device_to_domain
+from eidolon_kernel.contracts.bindings import CompanionIdentityWire
+from eidolon_kernel.contracts.mappers import companion_identity_to_domain
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.domain.errors import AuthorityRejected, AuthorityUnavailable
-from eidolon_kernel.domain.model import DeviceAdmission
+from eidolon_kernel.domain.model import CompanionIdentity
 
 
-class HubHttpDeviceAuthority:
+class EidolonDataHttpCompanionAuthority:
     def __init__(
         self,
         *,
@@ -26,9 +26,9 @@ class HubHttpDeviceAuthority:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not base_url.startswith(("http://", "https://")):
-            raise ValueError("Hub base_url must be HTTP(S)")
-        if len(bearer_token.strip().encode()) < 32:
-            raise ValueError("Hub device registry reader token is invalid")
+            raise ValueError("Companion authority base_url must be HTTP(S)")
+        if len(bearer_token.strip()) < 24:
+            raise ValueError("Companion authority bearer token is invalid")
         self._base_url = base_url.rstrip("/")
         self._token = bearer_token.strip()
         self._contracts = contracts
@@ -38,38 +38,42 @@ class HubHttpDeviceAuthority:
             trust_env=False,
         )
 
-    async def get_device(self, *, owner_id: str, device_id: str) -> DeviceAdmission:
+    async def get_companion(self, *, companion_id: str) -> CompanionIdentity:
         url = (
-            f"{self._base_url}/api/device-management/v1/owners/"
-            f"{quote(owner_id, safe='')}/devices/{quote(device_id, safe='')}"
+            f"{self._base_url}/api/companion-authority/v1/companions/"
+            f"{quote(companion_id, safe='')}"
         )
         try:
             response = await self._client.get(
-                url, headers={"Authorization": f"Bearer {self._token}"}
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
             )
         except httpx.HTTPError as exc:
-            raise AuthorityUnavailable("Hub device authority is unreachable") from exc
+            raise AuthorityUnavailable("Companion authority is unreachable") from exc
         if response.status_code == 404:
-            raise AuthorityRejected("Hub device does not exist in owner scope")
+            raise AuthorityRejected("Companion does not exist")
         if response.status_code in {401, 403}:
-            raise AuthorityUnavailable("Hub rejected Kernel's management credential")
+            raise AuthorityUnavailable("Companion authority rejected Kernel credential")
         if response.status_code >= 500:
-            raise AuthorityUnavailable("Hub device authority failed")
+            raise AuthorityUnavailable("Companion authority failed")
         if response.status_code != 200:
             raise AuthorityUnavailable(
-                f"unexpected Hub device authority status {response.status_code}"
+                f"unexpected Companion authority status {response.status_code}"
             )
         try:
             document = response.json()
             if not isinstance(document, dict):
-                raise TypeError("Hub response must be an object")
+                raise TypeError("Companion authority response must be an object")
             self._contracts.validate(
-                "external/hub-device-directory-entry.schema.json", document
+                "external/companion-identity.schema.json",
+                document,
             )
-            wire = HubDeviceDirectoryEntryWire.model_validate(document)
+            wire = CompanionIdentityWire.model_validate(document)
         except (TypeError, ValueError, ValidationError, PydanticValidationError) as exc:
-            raise AuthorityUnavailable("Hub response violated consumed device contract") from exc
-        return hub_device_to_domain(wire)
+            raise AuthorityUnavailable(
+                "Companion authority response violated consumed contract"
+            ) from exc
+        return companion_identity_to_domain(wire)
 
     async def close(self) -> None:
         if self._owns_client:
