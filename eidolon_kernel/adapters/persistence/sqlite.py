@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
-from eidolon_kernel.domain.model import Actor, AuditEvent, DeviceMount
+from eidolon_kernel.domain.model import AuditEvent, DeviceMount
 from eidolon_kernel.ports.runtime import CommitResult, StoredRequest
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _EXPECTED_COLUMNS = {
     "kernel_schema_meta": {"schema_version"},
@@ -25,9 +25,6 @@ _EXPECTED_COLUMNS = {
         "revision",
         "created_at",
         "updated_at",
-        "actor_id",
-        "actor_owner_id",
-        "actor_source",
         "request_id",
         "fingerprint",
         "active",
@@ -50,9 +47,6 @@ _EXPECTED_COLUMNS = {
         "mount_revision",
         "mount_created_at",
         "active",
-        "actor_id",
-        "actor_owner_id",
-        "actor_source",
         "request_id",
         "fingerprint",
         "occurred_at",
@@ -73,11 +67,6 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
         "revision": mount.revision,
         "created_at": _timestamp(mount.created_at),
         "updated_at": _timestamp(mount.updated_at),
-        "actor": {
-            "actor_id": mount.actor.actor_id,
-            "owner_id": mount.actor.owner_id,
-            "source": mount.actor.source,
-        },
         "request_id": mount.request_id,
         "fingerprint": mount.fingerprint,
         "active": mount.active,
@@ -85,7 +74,6 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
 
 
 def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
-    actor = document["actor"]
     return DeviceMount(
         device_id=document["device_id"],
         owner_id=document["owner_id"],
@@ -93,9 +81,6 @@ def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
         revision=document["revision"],
         created_at=datetime.fromisoformat(document["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(document["updated_at"].replace("Z", "+00:00")),
-        actor=Actor(
-            actor_id=actor["actor_id"], owner_id=actor["owner_id"], source=actor["source"]
-        ),
         request_id=document["request_id"],
         fingerprint=document["fingerprint"],
         active=document["active"],
@@ -110,11 +95,6 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
         revision=row["revision"],
         created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")),
-        actor=Actor(
-            actor_id=row["actor_id"],
-            owner_id=row["actor_owner_id"],
-            source=row["actor_source"],
-        ),
         request_id=row["request_id"],
         fingerprint=row["fingerprint"],
         active=bool(row["active"]),
@@ -159,7 +139,7 @@ class SqliteMountStore:
                 CREATE TABLE kernel_schema_meta (
                     schema_version INTEGER NOT NULL
                 );
-                INSERT INTO kernel_schema_meta(schema_version) VALUES (1);
+                INSERT INTO kernel_schema_meta(schema_version) VALUES (2);
                 CREATE TABLE kernel_device_mounts (
                     device_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
@@ -167,9 +147,6 @@ class SqliteMountStore:
                     revision INTEGER NOT NULL CHECK (revision >= 1),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    actor_id TEXT NOT NULL,
-                    actor_owner_id TEXT NOT NULL,
-                    actor_source TEXT NOT NULL,
                     request_id TEXT NOT NULL,
                     fingerprint TEXT NOT NULL,
                     active INTEGER NOT NULL CHECK (active IN (0, 1))
@@ -188,9 +165,6 @@ class SqliteMountStore:
                     mount_revision INTEGER NOT NULL,
                     mount_created_at TEXT NOT NULL,
                     active INTEGER NOT NULL,
-                    actor_id TEXT NOT NULL,
-                    actor_owner_id TEXT NOT NULL,
-                    actor_source TEXT NOT NULL,
                     request_id TEXT NOT NULL UNIQUE,
                     fingerprint TEXT NOT NULL,
                     occurred_at TEXT NOT NULL,
@@ -223,7 +197,9 @@ class SqliteMountStore:
         for table, expected in _EXPECTED_COLUMNS.items():
             actual = {row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")}
             if actual != expected:
-                raise RuntimeError(f"kernel SQLite table {table} does not match schema v1")
+                raise RuntimeError(
+                    f"kernel SQLite table {table} does not match schema v{SCHEMA_VERSION}"
+                )
         version_row = self._connection.execute(
             "SELECT schema_version FROM kernel_schema_meta"
         ).fetchall()
@@ -298,7 +274,7 @@ class SqliteMountStore:
                     )
 
                 current = self._connection.execute(
-                    "SELECT revision FROM kernel_device_mounts WHERE device_id = ?",
+                    "SELECT owner_id, revision FROM kernel_device_mounts WHERE device_id = ?",
                     (mount.device_id,),
                 ).fetchone()
                 actual_revision = current["revision"] if current is not None else 0
@@ -306,6 +282,8 @@ class SqliteMountStore:
                     raise RevisionConflict(
                         f"expected revision {expected_revision}, current revision is {actual_revision}"
                     )
+                if current is not None and current["owner_id"] != mount.owner_id:
+                    raise RevisionConflict("device mount owner namespace cannot change")
                 values = (
                     mount.device_id,
                     mount.owner_id,
@@ -313,9 +291,6 @@ class SqliteMountStore:
                     mount.revision,
                     _timestamp(mount.created_at),
                     _timestamp(mount.updated_at),
-                    mount.actor.actor_id,
-                    mount.actor.owner_id,
-                    mount.actor.source,
                     mount.request_id,
                     mount.fingerprint,
                     int(mount.active),
@@ -324,18 +299,28 @@ class SqliteMountStore:
                     self._connection.execute(
                         """INSERT INTO kernel_device_mounts(
                             device_id, owner_id, companion_id, revision, created_at, updated_at,
-                            actor_id, actor_owner_id, actor_source, request_id, fingerprint, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            request_id, fingerprint, active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         values,
                     )
                 else:
                     cursor = self._connection.execute(
                         """UPDATE kernel_device_mounts SET
-                            owner_id=?, companion_id=?, revision=?, created_at=?, updated_at=?,
-                            actor_id=?, actor_owner_id=?, actor_source=?, request_id=?,
+                            companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
                             fingerprint=?, active=?
-                        WHERE device_id=? AND revision=?""",
-                        (*values[1:], mount.device_id, expected_revision),
+                        WHERE device_id=? AND owner_id=? AND revision=?""",
+                        (
+                            mount.companion_id,
+                            mount.revision,
+                            _timestamp(mount.created_at),
+                            _timestamp(mount.updated_at),
+                            mount.request_id,
+                            mount.fingerprint,
+                            int(mount.active),
+                            mount.device_id,
+                            mount.owner_id,
+                            expected_revision,
+                        ),
                     )
                     if cursor.rowcount != 1:
                         raise RevisionConflict("mount revision changed during commit")
@@ -343,9 +328,8 @@ class SqliteMountStore:
                 cursor = self._connection.execute(
                     """INSERT INTO kernel_audit_events(
                         event_id, event_type, device_id, owner_id, companion_id, mount_revision,
-                        mount_created_at, active, actor_id, actor_owner_id, actor_source, request_id,
-                        fingerprint, occurred_at, data_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        mount_created_at, active, request_id, fingerprint, occurred_at, data_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         event_id,
                         event_type,
@@ -355,9 +339,6 @@ class SqliteMountStore:
                         mount.revision,
                         _timestamp(mount.created_at),
                         int(mount.active),
-                        mount.actor.actor_id,
-                        mount.actor.owner_id,
-                        mount.actor.source,
                         mount.request_id,
                         mount.fingerprint,
                         _timestamp(mount.updated_at),
@@ -393,15 +374,13 @@ class SqliteMountStore:
         return tuple(_mount_from_row(row) for row in rows)
 
     def list_audit(
-        self, *, after_position: int, limit: int, owner_id: str | None = None
+        self, *, after_position: int, limit: int, owner_id: str
     ) -> tuple[AuditEvent, ...]:
-        sql = "SELECT * FROM kernel_audit_events WHERE position > ?"
-        values: list[Any] = [after_position]
-        if owner_id is not None:
-            sql += " AND owner_id = ?"
-            values.append(owner_id)
-        sql += " ORDER BY position LIMIT ?"
-        values.append(limit)
+        sql = (
+            "SELECT * FROM kernel_audit_events "
+            "WHERE position > ? AND owner_id = ? ORDER BY position LIMIT ?"
+        )
+        values: list[Any] = [after_position, owner_id, limit]
         with self._mutex:
             rows = self._connection.execute(sql, values).fetchall()
         events = []
@@ -414,11 +393,6 @@ class SqliteMountStore:
                 "created_at": row["mount_created_at"],
                 "updated_at": row["occurred_at"],
                 "active": bool(row["active"]),
-                "actor": {
-                    "actor_id": row["actor_id"],
-                    "owner_id": row["actor_owner_id"],
-                    "source": row["actor_source"],
-                },
                 "request_id": row["request_id"],
                 "fingerprint": row["fingerprint"],
             }

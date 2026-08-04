@@ -26,25 +26,6 @@ def require_utc(name: str, value: datetime) -> datetime:
 
 
 @dataclass(frozen=True, slots=True)
-class Actor:
-    """Caller attribution inside an Owner scope, never a persisted credential.
-
-    ``owner_id`` is the stable OS principal/namespace identifier. ``actor_id``
-    identifies who performed the operation and may equal the Owner ID or name a
-    trusted local orchestrator acting inside that Owner scope.
-    """
-
-    actor_id: str
-    owner_id: str
-    source: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "actor_id", require_identifier("actor_id", self.actor_id, 128))
-        object.__setattr__(self, "owner_id", require_identifier("actor.owner_id", self.owner_id, 64))
-        object.__setattr__(self, "source", require_identifier("actor.source", self.source, 64))
-
-
-@dataclass(frozen=True, slots=True)
 class DeviceAdmission:
     device_id: str
     owner_id: str
@@ -67,7 +48,6 @@ class DeviceMount:
     revision: int
     created_at: datetime
     updated_at: datetime
-    actor: Actor
     request_id: str
     fingerprint: str
     active: bool = True
@@ -87,8 +67,6 @@ class DeviceMount:
         object.__setattr__(self, "updated_at", require_utc("updated_at", self.updated_at))
         if self.updated_at < self.created_at:
             raise InvalidRequest("updated_at cannot precede created_at")
-        if self.actor.owner_id != self.owner_id:
-            raise InvalidRequest("mount actor owner must match mount owner")
 
     @classmethod
     def first(
@@ -98,7 +76,6 @@ class DeviceMount:
         owner_id: str,
         companion_id: str,
         at: datetime,
-        actor: Actor,
         request_id: str,
         fingerprint: str,
     ) -> DeviceMount:
@@ -109,7 +86,6 @@ class DeviceMount:
             revision=1,
             created_at=at,
             updated_at=at,
-            actor=actor,
             request_id=request_id,
             fingerprint=fingerprint,
         )
@@ -120,13 +96,14 @@ class DeviceMount:
         owner_id: str,
         companion_id: str,
         at: datetime,
-        actor: Actor,
         request_id: str,
         fingerprint: str,
     ) -> DeviceMount:
         at = require_utc("mounted_at", at)
         if at < self.updated_at:
             raise InvalidRequest("mount transition time cannot move backwards")
+        if owner_id != self.owner_id:
+            raise InvalidRequest("device mount owner namespace cannot change")
         return DeviceMount(
             device_id=self.device_id,
             owner_id=owner_id,
@@ -134,14 +111,13 @@ class DeviceMount:
             revision=self.revision + 1,
             created_at=at,
             updated_at=at,
-            actor=actor,
             request_id=request_id,
             fingerprint=fingerprint,
             active=True,
         )
 
     def unmounted(
-        self, *, at: datetime, actor: Actor, request_id: str, fingerprint: str
+        self, *, at: datetime, request_id: str, fingerprint: str
     ) -> DeviceMount:
         at = require_utc("unmounted_at", at)
         if at < self.updated_at:
@@ -150,7 +126,6 @@ class DeviceMount:
             self,
             revision=self.revision + 1,
             updated_at=at,
-            actor=actor,
             request_id=request_id,
             fingerprint=fingerprint,
             active=False,

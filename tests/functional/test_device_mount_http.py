@@ -5,7 +5,7 @@ import pytest
 
 from eidolon_kernel.adapters.companion.unavailable import UnavailableCompanionAuthority
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
-from eidolon_kernel.adapters.security.trusted_local import TrustedLocalActorAuthorizer
+from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.composition.app import build_services, create_http_app
 from tests.support import (
     FakeCompanionAuthority,
@@ -23,7 +23,7 @@ def app(*, companions=None, devices=None):
         projection=InMemoryMountProjection(),
         devices=devices or FakeDeviceAuthority(),
         companions=companions or FakeCompanionAuthority(),
-        authorizer=TrustedLocalActorAuthorizer(),
+        authorizer=TrustedLocalOwnerAuthorizer(),
         clock=MutableClock(),
     )
     return create_http_app(services=services)
@@ -50,17 +50,15 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
 
         resolved = await client.get(
             "/api/kernel/v1/device-mounts/resolve/device-1",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         current = await client.get(
             "/api/kernel/v1/device-mounts/devices/device-1",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         page = await client.get(
             "/api/kernel/v1/device-mounts",
-            params={"owner_id": "owner-1", "companion_id": "companion-1"},
+            params={"companion_id": "companion-1"},
             headers=headers(),
         )
         assert resolved.status_code == current.status_code == page.status_code == 200
@@ -72,7 +70,6 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             json={
                 "operation": "device.unmount",
                 "request_id": "unmount-1",
-                "owner_id": "owner-1",
                 "expected_revision": 1,
             },
         )
@@ -81,11 +78,6 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             **current.json(),
             "revision": 2,
             "updated_at": "2026-08-04T08:00:01Z",
-            "actor": {
-                "actor_id": "actor-1",
-                "owner_id": "owner-1",
-                "source": "trusted-local-ingress",
-            },
             "request_id": "unmount-1",
             "fingerprint": unmounted.json()["mount"]["fingerprint"],
             "active": False,
@@ -93,17 +85,15 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
 
         no_resolution = await client.get(
             "/api/kernel/v1/device-mounts/resolve/device-1",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         inactive = await client.get(
             "/api/kernel/v1/device-mounts/devices/device-1",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         audit = await client.get(
             "/api/kernel/v1/audit/events",
-            params={"owner_id": "owner-1", "after_position": 0},
+            params={"after_position": 0},
             headers=headers(),
         )
         assert no_resolution.status_code == 404
@@ -159,10 +149,46 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
         )
         hidden = await client.get(
             "/api/kernel/v1/device-mounts/devices/device-1",
-            params={"owner_id": "owner-2"},
             headers=headers("owner-2"),
         )
-        assert hidden.status_code == 404
+        unresolved = await client.get(
+            "/api/kernel/v1/device-mounts/resolve/device-1",
+            headers=headers("owner-2"),
+        )
+        empty_list = await client.get(
+            "/api/kernel/v1/device-mounts", headers=headers("owner-2")
+        )
+        empty_audit = await client.get(
+            "/api/kernel/v1/audit/events", headers=headers("owner-2")
+        )
+        denied_unmount = await client.post(
+            "/api/kernel/v1/device-mounts/devices/device-1/unmount",
+            headers=headers("owner-2"),
+            json={
+                "operation": "device.unmount",
+                "request_id": "owner-2-unmount",
+                "expected_revision": 1,
+            },
+        )
+        denied_remount = await client.post(
+            "/api/kernel/v1/device-mounts",
+            headers=headers("owner-2"),
+            json=mount_body(
+                request_id="owner-2-remount",
+                companion_id="companion-2",
+                expected_revision=1,
+                replace_existing=True,
+            ),
+        )
+        assert (
+            hidden.status_code
+            == unresolved.status_code
+            == denied_unmount.status_code
+            == denied_remount.status_code
+            == 404
+        )
+        assert empty_list.json()["mounts"] == []
+        assert empty_audit.json()["events"] == []
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(

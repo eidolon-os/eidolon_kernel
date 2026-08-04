@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 
 import pytest
 
@@ -74,6 +75,16 @@ def test_sqlite_enforces_cas_idempotency_and_single_process_ownership(tmp_path) 
                 expected_revision=1,
                 operation="device.unmount",
                 event_type="unmounted",
+                event_data={},
+            )
+        with pytest.raises(RevisionConflict, match="owner namespace"):
+            store.commit(
+                mount=replace(
+                    sample_mount(2, request_id="owner-transfer"), owner_id="owner-2"
+                ),
+                expected_revision=1,
+                operation="device.mount",
+                event_type="remounted",
                 event_data={},
             )
         with pytest.raises(RuntimeError, match="already owned"):

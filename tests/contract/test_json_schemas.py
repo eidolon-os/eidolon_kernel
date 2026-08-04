@@ -14,7 +14,7 @@ from eidolon_kernel.contracts.bindings import (
 )
 from eidolon_kernel.contracts.mappers import commit_to_wire
 from eidolon_kernel.contracts.registry import ContractRegistry
-from eidolon_kernel.domain.model import Actor, DeviceMount
+from eidolon_kernel.domain.model import DeviceMount
 from eidolon_kernel.ports.runtime import CommitResult
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 9
+    assert len(files) == len(registry.schema_names) == 8
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -35,7 +35,6 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         operation="device.mount",
         request_id="request-1",
         device_id="device-1",
-        owner_id="owner-1",
         companion_id="companion-1",
         expected_revision=0,
         replace_existing=False,
@@ -50,7 +49,6 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         owner_id="owner-1",
         companion_id="companion-1",
         at=now,
-        actor=Actor("actor-1", "owner-1", "test"),
         request_id="request-1",
         fingerprint="sha256:" + "a" * 64,
     )
@@ -65,11 +63,26 @@ def test_schema_and_binding_both_reject_unknown_wire_fields() -> None:
         "operation": "device.mount",
         "request_id": "r",
         "device_id": "d",
-        "owner_id": "o",
         "companion_id": "c",
         "expected_revision": 0,
         "replace_existing": False,
         "surprise": True,
+    }
+    with pytest.raises(ValidationError):
+        ContractRegistry().validate("device-mount/mount-request.schema.json", document)
+    with pytest.raises(PydanticValidationError):
+        MountDeviceRequestWire.model_validate(document)
+
+
+def test_mount_request_cannot_select_a_target_owner() -> None:
+    document = {
+        "operation": "device.mount",
+        "request_id": "r",
+        "device_id": "d",
+        "companion_id": "c",
+        "expected_revision": 0,
+        "replace_existing": False,
+        "owner_id": "another-owner",
     }
     with pytest.raises(ValidationError):
         ContractRegistry().validate("device-mount/mount-request.schema.json", document)

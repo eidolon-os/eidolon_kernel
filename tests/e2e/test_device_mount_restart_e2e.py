@@ -5,7 +5,7 @@ import pytest
 
 from eidolon_kernel.adapters.persistence.sqlite import SqliteMountStore
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
-from eidolon_kernel.adapters.security.trusted_local import TrustedLocalActorAuthorizer
+from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.composition.app import build_services, create_http_app
 from tests.support import (
     FakeCompanionAuthority,
@@ -22,7 +22,7 @@ def e2e_app(store):
         projection=InMemoryMountProjection(),
         devices=FakeDeviceAuthority(),
         companions=FakeCompanionAuthority(),
-        authorizer=TrustedLocalActorAuthorizer(),
+        authorizer=TrustedLocalOwnerAuthorizer(),
         clock=MutableClock(),
     )
     return create_http_app(services=services)
@@ -49,7 +49,6 @@ async def test_device_mount_survives_restart_then_remounts_and_unmounts(tmp_path
     ) as client:
         restored = await client.get(
             "/api/kernel/v1/device-mounts/resolve/device-1",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         remounted = await client.post(
@@ -68,13 +67,11 @@ async def test_device_mount_survives_restart_then_remounts_and_unmounts(tmp_path
             json={
                 "operation": "device.unmount",
                 "request_id": "unmount-1",
-                "owner_id": "owner-1",
                 "expected_revision": 2,
             },
         )
         audit = await client.get(
             "/api/kernel/v1/audit/events",
-            params={"owner_id": "owner-1"},
             headers=headers(),
         )
         assert restored.json()["revision"] == 1

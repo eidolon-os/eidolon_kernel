@@ -4,8 +4,7 @@ import pytest
 
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
 from eidolon_kernel.domain.errors import InvalidRequest
-from eidolon_kernel.domain.model import Actor, DeviceMount
-from tests.support import ACTOR
+from eidolon_kernel.domain.model import DeviceMount
 
 NOW = datetime(2026, 8, 4, tzinfo=UTC)
 FP = "sha256:" + "a" * 64
@@ -17,18 +16,14 @@ def test_mount_aggregate_transitions_preserve_monotonic_revision() -> None:
         owner_id="owner-1",
         companion_id="companion-1",
         at=NOW,
-        actor=ACTOR,
         request_id="request-1",
         fingerprint=FP,
     )
-    inactive = first.unmounted(
-        at=NOW, actor=ACTOR, request_id="request-2", fingerprint=FP
-    )
+    inactive = first.unmounted(at=NOW, request_id="request-2", fingerprint=FP)
     mounted = inactive.mounted_as(
         owner_id="owner-1",
         companion_id="companion-2",
         at=NOW,
-        actor=ACTOR,
         request_id="request-3",
         fingerprint=FP,
     )
@@ -51,7 +46,6 @@ def test_command_fingerprint_is_canonical_and_sensitive() -> None:
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: Actor("", "owner", "test"),
         lambda: MountDeviceCommand("r", "d", "o", "c", -1),
         lambda: UnmountDeviceCommand("r", "d", "o", 0),
         lambda: DeviceMount.first(
@@ -59,7 +53,6 @@ def test_command_fingerprint_is_canonical_and_sensitive() -> None:
             owner_id="owner-1",
             companion_id="c",
             at=datetime(2026, 8, 4),
-            actor=ACTOR,
             request_id="r",
             fingerprint=FP,
         ),
@@ -77,7 +70,6 @@ def test_mount_rejects_non_hex_fingerprint_and_backwards_transition_time() -> No
             owner_id="owner-1",
             companion_id="c",
             at=NOW,
-            actor=ACTOR,
             request_id="r",
             fingerprint="sha256:" + "z" * 64,
         )
@@ -86,14 +78,27 @@ def test_mount_rejects_non_hex_fingerprint_and_backwards_transition_time() -> No
         owner_id="owner-1",
         companion_id="c",
         at=NOW,
-        actor=ACTOR,
         request_id="r",
         fingerprint=FP,
     )
     with pytest.raises(InvalidRequest, match="backwards"):
-        first.unmounted(
-            at=NOW - timedelta(seconds=1),
-            actor=ACTOR,
-            request_id="u",
+        first.unmounted(at=NOW - timedelta(seconds=1), request_id="u", fingerprint=FP)
+
+
+def test_mount_aggregate_rejects_owner_namespace_transfer() -> None:
+    first = DeviceMount.first(
+        device_id="d",
+        owner_id="owner-1",
+        companion_id="c",
+        at=NOW,
+        request_id="r",
+        fingerprint=FP,
+    )
+    with pytest.raises(InvalidRequest, match="owner namespace"):
+        first.mounted_as(
+            owner_id="owner-2",
+            companion_id="c2",
+            at=NOW,
+            request_id="r2",
             fingerprint=FP,
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from eidolon_kernel.domain.model import Actor, CompanionIdentity, DeviceAdmission
+from eidolon_kernel.domain.model import CompanionIdentity, DeviceAdmission
 
 
 class DeviceAuthority(Protocol):
@@ -15,13 +15,11 @@ class CompanionAuthority(Protocol):
     async def get_companion(self, *, companion_id: str) -> CompanionIdentity: ...
 
 
-class ActorAuthorizer(Protocol):
+class OwnerAuthorizer(Protocol):
     async def authorize(
         self,
         *,
         action: str,
-        owner_id: str,
         credential: str | None,
-        actor_id_hint: str | None,
-        actor_owner_hint: str | None,
-    ) -> Actor: ...
+        owner_id_hint: str | None,
+    ) -> str: ...

@@ -13,16 +13,16 @@ from eidolon_kernel.adapters.device_registry.hub_http import HubHttpDeviceAuthor
 from eidolon_kernel.adapters.persistence.sqlite import SqliteMountStore
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.runtime import SystemClock
-from eidolon_kernel.adapters.security.trusted_local import TrustedLocalActorAuthorizer
+from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.application.device_mounts import MountDevice, UnmountDevice
 from eidolon_kernel.application.queries import AuditQueries, DeviceMountQueries
 from eidolon_kernel.config import KernelSettings, load_hub_token, load_settings
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.interfaces.http.router import KernelHttpServices, create_kernel_router
 from eidolon_kernel.ports.authorities import (
-    ActorAuthorizer,
     CompanionAuthority,
     DeviceAuthority,
+    OwnerAuthorizer,
 )
 from eidolon_kernel.ports.runtime import Clock, MountProjection, MountStore
 
@@ -40,7 +40,7 @@ def build_services(
     projection: MountProjection,
     devices: DeviceAuthority,
     companions: CompanionAuthority,
-    authorizer: ActorAuthorizer,
+    authorizer: OwnerAuthorizer,
     clock: Clock,
     contracts: ContractRegistry | None = None,
 ) -> KernelHttpServices:
@@ -107,7 +107,7 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
         projection=projection,
         devices=devices,
         companions=UnavailableCompanionAuthority(),
-        authorizer=TrustedLocalActorAuthorizer(),
+        authorizer=TrustedLocalOwnerAuthorizer(),
         clock=SystemClock(),
         contracts=contracts,
     )

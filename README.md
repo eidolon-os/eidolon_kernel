@@ -19,16 +19,16 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 Device Mount 的 domain、application、SQLite、projection、Hub consumer 和 HTTP V1 已形成完整、可注入验证的闭环。生产 composition 对 Companion 校验 **fail closed**：现有代码没有独立、版本化、带明确认证和 lifecycle enum 的 Companion authority contract，因此写请求返回 `503`，直到该契约由其事实拥有方发布。详见 [ADR-0002](docs/adr/0002-companion-authority-blocker.md)。测试 fake 只存在于测试目录，不进入生产组合。
 
-Kernel 不建立新的 token issuer、账号系统或 identity service。V1 只允许 loopback / trusted same-host ingress，把显式 actor hints 交给 `ActorAuthorizer` Port；这些 hints 用于 Owner scope 和审计归因，不是登录凭证。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
+Kernel V1 只有一个安全主体：Owner。`owner_id` 是稳定、opaque 的 namespace principal，类似 OS UID；它不是账号资料、Persona、Companion 或业务对象。Kernel 不建立 token issuer、账号/profile authority 或 identity service。V1 只允许 loopback / trusted same-host ingress，由 `OwnerAuthorizer` 从受信本机安全上下文取得 Owner；request body/query 不能另行指定目标 Owner。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
 ## 收敛原则
 
 Kernel 以 `Port + Contract + Adapter` 定义 System Service：领域 Port 表达稳定能力，wire contract 由事实拥有方发布，HTTP/SQLite 等 adapter 只处理传输和基础设施。协议不是领域边界，调用方也不通过通用 `ipc.call(service, method, payload)` 访问 Kernel。
 
-`owner_id` 是 OS 中唯一、稳定、可持久化的 Owner principal，类似 UID；token 只是可过期、轮换和撤销的 credential，不是 Owner identity。认证只发生在真实信任边界，不按进程数量重复堆叠 token：
+`owner_id` 是 OS 中唯一、稳定、可持久化的安全与 namespace principal；token 只是可过期、轮换和撤销的 credential，不是 Owner identity。认证只发生在真实信任边界，不按进程数量重复堆叠 token：
 
-- 产品 ingress 可以为同一 Owner 的不同登录会话签发多枚 credential；Kernel 只接收受信本机通道传递的最小 Owner/Actor context，执行自身 action/scope 授权和审计。
-- `actor_id` 表示本次操作主体：Owner 直接操作时可等于 `owner_id`；受信编排服务代为操作时记录服务 actor，但不能越过 Owner scope。
+- 产品 ingress 可以为同一 Owner 的不同登录会话签发多枚 credential；Kernel 只接收受信本机通道传递的 Owner context，执行 action/scope 授权和审计。
+- V1 不建立独立 Actor principal。受信服务代表 Owner 调用时仍运行在该 Owner context；如果未来确有服务主体、委托链或提权审计需求，必须先以独立威胁模型和 ADR 证明，不能预先污染 Device Mount。
 - Kernel 调用外部 authority 使用服务身份，不冒充 Owner credential。当前 Hub adapter 只能按 Hub 已发布的 management API 携带其要求的 credential；该凭证不进入 Domain、SQLite 或下游调用。
 - 单机本地部署先接受明确的 trusted-local threat model。若以后需要防御同机不可信进程，再根据证据评估 Unix domain socket peer credential、mTLS 或 capability，而不是预建认证体系。
 
@@ -38,7 +38,7 @@ HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统
 
 ```text
 eidolon_kernel/
-├── domain/          # DeviceMount、Actor、Command、不变量和稳定错误
+├── domain/          # DeviceMount、Command、不变量和稳定错误
 ├── application/     # Mount/Unmount use case、Get/Resolve/List/Audit query
 ├── ports/           # Hub、Companion、Authorizer、Store、Projection、Clock
 ├── adapters/        # SQLite、内存投影、Hub HTTP、fail-closed Companion、本机信任
@@ -64,7 +64,7 @@ main        -> composition
 ## Device Mount 流程
 
 1. HTTP interface 先通过 normative JSON Schema 校验 wire request，再显式映射为 domain command。
-2. `ActorAuthorizer` 给出 actor 和 owner scope；application 不信任 HTTP header 本身。
+2. `OwnerAuthorizer` 从本机安全上下文给出唯一 Owner scope；application 不信任 request body/query 自报 owner。
 3. 相同 `request_id + fingerprint` 直接返回原 mutation result，不重新访问外部 authority；同一 request ID 的不同 payload 返回冲突。
 4. 首次/重新挂载前，`DeviceAuthority` 校验 Hub Device 存在、`approved`、owner 匹配；`CompanionAuthority` 校验 Companion 存在、`active`、owner 匹配。
 5. application 构造下一 revision；SQLite 用 `BEGIN IMMEDIATE` 和 expected revision 做 CAS，在同一事务提交 mount、幂等结果和 audit event。
@@ -79,25 +79,26 @@ main        -> composition
 - tombstone 后再次 Mount 必须携带 tombstone revision，产生新的 active revision；不需要 `replace_existing`。
 - V1 每个 Device 最多一个 active mount；一个 Companion 可挂多个 Device。
 
-`created_at` 表示当前 active mount incarnation 的建立时间；明确 remount 或 tombstone 后重挂会重置它。`updated_at`、actor、request ID 和 fingerprint 表示最后一次状态迁移。完整历史由 audit 保留。
+`created_at` 表示当前 active mount incarnation 的建立时间；明确 remount 或 tombstone 后重挂会重置它。`updated_at`、request ID 和 fingerprint 表示最后一次状态迁移，记录始终保留同一 Owner。完整历史由 audit 保留。
 
 ## HTTP/JSON V1
 
-所有 owner-scoped endpoint 在 V1 trusted-local 模式下要求：
+所有 endpoint 都严格限定在当前 Owner namespace。V1 trusted-local 模式只接受一个安全上下文 header：
 
 ```http
-X-Eidolon-Actor: <actor-id>
 X-Eidolon-Owner: <owner-id>
 ```
+
+该 header 不是互联网认证凭证，只能由受信同机 ingress 设置。Mount/Unmount body 以及 Get/Resolve/List/Audit query 均不接受 `owner_id`，因此调用方不能在同一次请求中另选目标 Owner。
 
 | API | 作用 |
 |---|---|
 | `POST /api/kernel/v1/device-mounts` | 首次 Mount、tombstone 后重挂或明确 Remount |
-| `GET /api/kernel/v1/device-mounts/devices/{device_id}?owner_id=...` | Get 当前记录，包含 inactive tombstone |
-| `GET /api/kernel/v1/device-mounts/resolve/{device_id}?owner_id=...` | 只 Resolve active mount |
-| `GET /api/kernel/v1/device-mounts?owner_id=...&companion_id=...` | owner scope；可叠加 companion scope、cursor、limit、active filter |
+| `GET /api/kernel/v1/device-mounts/devices/{device_id}` | 当前 Owner 内 Get 记录，包含 inactive tombstone |
+| `GET /api/kernel/v1/device-mounts/resolve/{device_id}` | 当前 Owner 内只 Resolve active mount |
+| `GET /api/kernel/v1/device-mounts?companion_id=...` | 当前 Owner scope；可叠加 companion、cursor、limit、active filter |
 | `POST /api/kernel/v1/device-mounts/devices/{device_id}/unmount` | CAS Unmount |
-| `GET /api/kernel/v1/audit/events?owner_id=...&after_position=...` | 按稳定递增位置读取审计 |
+| `GET /api/kernel/v1/audit/events?after_position=...` | 当前 Owner 内按稳定递增位置读取审计 |
 
 Normative wire contract 位于 [`eidolon_kernel/contracts/schemas`](eidolon_kernel/contracts/schemas)。FastAPI binding 只负责运行时 normalization；interface 对输入输出再次执行 Draft 2020-12 Schema 校验。Wire DTO 与 Domain Entity 不共享类，由 mapper 显式转换。
 
@@ -120,18 +121,19 @@ GET {hub.base_url}/api/device-management/v1/owners/{owner_id}/devices/{device_id
 | `kernel_audit_events` | `AUTOINCREMENT` position 的不可变状态迁移审计 |
 | `kernel_schema_meta` | 精确 schema version |
 
-SQLite 是唯一权威；projection 不是第二事实源。空库按当前 schema 创建，旧库、部分库或未知表直接拒绝。开发阶段不提供 migration 或兼容。
+SQLite 是唯一权威；projection 不是第二事实源。当前 schema version 为 2。空库按当前 schema 创建，旧库、部分库或未知表直接拒绝。开发阶段不提供 migration 或兼容。
 
 ## 不变量
 
 1. Device、Owner、Companion 使用稳定 ID，不从 IP、Channel ID、Room 或 transport 推导。
 2. Kernel 不批准设备，也不创建/激活 Companion；Mount 只引用两个外部 authority 已确认的事实。
-3. active DeviceMount 必须同时满足 Device approved + owner 匹配及 Companion active + owner 匹配。
+3. active DeviceMount 必须同时满足 Device approved + owner 匹配及 Companion active + owner 匹配；Device、Companion 和 Mount 必须属于同一 Owner namespace。
 4. 一个 Device 最多一个 active mount；Companion 可挂多个 Device。
 5. 所有 mutation 都要求全局幂等 request ID、canonical fingerprint 和 revision/CAS。
 6. SQLite commit 先于 projection；DB 写失败不得更新内存，projection 必须可重建。
 7. 每个已提交 mutation 恰有一个 audit position；重放不产生新 position。
-8. HTTP/router 不直接操作 SQLite；domain/application 不导入框架、网络或存储实现。
+8. Device ID 可以全局稳定，但 Get/Resolve/List/Mutation/Audit 都必须由 Owner security context 限定；跨 Owner 一律 fail closed，remount 不能转移 Owner。
+9. HTTP/router 不直接操作 SQLite；domain/application 不导入框架、网络或存储实现。
 
 ## 配置与运行
 
@@ -157,6 +159,7 @@ uv run pytest --cov=eidolon_kernel --cov-report=term-missing -q
 ## 后续演进门槛
 
 - 先由 Companion 事实拥有方发布 versioned read contract、lifecycle enum、认证方式和兼容策略，再增加生产 Companion adapter。
+- Kernel 不拥有 Owner profile/account；未来即使需要读取 Owner lifecycle，也必须由事实拥有方先发布窄且稳定的 authority contract，不能直连兄弟 DB 或在 Kernel 发明用户资料 API。
 - 保持 Kernel local-only 时，trusted-local authorizer 是明确部署假设而不是产品化 blocker；若要直接接入不可信网络或跨 Host，必须先定义可验证 principal 和 ingress-to-Kernel 信任通道，再替换 adapter。不得把 header hints 包装成“认证”。
 - Capability/Lease、Service Registry 或其他 namespace 模块必须先证明其事实确需跨服务全局权威，并更新 ADR/架构测试。
 - 只有出现动态服务发现、跨 Host 服务迁移、能力句柄、服务死亡通知等实际需求，才评估 Binder-like IPC runtime；“已经用了多种协议”本身不是引入依据。

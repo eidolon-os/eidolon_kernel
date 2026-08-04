@@ -12,17 +12,24 @@ from eidolon_kernel.domain.errors import (
     NotFound,
     RevisionConflict,
 )
-from eidolon_kernel.domain.model import Actor, DeviceMount
+from eidolon_kernel.domain.model import DeviceMount
 from eidolon_kernel.ports.authorities import CompanionAuthority, DeviceAuthority
 from eidolon_kernel.ports.runtime import Clock, CommitResult, MountProjection, MountStore
 
 
 def _replay(
-    store: MountStore, *, request_id: str, operation: str, fingerprint: str
+    store: MountStore,
+    *,
+    request_id: str,
+    operation: str,
+    fingerprint: str,
+    owner_id: str,
 ) -> CommitResult | None:
     stored = store.get_request(request_id)
     if stored is None:
         return None
+    if stored.mount.owner_id != owner_id:
+        raise NotFound("device mount not found")
     if stored.operation != operation or stored.fingerprint != fingerprint:
         raise IdempotencyConflict("request_id already belongs to a different mutation")
     return CommitResult(
@@ -30,11 +37,6 @@ def _replay(
         audit_position=stored.audit_position,
         replayed=True,
     )
-
-
-def _require_actor_owner(actor: Actor, owner_id: str) -> None:
-    if actor.owner_id != owner_id:
-        raise AuthorityRejected("actor owner does not match requested mount owner")
 
 
 def _project_committed(
@@ -56,17 +58,21 @@ class MountDevice:
     companions: CompanionAuthority
     clock: Clock
 
-    async def execute(self, command: MountDeviceCommand, *, actor: Actor) -> CommitResult:
-        _require_actor_owner(actor, command.owner_id)
+    async def execute(self, command: MountDeviceCommand) -> CommitResult:
         replay = _replay(
             self.store,
             request_id=command.request_id,
             operation="device.mount",
             fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
         )
         if replay is not None:
             _project_committed(self.store, self.projection, replay.mount)
             return replay
+
+        current = self.store.get(command.device_id)
+        if current is not None and current.owner_id != command.owner_id:
+            raise NotFound("device mount not found")
 
         device = await self.devices.get_device(
             owner_id=command.owner_id, device_id=command.device_id
@@ -92,12 +98,15 @@ class MountDevice:
             request_id=command.request_id,
             operation="device.mount",
             fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
         )
         if replay is not None:
             _project_committed(self.store, self.projection, replay.mount)
             return replay
 
         current = self.store.get(command.device_id)
+        if current is not None and current.owner_id != command.owner_id:
+            raise NotFound("device mount not found")
         actual_revision = current.revision if current is not None else 0
         if actual_revision != command.expected_revision:
             raise RevisionConflict(
@@ -113,7 +122,6 @@ class MountDevice:
                 owner_id=command.owner_id,
                 companion_id=command.companion_id,
                 at=now,
-                actor=actor,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
             )
@@ -123,7 +131,6 @@ class MountDevice:
                 owner_id=command.owner_id,
                 companion_id=command.companion_id,
                 at=now,
-                actor=actor,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
             )
@@ -153,13 +160,13 @@ class UnmountDevice:
     projection: MountProjection
     clock: Clock
 
-    def execute(self, command: UnmountDeviceCommand, *, actor: Actor) -> CommitResult:
-        _require_actor_owner(actor, command.owner_id)
+    def execute(self, command: UnmountDeviceCommand) -> CommitResult:
         replay = _replay(
             self.store,
             request_id=command.request_id,
             operation="device.unmount",
             fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
         )
         if replay is not None:
             _project_committed(self.store, self.projection, replay.mount)
@@ -176,7 +183,6 @@ class UnmountDevice:
             )
         mount = current.unmounted(
             at=self.clock.now(),
-            actor=actor,
             request_id=command.request_id,
             fingerprint=command.fingerprint,
         )

@@ -107,3 +107,18 @@ def test_contract_schemas_are_packaged_and_no_business_modules_leaked_in() -> No
     forbidden_directories = {"agent", "memory", "media", "channel", "commands", "state"}
     actual = {path.name for path in PACKAGE.iterdir() if path.is_dir()}
     assert actual.isdisjoint(forbidden_directories)
+
+
+def test_owner_is_the_only_kernel_security_namespace_principal() -> None:
+    forbidden_symbols = {"actor_id", "ActorWire", "ActorAuthorizer"}
+    violations = []
+    sources = tuple(PACKAGE.rglob("*.py")) + tuple(
+        (PACKAGE / "contracts/schemas").rglob("*.json")
+    )
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        present = sorted(symbol for symbol in forbidden_symbols if symbol in text)
+        if present:
+            violations.append(f"{path.relative_to(ROOT)}: {present}")
+    assert violations == []
+    assert not (PACKAGE / "contracts/schemas/common/actor.schema.json").exists()

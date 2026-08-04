@@ -12,8 +12,8 @@ def test_get_resolve_and_scoped_list_query_projection() -> None:
     projection = InMemoryMountProjection()
     projection.rebuild((sample_mount(),))
     queries = DeviceMountQueries(projection)
-    assert queries.get("device-1").revision == 1
-    assert queries.resolve("device-1").active
+    assert queries.get(owner_id="owner-1", device_id="device-1").revision == 1
+    assert queries.resolve(owner_id="owner-1", device_id="device-1").active
     assert queries.list(
         owner_id="owner-1",
         companion_id=None,
@@ -24,15 +24,20 @@ def test_get_resolve_and_scoped_list_query_projection() -> None:
 
     projection.put(sample_mount(2, request_id="inactive", active=False))
     with pytest.raises(NotFound):
-        queries.resolve("device-1")
+        queries.resolve(owner_id="owner-1", device_id="device-1")
     with pytest.raises(NotFound):
-        queries.get("missing")
+        queries.get(owner_id="owner-1", device_id="missing")
+    with pytest.raises(NotFound):
+        queries.get(owner_id="owner-2", device_id="device-1")
+    with pytest.raises(NotFound):
+        queries.resolve(owner_id="owner-2", device_id="device-1")
 
 
 @pytest.mark.parametrize(
     "arguments",
     [
         {"owner_id": None, "companion_id": None, "limit": 1},
+        {"owner_id": None, "companion_id": "companion", "limit": 1},
         {"owner_id": "owner", "companion_id": None, "limit": 0},
         {"owner_id": "owner", "companion_id": None, "limit": 101},
         {"owner_id": "", "companion_id": None, "limit": 1},
@@ -64,3 +69,8 @@ def test_list_query_rejects_unscoped_or_unbounded_requests(arguments) -> None:
 def test_audit_query_rejects_invalid_bounds(arguments) -> None:
     with pytest.raises(InvalidRequest):
         AuditQueries(MemoryStore()).list(**arguments)
+
+
+def test_audit_query_requires_owner_scope() -> None:
+    with pytest.raises(InvalidRequest):
+        AuditQueries(MemoryStore()).list(after_position=0, limit=1, owner_id=None)

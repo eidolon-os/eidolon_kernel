@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from eidolon_kernel.contracts.bindings import (
-    ActorWire,
     AuditEventWire,
     DeviceMountWire,
     HubDeviceDirectoryEntryWire,
@@ -12,15 +11,17 @@ from eidolon_kernel.contracts.bindings import (
     UnmountDeviceRequestWire,
 )
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
-from eidolon_kernel.domain.model import Actor, AuditEvent, DeviceAdmission, DeviceMount
+from eidolon_kernel.domain.model import AuditEvent, DeviceAdmission, DeviceMount
 from eidolon_kernel.ports.runtime import CommitResult
 
 
-def mount_request_to_domain(wire: MountDeviceRequestWire) -> MountDeviceCommand:
+def mount_request_to_domain(
+    wire: MountDeviceRequestWire, *, owner_id: str
+) -> MountDeviceCommand:
     return MountDeviceCommand(
         request_id=wire.request_id,
         device_id=wire.device_id,
-        owner_id=wire.owner_id,
+        owner_id=owner_id,
         companion_id=wire.companion_id,
         expected_revision=wire.expected_revision,
         replace_existing=wire.replace_existing,
@@ -28,18 +29,14 @@ def mount_request_to_domain(wire: MountDeviceRequestWire) -> MountDeviceCommand:
 
 
 def unmount_request_to_domain(
-    wire: UnmountDeviceRequestWire, *, device_id: str
+    wire: UnmountDeviceRequestWire, *, device_id: str, owner_id: str
 ) -> UnmountDeviceCommand:
     return UnmountDeviceCommand(
         request_id=wire.request_id,
         device_id=device_id,
-        owner_id=wire.owner_id,
+        owner_id=owner_id,
         expected_revision=wire.expected_revision,
     )
-
-
-def actor_to_wire(actor: Actor) -> ActorWire:
-    return ActorWire(actor_id=actor.actor_id, owner_id=actor.owner_id, source=actor.source)
 
 
 def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
@@ -50,7 +47,6 @@ def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
         revision=mount.revision,
         created_at=mount.created_at,
         updated_at=mount.updated_at,
-        actor=actor_to_wire(mount.actor),
         request_id=mount.request_id,
         fingerprint=mount.fingerprint,
         active=mount.active,
@@ -76,7 +72,6 @@ def audit_to_wire(event: AuditEvent) -> AuditEventWire:
         companion_id=mount.companion_id,
         mount_revision=mount.revision,
         active=mount.active,
-        actor=actor_to_wire(mount.actor),
         request_id=mount.request_id,
         fingerprint=mount.fingerprint,
         occurred_at=event.occurred_at,

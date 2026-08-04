@@ -2,7 +2,7 @@ import pytest
 
 from eidolon_kernel.adapters.companion.unavailable import UnavailableCompanionAuthority
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
-from eidolon_kernel.adapters.security.trusted_local import TrustedLocalActorAuthorizer
+from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.domain.errors import AuthorityUnavailable, AuthorizationDenied
 from tests.support import sample_mount
 
@@ -15,30 +15,24 @@ async def test_companion_adapter_fails_closed_until_contract_exists() -> None:
 
 @pytest.mark.asyncio
 async def test_trusted_local_authorizer_requires_matching_explicit_hints() -> None:
-    authorizer = TrustedLocalActorAuthorizer()
-    actor = await authorizer.authorize(
+    authorizer = TrustedLocalOwnerAuthorizer()
+    owner_id = await authorizer.authorize(
         action="read",
-        owner_id="owner-1",
         credential=None,
-        actor_id_hint="actor-1",
-        actor_owner_hint="owner-1",
+        owner_id_hint="owner-1",
     )
-    assert actor.source == "trusted-local-ingress"
+    assert owner_id == "owner-1"
     with pytest.raises(AuthorizationDenied):
         await authorizer.authorize(
             action="write",
-            owner_id="owner-1",
             credential="Bearer not-supported",
-            actor_id_hint="actor-1",
-            actor_owner_hint="owner-1",
+            owner_id_hint="owner-1",
         )
     with pytest.raises(AuthorizationDenied):
         await authorizer.authorize(
             action="write",
-            owner_id="owner-1",
             credential=None,
-            actor_id_hint=None,
-            actor_owner_hint="owner-1",
+            owner_id_hint=None,
         )
 
 

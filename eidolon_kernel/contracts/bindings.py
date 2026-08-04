@@ -12,12 +12,6 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class ActorWire(ContractModel):
-    actor_id: str = Field(min_length=1, max_length=128)
-    owner_id: str = Field(min_length=1, max_length=64)
-    source: str = Field(min_length=1, max_length=64)
-
-
 class DeviceMountWire(ContractModel):
     operation: Literal["kernel.device-mount"] = "kernel.device-mount"
     device_id: str = Field(min_length=1, max_length=128)
@@ -26,7 +20,6 @@ class DeviceMountWire(ContractModel):
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
-    actor: ActorWire
     request_id: str = Field(min_length=1, max_length=96)
     fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     active: bool
@@ -36,7 +29,6 @@ class MountDeviceRequestWire(ContractModel):
     operation: Literal["device.mount"]
     request_id: str = Field(min_length=1, max_length=96)
     device_id: str = Field(min_length=1, max_length=128)
-    owner_id: str = Field(min_length=1, max_length=64)
     companion_id: str = Field(min_length=1, max_length=64)
     expected_revision: int = Field(ge=0, strict=True)
     replace_existing: bool = Field(strict=True)
@@ -45,7 +37,6 @@ class MountDeviceRequestWire(ContractModel):
 class UnmountDeviceRequestWire(ContractModel):
     operation: Literal["device.unmount"]
     request_id: str = Field(min_length=1, max_length=96)
-    owner_id: str = Field(min_length=1, max_length=64)
     expected_revision: int = Field(ge=1, strict=True)
 
 
@@ -79,7 +70,6 @@ class AuditEventWire(ContractModel):
     companion_id: str = Field(min_length=1, max_length=64)
     mount_revision: int = Field(ge=1)
     active: bool
-    actor: ActorWire
     request_id: str = Field(min_length=1, max_length=96)
     fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     occurred_at: datetime

@@ -6,7 +6,6 @@ from typing import Any
 
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
 from eidolon_kernel.domain.model import (
-    Actor,
     AuditEvent,
     CompanionIdentity,
     DeviceAdmission,
@@ -106,17 +105,14 @@ class MemoryStore:
         return tuple(sorted(self.mounts.values(), key=lambda item: item.device_id))
 
     def list_audit(
-        self, *, after_position: int, limit: int, owner_id: str | None = None
+        self, *, after_position: int, limit: int, owner_id: str
     ) -> tuple[AuditEvent, ...]:
         return tuple(
             event
             for event in self.events
             if event.position > after_position
-            and (owner_id is None or event.mount.owner_id == owner_id)
+            and event.mount.owner_id == owner_id
         )[:limit]
-
-
-ACTOR = Actor("actor-1", "owner-1", "test")
 
 
 def sample_mount(
@@ -130,7 +126,6 @@ def sample_mount(
         revision=revision,
         created_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
         updated_at=now,
-        actor=Actor("actor-1", "owner-1", "test"),
         request_id=request_id,
         fingerprint="sha256:" + "a" * 64,
         active=active,
@@ -142,7 +137,6 @@ def mount_body(**overrides) -> dict[str, object]:
         "operation": "device.mount",
         "request_id": "mount-1",
         "device_id": "device-1",
-        "owner_id": "owner-1",
         "companion_id": "companion-1",
         "expected_revision": 0,
         "replace_existing": False,
@@ -152,4 +146,4 @@ def mount_body(**overrides) -> dict[str, object]:
 
 
 def headers(owner_id: str = "owner-1") -> dict[str, str]:
-    return {"X-Eidolon-Actor": "actor-1", "X-Eidolon-Owner": owner_id}
+    return {"X-Eidolon-Owner": owner_id}

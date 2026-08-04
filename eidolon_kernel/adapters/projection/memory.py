@@ -29,7 +29,7 @@ class InMemoryMountProjection:
     def list(
         self,
         *,
-        owner_id: str | None,
+        owner_id: str,
         companion_id: str | None,
         active_only: bool,
         after_device_id: str | None,
@@ -40,7 +40,7 @@ class InMemoryMountProjection:
         return tuple(
             mount
             for mount in sorted(values, key=lambda item: item.device_id)
-            if (owner_id is None or mount.owner_id == owner_id)
+            if mount.owner_id == owner_id
             and (companion_id is None or mount.companion_id == companion_id)
             and (not active_only or mount.active)
             and (after_device_id is None or mount.device_id > after_device_id)

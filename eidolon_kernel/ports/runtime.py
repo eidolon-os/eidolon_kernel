@@ -47,7 +47,7 @@ class MountStore(Protocol):
     def list_all(self) -> tuple[DeviceMount, ...]: ...
 
     def list_audit(
-        self, *, after_position: int, limit: int, owner_id: str | None = None
+        self, *, after_position: int, limit: int, owner_id: str
     ) -> tuple[AuditEvent, ...]: ...
 
 
@@ -61,7 +61,7 @@ class MountProjection(Protocol):
     def list(
         self,
         *,
-        owner_id: str | None,
+        owner_id: str,
         companion_id: str | None,
         active_only: bool,
         after_device_id: str | None,

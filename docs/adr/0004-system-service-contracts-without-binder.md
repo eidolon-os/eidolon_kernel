@@ -12,7 +12,7 @@ Eidolon OS 当前已经使用 HTTP、gRPC、NATS 和 LiveKit，但代码确认�
 - NATS 用于需要 publish/ack/redelivery/replay 的异步路径；
 - LiveKit 拥有 room、participant 和 media session 生命周期。
 
-现有关键边界已经由领域 Port 隔离。例如 Kernel 的 `DeviceAuthority` / `CompanionAuthority` / `ActorAuthorizer`、Hub 的 `ChannelProviderControl`、Agent 的 `MemoryPort` / `BodyCommandPort`。当前代码没有动态 Service Manager、跨服务 CapabilityHandle/Lease、服务按需激活或统一死亡通知，也没有同一领域 Port 必须透明运行在多种 transport 上的事实。
+现有关键边界已经由领域 Port 隔离。例如 Kernel 的 `DeviceAuthority` / `CompanionAuthority` / `OwnerAuthorizer`、Hub 的 `ChannelProviderControl`、Agent 的 `MemoryPort` / `BodyCommandPort`。当前代码没有动态 Service Manager、跨服务 CapabilityHandle/Lease、服务按需激活或统一死亡通知，也没有同一领域 Port 必须透明运行在多种 transport 上的事实。
 
 因此，“使用了多种协议”不能证明需要 Binder。现在增加 `ipc.call(service, method, payload)` 会抹掉 streaming、cancellation、ack、replay 和 media lifecycle 差异，最终仍需把 transport 概念泄漏回调用方。
 
