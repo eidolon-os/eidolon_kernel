@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/mount.schema.json",
+  "title": "Device Mount Fact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "device_id", "owner_id", "companion_id", "revision", "created_at", "updated_at", "actor", "request_id", "fingerprint", "active"],
+  "properties": {
+    "operation": {"const": "kernel.device-mount"},
+    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "revision": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "actor": {"$ref": "https://eidolon.dev/kernel/contracts/v1/common/actor.schema.json"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "active": {"type": "boolean"}
+  }
+}

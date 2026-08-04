@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/page.schema.json",
+  "title": "Device Mount Page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "next_cursor", "mounts"],
+  "properties": {
+    "operation": {"const": "kernel.device-mount-page"},
+    "next_cursor": {"type": ["string", "null"], "maxLength": 128},
+    "mounts": {"type": "array", "maxItems": 100, "items": {"$ref": "https://eidolon.dev/kernel/contracts/v1/device-mount/mount.schema.json"}}
+  }
+}

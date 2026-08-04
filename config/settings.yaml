@@ -1,0 +1,8 @@
+persistence:
+  path: var/eidolon-kernel.sqlite3
+hub:
+  base_url: http://127.0.0.1:8082
+  timeout_seconds: 3.0
+deployment:
+  mode: trusted-local
+  trusted_local_ingress: true

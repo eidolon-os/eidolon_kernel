@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/audit/event.schema.json",
+  "title": "Kernel Audit Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "position", "event_id", "event_type", "device_id", "owner_id", "companion_id", "mount_revision", "active", "actor", "request_id", "fingerprint", "occurred_at", "data"],
+  "properties": {
+    "operation": {"const": "kernel.audit-event"},
+    "position": {"type": "integer", "minimum": 1},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "event_type": {"type": "string", "minLength": 1, "maxLength": 255},
+    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "mount_revision": {"type": "integer", "minimum": 1},
+    "active": {"type": "boolean"},
+    "actor": {"$ref": "https://eidolon.dev/kernel/contracts/v1/common/actor.schema.json"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "data": {"type": "object"}
+  }
+}

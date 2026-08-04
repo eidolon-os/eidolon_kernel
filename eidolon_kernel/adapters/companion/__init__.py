@@ -1,0 +1,1 @@
+"""Companion authority adapters."""

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/common/actor.schema.json",
+  "title": "Kernel Actor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actor_id", "owner_id", "source"],
+  "properties": {
+    "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "source": {"type": "string", "minLength": 1, "maxLength": 64}
+  }
+}

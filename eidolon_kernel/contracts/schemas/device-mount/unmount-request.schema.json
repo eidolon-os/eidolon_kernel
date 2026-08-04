@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/unmount-request.schema.json",
+  "title": "Unmount Device Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "request_id", "owner_id", "expected_revision"],
+  "properties": {
+    "operation": {"const": "device.unmount"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "expected_revision": {"type": "integer", "minimum": 1}
+  }
+}

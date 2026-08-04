@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/mutation-result.schema.json",
+  "title": "Device Mount Mutation Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "mount", "audit_position", "replayed"],
+  "properties": {
+    "operation": {"const": "kernel.device-mount-mutation-result"},
+    "mount": {"$ref": "https://eidolon.dev/kernel/contracts/v1/device-mount/mount.schema.json"},
+    "audit_position": {"type": "integer", "minimum": 1},
+    "replayed": {"type": "boolean"}
+  }
+}

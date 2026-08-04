@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/mount-request.schema.json",
+  "title": "Mount Device Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "request_id", "device_id", "owner_id", "companion_id", "expected_revision", "replace_existing"],
+  "properties": {
+    "operation": {"const": "device.mount"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "expected_revision": {"type": "integer", "minimum": 0},
+    "replace_existing": {"type": "boolean"}
+  }
+}

@@ -1,0 +1,110 @@
+"""Strict runtime normalization bindings; JSON Schema remains normative."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ContractModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class ActorWire(ContractModel):
+    actor_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    source: str = Field(min_length=1, max_length=64)
+
+
+class DeviceMountWire(ContractModel):
+    operation: Literal["kernel.device-mount"] = "kernel.device-mount"
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(min_length=1, max_length=64)
+    revision: int = Field(ge=1)
+    created_at: datetime
+    updated_at: datetime
+    actor: ActorWire
+    request_id: str = Field(min_length=1, max_length=96)
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    active: bool
+
+
+class MountDeviceRequestWire(ContractModel):
+    operation: Literal["device.mount"]
+    request_id: str = Field(min_length=1, max_length=96)
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=0, strict=True)
+    replace_existing: bool = Field(strict=True)
+
+
+class UnmountDeviceRequestWire(ContractModel):
+    operation: Literal["device.unmount"]
+    request_id: str = Field(min_length=1, max_length=96)
+    owner_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1, strict=True)
+
+
+class MutationResultWire(ContractModel):
+    operation: Literal["kernel.device-mount-mutation-result"] = (
+        "kernel.device-mount-mutation-result"
+    )
+    mount: DeviceMountWire
+    audit_position: int = Field(ge=1)
+    replayed: bool
+
+
+class DeviceMountPageWire(ContractModel):
+    operation: Literal["kernel.device-mount-page"] = "kernel.device-mount-page"
+    next_cursor: str | None = Field(default=None, max_length=128)
+    mounts: tuple[DeviceMountWire, ...] = Field(default=(), max_length=100)
+
+    @field_validator("mounts", mode="before")
+    @classmethod
+    def _arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
+
+
+class AuditEventWire(ContractModel):
+    operation: Literal["kernel.audit-event"] = "kernel.audit-event"
+    position: int = Field(ge=1)
+    event_id: str = Field(min_length=1, max_length=255)
+    event_type: str = Field(min_length=1, max_length=255)
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(min_length=1, max_length=64)
+    mount_revision: int = Field(ge=1)
+    active: bool
+    actor: ActorWire
+    request_id: str = Field(min_length=1, max_length=96)
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    occurred_at: datetime
+    data: dict[str, Any]
+
+
+class AuditPageWire(ContractModel):
+    operation: Literal["kernel.audit-page"] = "kernel.audit-page"
+    next_position: int = Field(ge=0)
+    events: tuple[AuditEventWire, ...] = Field(default=(), max_length=500)
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
+
+
+class HubDeviceDirectoryEntryWire(ContractModel):
+    operation: Literal["device.directory-entry"]
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_scope: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(max_length=128)
+    device_kind: str = Field(min_length=1, max_length=96)
+    manifest: dict[str, Any]
+    manifest_revision: str = Field(min_length=1, max_length=128)
+    lifecycle_state: Literal["pending-approval", "approved", "revoked"]
+    enrolled_at: datetime
+    updated_at: datetime

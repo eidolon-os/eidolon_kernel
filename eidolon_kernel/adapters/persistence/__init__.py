@@ -1,0 +1,1 @@
+"""Kernel-exclusive SQLite authority."""

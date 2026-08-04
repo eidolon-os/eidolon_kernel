@@ -1,0 +1,191 @@
+"""Device Mount command handlers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
+from eidolon_kernel.domain.errors import (
+    AuthorityRejected,
+    Conflict,
+    IdempotencyConflict,
+    NotFound,
+    RevisionConflict,
+)
+from eidolon_kernel.domain.model import Actor, DeviceMount
+from eidolon_kernel.ports.authorities import CompanionAuthority, DeviceAuthority
+from eidolon_kernel.ports.runtime import Clock, CommitResult, MountProjection, MountStore
+
+
+def _replay(
+    store: MountStore, *, request_id: str, operation: str, fingerprint: str
+) -> CommitResult | None:
+    stored = store.get_request(request_id)
+    if stored is None:
+        return None
+    if stored.operation != operation or stored.fingerprint != fingerprint:
+        raise IdempotencyConflict("request_id already belongs to a different mutation")
+    return CommitResult(
+        mount=stored.mount,
+        audit_position=stored.audit_position,
+        replayed=True,
+    )
+
+
+def _require_actor_owner(actor: Actor, owner_id: str) -> None:
+    if actor.owner_id != owner_id:
+        raise AuthorityRejected("actor owner does not match requested mount owner")
+
+
+def _project_committed(
+    store: MountStore, projection: MountProjection, mount: DeviceMount
+) -> None:
+    try:
+        projection.put(mount)
+    except Exception:
+        # The commit already succeeded. Recover the disposable projection from the
+        # sole authority instead of pretending the write failed or leaving stale reads.
+        projection.rebuild(store.list_all())
+
+
+@dataclass(slots=True)
+class MountDevice:
+    store: MountStore
+    projection: MountProjection
+    devices: DeviceAuthority
+    companions: CompanionAuthority
+    clock: Clock
+
+    async def execute(self, command: MountDeviceCommand, *, actor: Actor) -> CommitResult:
+        _require_actor_owner(actor, command.owner_id)
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="device.mount",
+            fingerprint=command.fingerprint,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        device = await self.devices.get_device(
+            owner_id=command.owner_id, device_id=command.device_id
+        )
+        if (
+            device.device_id != command.device_id
+            or device.owner_id != command.owner_id
+            or device.status != "approved"
+        ):
+            raise AuthorityRejected("Hub device must exist, be approved, and match owner")
+        companion = await self.companions.get_companion(companion_id=command.companion_id)
+        if (
+            companion.companion_id != command.companion_id
+            or companion.owner_id != command.owner_id
+            or companion.status != "active"
+        ):
+            raise AuthorityRejected("Companion must exist, be active, and match owner")
+
+        # Another identical call may have committed while this call awaited its
+        # external authorities. Preserve concurrent idempotency before evaluating CAS.
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="device.mount",
+            fingerprint=command.fingerprint,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        current = self.store.get(command.device_id)
+        actual_revision = current.revision if current is not None else 0
+        if actual_revision != command.expected_revision:
+            raise RevisionConflict(
+                f"expected revision {command.expected_revision}, current revision is {actual_revision}"
+            )
+        if current is not None and current.active and not command.replace_existing:
+            raise Conflict("device already has an active mount; explicit replace_existing is required")
+
+        now = self.clock.now()
+        if current is None:
+            mount = DeviceMount.first(
+                device_id=command.device_id,
+                owner_id=command.owner_id,
+                companion_id=command.companion_id,
+                at=now,
+                actor=actor,
+                request_id=command.request_id,
+                fingerprint=command.fingerprint,
+            )
+            event_type = "eidolon.kernel.device-mounted.v1"
+        else:
+            mount = current.mounted_as(
+                owner_id=command.owner_id,
+                companion_id=command.companion_id,
+                at=now,
+                actor=actor,
+                request_id=command.request_id,
+                fingerprint=command.fingerprint,
+            )
+            event_type = (
+                "eidolon.kernel.device-remounted.v1"
+                if current.active
+                else "eidolon.kernel.device-mounted.v1"
+            )
+        result = self.store.commit(
+            mount=mount,
+            expected_revision=command.expected_revision,
+            operation="device.mount",
+            event_type=event_type,
+            event_data={
+                "previous_revision": actual_revision,
+                "manifest_revision": device.manifest_revision,
+                "replace_existing": command.replace_existing,
+            },
+        )
+        _project_committed(self.store, self.projection, result.mount)
+        return result
+
+
+@dataclass(slots=True)
+class UnmountDevice:
+    store: MountStore
+    projection: MountProjection
+    clock: Clock
+
+    def execute(self, command: UnmountDeviceCommand, *, actor: Actor) -> CommitResult:
+        _require_actor_owner(actor, command.owner_id)
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="device.unmount",
+            fingerprint=command.fingerprint,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        current = self.store.get(command.device_id)
+        if current is None or current.owner_id != command.owner_id:
+            raise NotFound("active device mount not found")
+        if not current.active:
+            raise Conflict("device mount is already inactive")
+        if current.revision != command.expected_revision:
+            raise RevisionConflict(
+                f"expected revision {command.expected_revision}, current revision is {current.revision}"
+            )
+        mount = current.unmounted(
+            at=self.clock.now(),
+            actor=actor,
+            request_id=command.request_id,
+            fingerprint=command.fingerprint,
+        )
+        result = self.store.commit(
+            mount=mount,
+            expected_revision=command.expected_revision,
+            operation="device.unmount",
+            event_type="eidolon.kernel.device-unmounted.v1",
+            event_data={"previous_revision": current.revision},
+        )
+        _project_committed(self.store, self.projection, result.mount)
+        return result

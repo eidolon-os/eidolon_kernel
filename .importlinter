@@ -1,0 +1,49 @@
+[importlinter]
+root_package = eidolon_kernel
+
+[importlinter:contract:domain]
+name = Domain is independent
+type = forbidden
+source_modules =
+    eidolon_kernel.domain
+forbidden_modules =
+    eidolon_kernel.application
+    eidolon_kernel.ports
+    eidolon_kernel.adapters
+    eidolon_kernel.interfaces
+    eidolon_kernel.composition
+    eidolon_kernel.contracts
+
+[importlinter:contract:ports]
+name = Ports have no outer dependencies
+type = forbidden
+source_modules =
+    eidolon_kernel.ports
+forbidden_modules =
+    eidolon_kernel.application
+    eidolon_kernel.adapters
+    eidolon_kernel.interfaces
+    eidolon_kernel.composition
+    eidolon_kernel.contracts
+
+[importlinter:contract:application]
+name = Application depends only inward
+type = forbidden
+source_modules =
+    eidolon_kernel.application
+forbidden_modules =
+    eidolon_kernel.adapters
+    eidolon_kernel.interfaces
+    eidolon_kernel.composition
+    eidolon_kernel.contracts
+
+[importlinter:contract:contracts]
+name = Contracts do not depend on implementations
+type = forbidden
+source_modules =
+    eidolon_kernel.contracts
+forbidden_modules =
+    eidolon_kernel.application
+    eidolon_kernel.adapters
+    eidolon_kernel.interfaces
+    eidolon_kernel.composition

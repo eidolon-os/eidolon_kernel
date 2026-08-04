@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/audit/page.schema.json",
+  "title": "Kernel Audit Page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "next_position", "events"],
+  "properties": {
+    "operation": {"const": "kernel.audit-page"},
+    "next_position": {"type": "integer", "minimum": 0},
+    "events": {"type": "array", "maxItems": 500, "items": {"$ref": "https://eidolon.dev/kernel/contracts/v1/audit/event.schema.json"}}
+  }
+}
