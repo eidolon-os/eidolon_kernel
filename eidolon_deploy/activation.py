@@ -27,6 +27,18 @@ class ActivationReceipt:
     error: str | None = None
 
 
+def receipt_to_document(receipt: ActivationReceipt) -> dict[str, object]:
+    """Map immutable application evidence to a JSON-ready wire document."""
+
+    return {
+        "release_id": receipt.release_id,
+        "status": receipt.status.value,
+        "transaction_id": receipt.transaction_id,
+        "previous_targets": dict(receipt.previous_targets),
+        "error": receipt.error,
+    }
+
+
 class ActivationFailed(RuntimeError):
     def __init__(self, receipt: ActivationReceipt) -> None:
         super().__init__(f"release activation failed and rolled back: {receipt.error}")

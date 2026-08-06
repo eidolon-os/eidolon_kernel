@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -350,7 +351,7 @@ def test_receipt_is_atomic_machine_readable_evidence(tmp_path: Path) -> None:
             release_id=release.release_id,
             status=ActivationStatus.ACTIVATED,
             transaction_id=snapshot.transaction_id,
-            previous_targets=previous,
+            previous_targets=MappingProxyType(dict(previous)),
         )
     )
 

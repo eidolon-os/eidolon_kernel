@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
@@ -14,6 +13,7 @@ from eidolon_deploy.activation import (
     ActivationReceipt,
     ReleaseActivator,
     RollbackFailed,
+    receipt_to_document,
 )
 from eidolon_deploy.linux import LinuxDeploymentError, LinuxDeploymentHost
 from eidolon_deploy.manifest import ReleaseDescriptorError, load_release_descriptor
@@ -100,10 +100,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _print_receipt(receipt: ActivationReceipt, *, stream=None) -> None:
-    document = asdict(receipt)
-    document["status"] = receipt.status.value
-    document["previous_targets"] = dict(receipt.previous_targets)
-    _print_json(document, stream=stream)
+    _print_json(receipt_to_document(receipt), stream=stream)
 
 
 def _print_json(document: object, *, stream=None) -> None:

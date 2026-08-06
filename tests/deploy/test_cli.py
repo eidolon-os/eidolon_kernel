@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 from eidolon_deploy import cli
 from eidolon_deploy.activation import (
@@ -50,10 +51,12 @@ def _receipt(status: ActivationStatus) -> ActivationReceipt:
         release_id="20260806-m2d-test",
         status=status,
         transaction_id=None if status is ActivationStatus.DRY_RUN else "tx-cli",
-        previous_targets={
-            "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
-            "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
-        },
+        previous_targets=MappingProxyType(
+            {
+                "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
+                "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
+            }
+        ),
     )
 
 

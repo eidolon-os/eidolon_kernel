@@ -15,12 +15,12 @@ import subprocess
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
-from eidolon_deploy.activation import ActivationReceipt
+from eidolon_deploy.activation import ActivationReceipt, receipt_to_document
 from eidolon_deploy.fingerprints import (
     INSTALLED_DISTRIBUTIONS_SCRIPT,
     environment_sha256,
@@ -383,10 +383,11 @@ class LinuxDeploymentHost:
         backup_path = self._transaction_paths.get(receipt.transaction_id)
         if backup_path is None:
             raise LinuxDeploymentError("activation transaction is unknown to this host")
-        document = asdict(receipt)
-        document["status"] = receipt.status.value
-        document["previous_targets"] = dict(receipt.previous_targets)
-        self._atomic_write_json(backup_path / "receipt.json", document, mode=0o600)
+        self._atomic_write_json(
+            backup_path / "receipt.json",
+            receipt_to_document(receipt),
+            mode=0o600,
+        )
 
     def load_snapshot(
         self,
