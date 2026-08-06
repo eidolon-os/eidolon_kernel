@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/system-audit-page-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "next_position", "events"],
+  "properties": {
+    "operation": {"const": "system.audit-page"},
+    "next_position": {"type": "integer", "minimum": 0},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position", "service_id", "operation", "desired_revision", "enabled", "request_id", "fingerprint", "occurred_at"],
+        "properties": {
+          "position": {"type": "integer", "minimum": 1},
+          "service_id": {"type": "string", "minLength": 1},
+          "operation": {"type": "string", "minLength": 1},
+          "desired_revision": {"type": "integer", "minimum": 1},
+          "enabled": {"type": "boolean"},
+          "request_id": {"type": "string", "minLength": 1},
+          "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "occurred_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

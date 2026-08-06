@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/service-status-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "service_id", "required", "desired", "runtime_state", "detail", "observed_at", "endpoints"],
+  "properties": {
+    "operation": {"const": "system.service-status"},
+    "service_id": {"type": "string", "minLength": 1},
+    "required": {"type": "boolean"},
+    "desired": {"$ref": "#/$defs/desired"},
+    "runtime_state": {"enum": ["unknown", "inactive", "starting", "ready", "degraded", "blocked", "failed"]},
+    "detail": {"type": ["string", "null"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "endpoints": {
+      "type": "array",
+      "items": {"$ref": "https://eidolon.dev/system/contracts/service-endpoint-v1.schema.json"}
+    }
+  },
+  "$defs": {
+    "desired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_id", "enabled", "revision", "updated_at"],
+      "properties": {
+        "service_id": {"type": "string", "minLength": 1},
+        "enabled": {"type": "boolean"},
+        "revision": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

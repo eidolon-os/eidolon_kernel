@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/service-mutation-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "state", "audit_position", "replayed"],
+  "properties": {
+    "operation": {"const": "system.service-mutation-result"},
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_id", "enabled", "revision", "updated_at"],
+      "properties": {
+        "service_id": {"type": "string", "minLength": 1},
+        "enabled": {"type": "boolean"},
+        "revision": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "audit_position": {"type": "integer", "minimum": 1},
+    "replayed": {"type": "boolean"}
+  }
+}

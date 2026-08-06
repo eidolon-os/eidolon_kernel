@@ -1,0 +1,1 @@
+"""Wire contracts for eidolond."""

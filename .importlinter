@@ -1,5 +1,7 @@
 [importlinter]
-root_package = eidolon_kernel
+root_packages =
+    eidolon_kernel
+    eidolon_system
 
 [importlinter:contract:domain]
 name = Domain is independent
@@ -47,3 +49,46 @@ forbidden_modules =
     eidolon_kernel.adapters
     eidolon_kernel.interfaces
     eidolon_kernel.composition
+
+[importlinter:contract:processes]
+name = Kernel and System Manager processes are independent
+type = independence
+modules =
+    eidolon_kernel
+    eidolon_system
+
+[importlinter:contract:system-domain]
+name = System domain is independent
+type = forbidden
+source_modules =
+    eidolon_system.domain
+forbidden_modules =
+    eidolon_system.application
+    eidolon_system.ports
+    eidolon_system.adapters
+    eidolon_system.interfaces
+    eidolon_system.composition
+    eidolon_system.contracts
+
+[importlinter:contract:system-ports]
+name = System ports have no outer dependencies
+type = forbidden
+source_modules =
+    eidolon_system.ports
+forbidden_modules =
+    eidolon_system.application
+    eidolon_system.adapters
+    eidolon_system.interfaces
+    eidolon_system.composition
+    eidolon_system.contracts
+
+[importlinter:contract:system-application]
+name = System application depends only inward
+type = forbidden
+source_modules =
+    eidolon_system.application
+forbidden_modules =
+    eidolon_system.adapters
+    eidolon_system.interfaces
+    eidolon_system.composition
+    eidolon_system.contracts

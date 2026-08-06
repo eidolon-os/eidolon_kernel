@@ -1,0 +1,17 @@
+# Raspberry Pi/Linux product profile. Installed systemd units are host mechanisms;
+# desired enablement remains authoritative in eidolond SQLite.
+manifest:
+  path: system-services.systemd.example.yaml
+persistence:
+  path: /var/lib/eidolon/eidolond.sqlite3
+host:
+  driver: systemd
+  systemctl: /usr/bin/systemctl
+  command_timeout_seconds: 20
+reconciliation:
+  interval_seconds: 5
+  readiness_timeout_seconds: 3
+interface:
+  host: 127.0.0.1
+  port: 8090
+  uds: /run/eidolon/system.sock

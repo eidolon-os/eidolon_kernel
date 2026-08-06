@@ -18,6 +18,9 @@ dependencies = [
     "uvicorn[standard]>=0.27",
 ]
 
+[project.scripts]
+eidolond = "eidolon_system.main:run"
+
 [dependency-groups]
 dev = [
     "import-linter>=2.0",
@@ -29,10 +32,11 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["eidolon_kernel*"]
+include = ["eidolon_kernel*", "eidolon_system*"]
 
 [tool.setuptools.package-data]
 "eidolon_kernel.contracts" = ["schemas/*/*.schema.json"]
+"eidolon_system.contracts" = ["schemas/*/*.schema.json"]
 
 [tool.ruff]
 line-length = 100
@@ -49,7 +53,7 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 branch = true
-source = ["eidolon_kernel"]
+source = ["eidolon_kernel", "eidolon_system"]
 
 [tool.coverage.report]
 show_missing = true

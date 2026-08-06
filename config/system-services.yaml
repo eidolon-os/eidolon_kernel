@@ -1,0 +1,15 @@
+version: 1
+services:
+  - service_id: hub
+    description: Device onboarding, registry and policy authority
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      supervisord: hub:hub-api
+    endpoints:
+      - endpoint_id: device-authority.http
+        protocol: http
+        address: http://127.0.0.1:8082
+        contract: eidolon.hub.device-directory.v1
+        health_url: http://127.0.0.1:8082/api/admin/probe/health

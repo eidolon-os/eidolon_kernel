@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/service-mutation-request-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "request_id", "expected_revision"],
+  "properties": {
+    "operation": {"enum": ["system.service.enable", "system.service.disable", "system.service.restart"]},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "expected_revision": {"type": "integer", "minimum": 1}
+  }
+}

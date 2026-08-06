@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/service-page-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "services"],
+  "properties": {
+    "operation": {"const": "system.service-page"},
+    "services": {
+      "type": "array",
+      "items": {"$ref": "https://eidolon.dev/system/contracts/service-status-v1.schema.json"}
+    }
+  }
+}

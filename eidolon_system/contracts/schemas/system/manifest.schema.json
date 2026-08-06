@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/system/contracts/system-service-manifest-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "services"],
+  "properties": {
+    "version": {"const": 1},
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service_id", "host_targets"],
+        "properties": {
+          "service_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+          "description": {"type": "string", "maxLength": 256, "default": ""},
+          "required": {"type": "boolean", "default": false},
+          "enabled_by_default": {"type": "boolean", "default": true},
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+            "default": []
+          },
+          "host_targets": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 256}
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["endpoint_id", "protocol", "address", "contract"],
+              "properties": {
+                "endpoint_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+                "protocol": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+                "address": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "contract": {"type": "string", "minLength": 1, "maxLength": 256},
+                "health_url": {"type": ["string", "null"], "format": "uri", "maxLength": 2048}
+              }
+            },
+            "default": []
+          }
+        }
+      }
+    }
+  }
+}

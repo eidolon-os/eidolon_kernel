@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "eidolon_kernel"
+SYSTEM_PACKAGE = ROOT / "eidolon_system"
 
 LAYER_IMPORTS = {
     "domain": {"domain"},
@@ -122,3 +123,56 @@ def test_owner_is_the_only_kernel_security_namespace_principal() -> None:
             violations.append(f"{path.relative_to(ROOT)}: {present}")
     assert violations == []
     assert not (PACKAGE / "contracts/schemas/common/actor.schema.json").exists()
+
+
+def test_kernel_and_system_manager_are_independent_packages() -> None:
+    assert SYSTEM_PACKAGE.is_dir()
+    violations = []
+    for path in PACKAGE.rglob("*.py"):
+        if any(name == "eidolon_system" or name.startswith("eidolon_system.") for name in imports(path)):
+            violations.append(str(path.relative_to(ROOT)))
+    for path in SYSTEM_PACKAGE.rglob("*.py"):
+        if any(name == "eidolon_kernel" or name.startswith("eidolon_kernel.") for name in imports(path)):
+            violations.append(str(path.relative_to(ROOT)))
+    assert violations == []
+
+
+def test_system_manager_layers_import_only_inward_and_hide_host_platforms() -> None:
+    allowed_by_layer = {
+        "domain": {"domain"},
+        "ports": {"domain", "ports"},
+        "application": {"domain", "ports", "application"},
+        "contracts": {"domain", "contracts"},
+        "adapters": {"domain", "ports", "contracts", "adapters"},
+        "interfaces": {"domain", "ports", "application", "contracts", "interfaces"},
+        "composition": {
+            "domain",
+            "ports",
+            "application",
+            "contracts",
+            "adapters",
+            "interfaces",
+            "composition",
+            "config",
+        },
+    }
+    violations = []
+    for layer, allowed in allowed_by_layer.items():
+        directory = SYSTEM_PACKAGE / layer
+        assert directory.is_dir()
+        for path in directory.rglob("*.py"):
+            for imported in imports(path):
+                if not imported.startswith("eidolon_system."):
+                    continue
+                target = imported.removeprefix("eidolon_system.").split(".", 1)[0]
+                if target not in allowed:
+                    violations.append(
+                        f"{path.relative_to(ROOT)} ({layer}) imports outer layer {target}"
+                    )
+    assert violations == []
+    for layer in ("domain", "ports", "application"):
+        text = "\n".join(
+            path.read_text(encoding="utf-8") for path in (SYSTEM_PACKAGE / layer).rglob("*.py")
+        )
+        assert "systemctl" not in text
+        assert "supervisorctl" not in text

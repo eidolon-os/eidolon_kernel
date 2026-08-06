@@ -1,0 +1,18 @@
+# Mac/dev transition profile. The System Manager owns desired state and directory;
+# the existing supervisord daemon remains only the host process executor.
+manifest:
+  path: system-services.yaml
+persistence:
+  path: ../var/eidolond.sqlite3
+host:
+  driver: supervisord
+  supervisorctl: ../../eidolon_admin/.venv/bin/supervisorctl
+  supervisor_config: ../../eidolon_admin/deploy/dev/supervisord.conf
+  command_timeout_seconds: 20
+reconciliation:
+  interval_seconds: 5
+  readiness_timeout_seconds: 3
+interface:
+  host: 127.0.0.1
+  port: 8090
+  uds: ../var/eidolond.sock
