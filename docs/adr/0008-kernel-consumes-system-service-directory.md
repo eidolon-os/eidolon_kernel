@@ -72,7 +72,8 @@ readiness，避免在 Kernel 新增 TTL、失效、watch 和并发缓存语义�
 剩余边界：
 
 - Data 的 producer contract、systemd target 与 readiness 已由代码和进程 E2E 验证并纳入产品
-  manifest；Raspberry Pi 持久化激活仍是部署动作，不改变本 ADR 的调用边界。
+  manifest；后续 Raspberry Pi 持久化激活、故障降级与整机重启验证也已完成，不改变本 ADR 的
+  调用边界。
 - 真实隔离 supervisord E2E 已验证 `eidolond` 可接管 Kernel 生命周期；当前 Admin 默认
   supervisord 尚未安装 Kernel program，所以 macOS/dev 仍是部署接线 blocker，不是 adapter blocker。
 - Raspberry Pi profile 已在 Debian 13 / systemd 257 真机完成安装、目录解析、Device Mount 与受管

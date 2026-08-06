@@ -79,10 +79,16 @@ Raspberry Pi 5 / Debian 13 / systemd 257 真机还验证了：
 5. eidolond 受管重启 Kernel 后，revision 1 Mount 从独占 SQLite 恢复；
 6. eidolond、Hub、Kernel 三个 SQLite `integrity_check=ok`。
 
-随后对整机执行真实 reboot，并以新的 systemd boot ID 复核：Bootstrap 与 eidolond 自动启动，
+M2-B 随后对整机执行真实 reboot，并以新的 systemd boot ID 复核：Bootstrap 与 eidolond 自动启动，
 Hub/Kernel 仍只由 eidolond desired state 拉起；directory 和两个服务 health 恢复，revision 1 Mount
-继续可读，三个 SQLite 再次 `integrity_check=ok`，本次 boot journal 无 warning/error。该验证属于
-M2-B 基线；Data unit 的 M2-C 持久化激活另行记录，不能回写成已经发生的事实。
+继续可读，三个 SQLite 再次 `integrity_check=ok`，本次 boot journal 无 warning/error。
+
+M2-C 又在相同 Pi 上安装 Data unit、manifest、Kernel config 与精确 Polkit target，原子切换
+Data/Kernel release。eidolond 从既有 desired state 自动拉起 Data/Hub/Kernel；真实 Companion
+Attachment 产生 revision 2 与 audit position 2。SIGSTOP Data 后只有 Attachment capability degraded，
+Hub Mount capability 和已有 Mount 热读保持可用；SIGCONT 后无进程重启恢复。第二次整机 reboot 后
+revision 2 Attachment 和幂等结果继续存在，四个 SQLite 均 `integrity_check=ok` 且无外键违规，四个
+Eidolon unit `NRestarts=0`，本次 boot 的 Eidolon unit journal 无 warning。
 
 首轮真机启动还发现 Hub mDNS 的 Linux interface discovery 需要 `AF_NETLINK`；原 unit 的 address
 family 白名单阻断了 ifaddr。部署测试先复现失败，Hub unit 随后只增加 `AF_NETLINK`，Kernel 与
@@ -92,7 +98,7 @@ eidolond 的白名单没有放宽。
 
 - 不新增 NATS、Binder、动态 registration/lease/watch、launchd adapter 或完整 stack manifest。
 - Data 的 unit、ready endpoint、独立迁移边界和 soft dependency 已纳入 manifest，并通过本地真实
-  Data/Kernel 进程 E2E；Raspberry Pi 激活需单独执行受控的 unit/config/Polkit 安装与短暂重启。
+  Data/Kernel 进程 E2E 与 Raspberry Pi 冷启动/故障/整机重启验证。
 - Agent、Channel、Memory 尚未纳入 system manifest；必须逐项确认真实 target、hard/soft dependency
   与 readiness 后再加入。
 - Admin 仍拥有现有 supervisord 管理入口。迁移期间不能让 Admin 与 eidolond 同时修改同一 service

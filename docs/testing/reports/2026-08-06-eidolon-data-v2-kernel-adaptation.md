@@ -117,7 +117,8 @@ uv run python scripts/benchmark_kernel_control_plane.py --iterations 500 --worke
 ## 剩余风险与后续边界
 
 1. 已完成：Companion Authority 的 systemd target、readiness、service credential 与 directory
-   consumer 已实现，静态 fallback 已删除；Raspberry Pi 的持久化激活仍需显式部署授权。
+   consumer 已实现，静态 fallback 已删除；后续取得显式授权并完成 Raspberry Pi 持久化激活，
+   见 Data directory 与 Companion Attachment 报告。
 2. Kernel→Data 校验与 Kernel commit 不是分布式事务。Data lifecycle 在校验后变化时由 30 秒默认
    reconciliation 收敛；网络/认证/5xx 只 deferred，不能伪造成 Detach。
 3. Kernel 本地审计尚未接入全局 audit dispatcher。Admin 不能通过直读 Kernel SQLite 填补；后续应

@@ -54,7 +54,7 @@ enable，Hub/Kernel 由 eidolond desired state 拉起。
 `488449d3-0489-445b-aa30-52bb1e753ed7`；Bootstrap 与 eidolond 自动 active，Hub/Kernel 继续由
 eidolond 拉起且 directory/health 恢复。revision 1 Mount 未丢失，eidolond、Hub、Kernel 三个 SQLite
 再次 `integrity_check=ok`，当前 boot journal 未发现 warning/error。这验证的是上述 M2-B 部署，
-不代表尚未激活的 Data M2-C unit 已在树莓派运行。
+该验证时点 Data M2-C 尚未激活；后续激活与第二次整机重启见 M2-C 专项报告。
 
 ## 已执行命令
 

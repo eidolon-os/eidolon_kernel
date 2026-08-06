@@ -1,6 +1,6 @@
 # ADR-0011: Data Companion Authority 纳入本机 Service Directory
 
-- 状态：Accepted，代码与本地进程 E2E 已实现；Raspberry Pi 激活待部署授权
+- 状态：Accepted，代码、本地进程 E2E 与 Raspberry Pi 激活验证已完成
 - 日期：2026-08-06
 
 ## Context
@@ -65,5 +65,5 @@ Data 数据库由 Data release 的 Alembic 部署步骤初始化，Data 进程�
 - 产品镜像必须显式执行 Data V2 baseline migration 并安装准确 SDK build；失败必须阻止激活，不能
   由 Kernel 自动修复。
 - 动态 registration、lease/watch、多实例、跨 Host 和通用 IPC 仍无需求证据，本 ADR 不实现。
-- Raspberry Pi 持久化激活会安装新 unit、扩展精确 Polkit allowlist、更新 manifest/config 并短暂
-  重启 eidolond/Kernel；在该部署动作完成前，仓库实现与本地进程证据不能宣称 Pi Data 已运行。
+- Raspberry Pi 持久化激活已按备份、静态校验、原子 symlink、eidolond reconcile 的顺序完成；
+  Bootstrap/Admin 与 Hub 源码未修改，旧 release 保留为回滚点。

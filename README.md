@@ -265,7 +265,9 @@ desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可�
 不带 `WantedBy`，由 `eidolond.sqlite3` 决定是否运行。2026-08-06 已在 Raspberry Pi 5 / Debian
 13 / systemd 257 上完成 M2-B 的实际安装、整机重启、受管 Kernel restart、Device Mount 重建与
 `systemd-analyze verify`；验证没有修改既有 Bootstrap/Admin 服务。Data 的 unit、manifest、迁移
-边界和本地进程 E2E 已在 M2-C 完成，Pi 持久化激活仍是单独受控部署动作。
+边界和本地进程 E2E 已在 M2-C 完成；同日又在该 Pi 完成 Data/Kernel release 原子切换、真实
+Companion Attachment、独立 capability degradation 和整机重启恢复。验证仍未修改既有
+Bootstrap/Admin 服务或 Hub 源码。
 
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
