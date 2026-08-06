@@ -36,17 +36,21 @@ Provider。Data 中的物理 Device 表和 NATS runtime-device blackboard 还会
 7. 不建立通用 ResourceGraph、Assignment service、共享 Blackboard 或统一 IPC/Binder。
    各消费者只使用其领域 Port + versioned Contract + Adapter。
 
-## Transitional facts and gates
+## Current facts and remaining gates
 
-- Data 的 `DeviceRow`/`DevicesRepository` 暂作为 Admin 和旧 consumer 的 legacy
-  compatibility/read surface；它不是新代码的 authority。Hub-over-Data `DeviceStore`
-  adapter 已删除，Companion lifecycle 与 Guard claim 不再隐式创建设备或改 Device
-  authority fields。
+- Data V2 基线 `2a33894` 已删除 `DeviceRow`/`DevicesRepository`、runtime/Event API、旧迁移链与
+  compatibility surface。Kernel 不读取 Data SQLite、不 import Data package，也不为旧
+  `eidolon.sqlite3` 增加 fallback；Device admission 只来自 Hub，Mount/Attachment 只写 Kernel
+  自己的 authority。
+- Data V2 对 Kernel 保留的唯一公开面是经过 service credential 认证的精确 Companion Identity
+  GET。Kernel 固定消费自己的 strict Schema，只接受 `companion_id`、`owner_id` 与归一化后的
+  `active|inactive` lifecycle，不消费 Data ORM、Owner profile、Persona、Memory Realm、Guard 或
+  Data audit outbox。
 - Channel 的 Kernel Mount consumer 默认关闭，因为当前本地 composition 尚未启动
   Kernel，Provider 也尚未稳定写入受信 `owner_id`。在这两个条件满足并有跨项目 E2E 前
   不得默认开启。
-- 移除 Data Device legacy 表、`guard_companion_id` 或 Admin Web-body 语义，需要先迁移
-  Admin/Channel/Agent 的实际 consumer；本轮不做破坏性 schema migration。
+- Admin/Channel/Agent 中仍引用旧 Data schema 或直接读取 Data SQLite 的路径是各自的 V2
+  consumer 迁移债务，不能在 Kernel 内用兼容 API、共享 ORM 或反向写 Data 来掩盖。
 - Agent body control 只能在 Channel 发布 Owner-scoped provider listing、幂等 command
   submission 和 terminal receipt 契约后重新启用。
 

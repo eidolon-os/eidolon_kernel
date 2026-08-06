@@ -26,9 +26,7 @@ def document(**overrides):
 @pytest.mark.asyncio
 async def test_companion_adapter_consumes_only_exact_identity_get() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.raw_path == (
-            b"/api/companion-authority/v1/companions/companion%20one"
-        )
+        assert request.url.raw_path == (b"/api/companion-authority/v1/companions/companion%20one")
         assert request.headers["Authorization"] == f"Bearer {TOKEN}"
         return httpx.Response(200, json=document())
 
@@ -61,13 +59,9 @@ async def test_companion_adapter_consumes_only_exact_identity_get() -> None:
         (200, {"unexpected": True}, AuthorityUnavailable),
     ],
 )
-async def test_companion_adapter_maps_policy_and_contract_failures(
-    status, body, error
-) -> None:
+async def test_companion_adapter_maps_policy_and_contract_failures(status, body, error) -> None:
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(status, json=body)
-        )
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body))
     )
     adapter = EidolonDataHttpCompanionAuthority(
         base_url="http://data.test",
@@ -86,6 +80,12 @@ def test_companion_adapter_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError):
         EidolonDataHttpCompanionAuthority(
             base_url="file:///data",
+            bearer_token=TOKEN,
+            contracts=ContractRegistry(),
+        )
+    with pytest.raises(ValueError):
+        EidolonDataHttpCompanionAuthority(
+            base_url="http://",
             bearer_token=TOKEN,
             contracts=ContractRegistry(),
         )

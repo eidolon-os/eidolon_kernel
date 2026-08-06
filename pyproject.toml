@@ -50,6 +50,10 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: cross-package or real authority contract integration",
+    "e2e: real process boundary exercised over HTTP or Unix sockets",
+]
 
 [tool.coverage.run]
 branch = true

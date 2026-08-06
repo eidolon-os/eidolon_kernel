@@ -1,8 +1,8 @@
-"""Narrow consumer of Eidolon Data's Companion Authority V1."""
+"""Narrow consumer of Eidolon Data V2's Companion Identity V1 authority."""
 
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from jsonschema import ValidationError
@@ -25,7 +25,8 @@ class EidolonDataHttpCompanionAuthority:
         timeout_seconds: float = 3.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        if not base_url.startswith(("http://", "https://")):
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("Companion authority base_url must be HTTP(S)")
         if len(bearer_token.strip()) < 24:
             raise ValueError("Companion authority bearer token is invalid")
@@ -40,8 +41,7 @@ class EidolonDataHttpCompanionAuthority:
 
     async def get_companion(self, *, companion_id: str) -> CompanionIdentity:
         url = (
-            f"{self._base_url}/api/companion-authority/v1/companions/"
-            f"{quote(companion_id, safe='')}"
+            f"{self._base_url}/api/companion-authority/v1/companions/{quote(companion_id, safe='')}"
         )
         try:
             response = await self._client.get(
