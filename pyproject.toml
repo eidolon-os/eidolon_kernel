@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 eidolond = "eidolon_system.main:run"
+eidolon-release = "eidolon_deploy.cli:run"
 
 [dependency-groups]
 dev = [
@@ -32,11 +33,12 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["eidolon_kernel*", "eidolon_system*"]
+include = ["eidolon_kernel*", "eidolon_system*", "eidolon_deploy*"]
 
 [tool.setuptools.package-data]
 "eidolon_kernel.contracts" = ["schemas/*/*.schema.json"]
 "eidolon_system.contracts" = ["schemas/*/*.schema.json"]
+"eidolon_deploy.contracts" = ["schemas/*.schema.json"]
 
 [tool.ruff]
 line-length = 100
@@ -57,7 +59,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["eidolon_kernel", "eidolon_system"]
+source = ["eidolon_kernel", "eidolon_system", "eidolon_deploy"]
 
 [tool.coverage.report]
 show_missing = true

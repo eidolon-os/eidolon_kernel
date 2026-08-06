@@ -1,0 +1,580 @@
+"""Linux host adapter for fail-closed, offline release activation."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import http.client
+import json
+import os
+import platform
+import shutil
+import socket
+import stat
+import subprocess
+import time
+import uuid
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Callable, Mapping, Protocol
+from urllib.parse import urlsplit
+
+from eidolon_deploy.activation import ActivationReceipt
+from eidolon_deploy.fingerprints import (
+    INSTALLED_DISTRIBUTIONS_SCRIPT,
+    environment_sha256,
+    source_tree_sha256,
+)
+from eidolon_deploy.manifest import ReadinessCheck, ReleaseDescriptor
+from eidolon_deploy.ports import DeploymentSnapshot
+
+_SYSTEMCTL = "/usr/bin/systemctl"
+_SYSTEMD_ANALYZE = "/usr/bin/systemd-analyze"
+_MANAGER_UNIT = "eidolond.service"
+_SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")
+_ACTIVATION_LOCK = Path("/run/lock/eidolon-release.lock")
+
+
+class LinuxDeploymentError(RuntimeError):
+    """A host invariant or fixed host operation failed."""
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class CommandRunner(Protocol):
+    def run(self, *command: str) -> CommandResult: ...
+
+
+class SubprocessRunner:
+    """Shell-free runner used only for fixed deployment commands."""
+
+    def run(self, *command: str) -> CommandResult:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return CommandResult(result.returncode, result.stdout, result.stderr)
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: Path) -> None:
+        super().__init__("localhost", timeout=2)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout)
+        connection.connect(str(self._socket_path))
+        self.sock = connection
+
+
+class LinuxDeploymentHost:
+    """Owns Linux filesystem and systemd mechanics behind the deployment port."""
+
+    def __init__(
+        self,
+        *,
+        root: Path = Path("/"),
+        runner: CommandRunner | None = None,
+        system: str | None = None,
+        machine: str | None = None,
+        readiness_probe: Callable[[ReadinessCheck], bool] | None = None,
+        readiness_timeout_seconds: float = 30.0,
+        readiness_interval_seconds: float = 0.25,
+        require_root: bool = True,
+    ) -> None:
+        self._root = root.resolve()
+        self._runner = runner or SubprocessRunner()
+        self._system = (system or platform.system()).lower()
+        self._machine = (machine or platform.machine()).lower()
+        self._readiness_probe = readiness_probe or self._probe_readiness
+        self._readiness_timeout_seconds = readiness_timeout_seconds
+        self._readiness_interval_seconds = readiness_interval_seconds
+        self._require_root = require_root
+        self._transaction_paths: dict[str, Path] = {}
+
+    @contextmanager
+    def exclusive_activation(self):
+        """Fail fast when another release transaction owns the host lock."""
+
+        self._assert_privileged()
+        path = self._host_path(_ACTIVATION_LOCK)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise LinuxDeploymentError(
+                    "another release activation is already in progress"
+                ) from exc
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def preflight(self, release: ReleaseDescriptor) -> Mapping[str, str]:
+        if release.target.system != self._system or release.target.machine != self._machine:
+            raise LinuxDeploymentError(
+                "target profile mismatch: "
+                f"expected {release.target.system}/{release.target.machine}, "
+                f"host is {self._system}/{self._machine}"
+            )
+
+        previous_targets: dict[str, str] = {}
+        for support_source in release.support_sources:
+            support_path = self._host_path(support_source.release_path)
+            if (
+                not support_path.is_dir()
+                or source_tree_sha256(support_path) != support_source.source_tree_sha256
+            ):
+                raise LinuxDeploymentError(
+                    f"support source tree fingerprint mismatch: {support_source.source_id}"
+                )
+        for component in release.components:
+            release_path = self._host_path(component.release_path)
+            if not release_path.is_dir():
+                raise LinuxDeploymentError(
+                    f"component release directory is missing: {component.component_id}"
+                )
+            if source_tree_sha256(release_path) != component.source_tree_sha256:
+                raise LinuxDeploymentError(
+                    f"component source tree fingerprint mismatch: {component.component_id}"
+                )
+            self._verify_file_digest(
+                release_path / "uv.lock",
+                component.lock_sha256,
+                f"component lock fingerprint mismatch: {component.component_id}",
+            )
+            python = release_path / ".venv/bin/python"
+            if not python.is_file() or not os.access(python, os.X_OK):
+                raise LinuxDeploymentError(
+                    f"component virtual environment is incomplete: {component.component_id}"
+                )
+            version = self._checked_command(
+                "Python version probe",
+                str(python),
+                "-c",
+                "import platform; print('.'.join(platform.python_version_tuple()[:2]))",
+            ).stdout.strip()
+            if version != release.target.python:
+                raise LinuxDeploymentError(
+                    f"component Python version mismatch: {component.component_id}"
+                )
+            freeze = self._checked_command(
+                "Python environment inspection",
+                str(python),
+                "-c",
+                INSTALLED_DISTRIBUTIONS_SCRIPT,
+            ).stdout
+            if environment_sha256(freeze) != component.environment_sha256:
+                raise LinuxDeploymentError(
+                    f"component environment fingerprint mismatch: {component.component_id}"
+                )
+            for entrypoint in component.required_entrypoints:
+                executable = release_path / entrypoint
+                if not executable.is_file() or not os.access(executable, os.X_OK):
+                    raise LinuxDeploymentError(
+                        f"component entrypoint is missing or not executable: "
+                        f"{component.component_id}/{entrypoint}"
+                    )
+
+            current_link = self._host_path(component.current_link)
+            if not current_link.is_symlink():
+                raise LinuxDeploymentError(
+                    f"component current link is missing or not a symlink: {component.component_id}"
+                )
+            previous_target = os.readlink(current_link)
+            self._validate_component_target(
+                component.component_id,
+                current_link,
+                Path(previous_target),
+            )
+            previous_targets[component.component_id] = previous_target
+
+        components = release.components_by_id
+        service_sources: list[str] = []
+        for asset in release.system_assets:
+            source = self._host_path(
+                components[asset.source_component_id].release_path
+            ) / asset.source
+            self._verify_file_digest(
+                source,
+                asset.sha256,
+                f"system asset fingerprint mismatch: {asset.destination}",
+            )
+            if asset.destination.suffix == ".service":
+                service_sources.append(str(source))
+        for secret in release.required_secrets:
+            path = self._host_path(secret.path)
+            if not path.is_file() or path.is_symlink():
+                raise LinuxDeploymentError(f"required secret is missing: {secret.path}")
+            actual_mode = stat.S_IMODE(path.stat().st_mode)
+            if actual_mode != secret.mode:
+                raise LinuxDeploymentError(
+                    f"required secret mode mismatch: {secret.path} "
+                    f"is {actual_mode:04o}, expected {secret.mode:04o}"
+                )
+        if service_sources:
+            self._checked_command(
+                "systemd unit verification", _SYSTEMD_ANALYZE, "verify", *service_sources
+            )
+        return previous_targets
+
+    def create_snapshot(
+        self,
+        release: ReleaseDescriptor,
+        previous_targets: Mapping[str, str],
+    ) -> DeploymentSnapshot:
+        self._assert_privileged()
+        transaction_id = uuid.uuid4().hex
+        backup_path = self._host_path(_SNAPSHOT_ROOT) / (
+            f"{release.release_id}-{transaction_id}"
+        )
+        backup_path.mkdir(parents=True, mode=0o700)
+        os.chmod(backup_path, 0o700)
+
+        asset_states: list[dict[str, object]] = []
+        for asset in release.system_assets:
+            destination = self._host_path(asset.destination)
+            existed = destination.is_file() and not destination.is_symlink()
+            if destination.exists() and not existed:
+                raise LinuxDeploymentError(
+                    f"system asset destination is not a regular file: {asset.destination}"
+                )
+            if existed:
+                backup = backup_path / "assets" / asset.destination.relative_to("/")
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destination, backup)
+            asset_states.append(
+                {"destination": str(asset.destination), "existed": existed}
+            )
+
+        metadata = {
+            "schema_version": 1,
+            "release_id": release.release_id,
+            "transaction_id": transaction_id,
+            "previous_targets": dict(previous_targets),
+            "system_assets": asset_states,
+        }
+        self._atomic_write_json(backup_path / "snapshot.json", metadata, mode=0o600)
+        self._transaction_paths[transaction_id] = backup_path
+        return DeploymentSnapshot(
+            transaction_id=transaction_id,
+            previous_targets=dict(previous_targets),
+            backup_path=str(backup_path),
+        )
+
+    def quiesce(self, release: ReleaseDescriptor) -> None:
+        self._assert_privileged()
+        self._checked_command("manager stop", _SYSTEMCTL, "stop", _MANAGER_UNIT)
+        for unit in release.affected_units:
+            self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
+
+    def install_assets(self, release: ReleaseDescriptor) -> None:
+        self._assert_privileged()
+        components = release.components_by_id
+        for asset in release.system_assets:
+            source = self._host_path(
+                components[asset.source_component_id].release_path
+            ) / asset.source
+            destination = self._host_path(asset.destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                shutil.copyfile(source, temporary)
+                os.chmod(temporary, asset.mode)
+                if self._root == Path("/"):
+                    os.chown(temporary, 0, 0)
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def switch_components(self, release: ReleaseDescriptor) -> None:
+        self._assert_privileged()
+        for component in release.components:
+            link = self._host_path(component.current_link)
+            target = self._host_path(component.release_path)
+            link.parent.mkdir(parents=True, exist_ok=True)
+            self._atomic_symlink(target, link)
+
+    def reload_systemd(self) -> None:
+        self._assert_privileged()
+        self._checked_command("systemd reload", _SYSTEMCTL, "daemon-reload")
+
+    def start_manager(self) -> None:
+        self._assert_privileged()
+        self._checked_command("manager start", _SYSTEMCTL, "start", _MANAGER_UNIT)
+
+    def wait_ready(self, release: ReleaseDescriptor) -> None:
+        deadline = time.monotonic() + self._readiness_timeout_seconds
+        pending = {check.check_id: check for check in release.readiness_checks}
+        while pending:
+            for check_id, check in tuple(pending.items()):
+                try:
+                    ready = self._readiness_probe(check)
+                except OSError:
+                    ready = False
+                if ready:
+                    pending.pop(check_id)
+            if not pending:
+                return
+            if time.monotonic() >= deadline:
+                raise LinuxDeploymentError(
+                    "readiness timeout: " + ", ".join(sorted(pending))
+                )
+            time.sleep(self._readiness_interval_seconds)
+
+    def restore(self, release: ReleaseDescriptor, snapshot: DeploymentSnapshot) -> None:
+        self._assert_privileged()
+        backup_path = Path(snapshot.backup_path)
+        metadata = self._read_snapshot_document(release, snapshot)
+        self.quiesce(release)
+
+        for state in metadata["system_assets"]:
+            destination_value = Path(state["destination"])
+            destination = self._host_path(destination_value)
+            if state["existed"]:
+                backup = backup_path / "assets" / destination_value.relative_to("/")
+                if not backup.is_file():
+                    raise LinuxDeploymentError(
+                        f"system asset backup is missing: {destination_value}"
+                    )
+                temporary = destination.with_name(
+                    f".{destination.name}.{uuid.uuid4().hex}.tmp"
+                )
+                try:
+                    shutil.copy2(backup, temporary)
+                    os.replace(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            else:
+                destination.unlink(missing_ok=True)
+
+        for component in release.components:
+            previous = snapshot.previous_targets.get(component.component_id)
+            if not previous:
+                raise LinuxDeploymentError(
+                    f"snapshot has no previous component target: {component.component_id}"
+                )
+            current_link = self._host_path(component.current_link)
+            self._validate_component_target(
+                component.component_id,
+                current_link,
+                Path(previous),
+            )
+            self._atomic_symlink(Path(previous), current_link)
+        self.reload_systemd()
+        self.start_manager()
+        self.wait_ready(release)
+
+    def write_receipt(self, receipt: ActivationReceipt) -> None:
+        if receipt.transaction_id is None:
+            raise LinuxDeploymentError("activation receipt has no transaction id")
+        backup_path = self._transaction_paths.get(receipt.transaction_id)
+        if backup_path is None:
+            raise LinuxDeploymentError("activation transaction is unknown to this host")
+        document = asdict(receipt)
+        document["status"] = receipt.status.value
+        document["previous_targets"] = dict(receipt.previous_targets)
+        self._atomic_write_json(backup_path / "receipt.json", document, mode=0o600)
+
+    def load_snapshot(
+        self,
+        release: ReleaseDescriptor,
+        backup_path: Path,
+    ) -> DeploymentSnapshot:
+        """Load a snapshot for an explicit rollback in a later operator process."""
+
+        resolved = backup_path.resolve()
+        snapshot_root = self._host_path(_SNAPSHOT_ROOT).resolve()
+        if resolved.parent != snapshot_root:
+            raise LinuxDeploymentError("deployment snapshot is outside the fixed snapshot root")
+        try:
+            document = json.loads((resolved / "snapshot.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LinuxDeploymentError("deployment snapshot metadata is unreadable") from exc
+        transaction_id = document.get("transaction_id")
+        previous_targets = document.get("previous_targets")
+        if (
+            document.get("schema_version") != 1
+            or document.get("release_id") != release.release_id
+            or not isinstance(transaction_id, str)
+            or not isinstance(previous_targets, dict)
+            or set(previous_targets) != {item.component_id for item in release.components}
+            or not all(isinstance(value, str) for value in previous_targets.values())
+        ):
+            raise LinuxDeploymentError("deployment snapshot identity or shape is invalid")
+        snapshot = DeploymentSnapshot(
+            transaction_id=transaction_id,
+            previous_targets=dict(previous_targets),
+            backup_path=str(resolved),
+        )
+        self._read_snapshot_document(release, snapshot)
+        self._transaction_paths[transaction_id] = resolved
+        return snapshot
+
+    def _host_path(self, value: Path) -> Path:
+        if not value.is_absolute():
+            raise LinuxDeploymentError(f"host path must be absolute: {value}")
+        if self._root == Path("/"):
+            return value
+        return self._root / value.relative_to("/")
+
+    def _assert_privileged(self) -> None:
+        if self._require_root and os.geteuid() != 0:
+            raise LinuxDeploymentError("release activation requires root privileges")
+
+    def _verify_file_digest(self, path: Path, expected: str, message: str) -> None:
+        if not path.is_file() or path.is_symlink():
+            raise LinuxDeploymentError(message)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise LinuxDeploymentError(message)
+
+    def _validate_component_target(
+        self,
+        component_id: str,
+        link: Path,
+        target: Path,
+    ) -> Path:
+        resolved = target if target.is_absolute() else link.parent / target
+        resolved = resolved.resolve(strict=False)
+        releases_root = self._host_path(Path("/srv/eidolon/releases")).resolve()
+        if resolved.name != component_id or resolved.parent.parent != releases_root:
+            raise LinuxDeploymentError(
+                f"component current target is outside release namespace: {component_id}"
+            )
+        if not resolved.is_dir():
+            raise LinuxDeploymentError(
+                f"component current target directory is missing: {component_id}"
+            )
+        return resolved
+
+    def _read_snapshot_document(
+        self,
+        release: ReleaseDescriptor,
+        snapshot: DeploymentSnapshot,
+    ) -> dict:
+        backup_path = Path(snapshot.backup_path).resolve()
+        snapshot_root = self._host_path(_SNAPSHOT_ROOT).resolve()
+        if backup_path.parent != snapshot_root:
+            raise LinuxDeploymentError("deployment snapshot is outside the fixed snapshot root")
+        try:
+            document = json.loads(
+                (backup_path / "snapshot.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LinuxDeploymentError("deployment snapshot metadata is unreadable") from exc
+        expected_components = {item.component_id for item in release.components}
+        previous_targets = document.get("previous_targets")
+        asset_states = document.get("system_assets")
+        if (
+            document.get("schema_version") != 1
+            or document.get("release_id") != release.release_id
+            or document.get("transaction_id") != snapshot.transaction_id
+            or previous_targets != dict(snapshot.previous_targets)
+            or not isinstance(previous_targets, dict)
+            or set(previous_targets) != expected_components
+            or not isinstance(asset_states, list)
+        ):
+            raise LinuxDeploymentError("deployment snapshot identity or shape is invalid")
+        expected_destinations = {str(item.destination) for item in release.system_assets}
+        actual_destinations: set[str] = set()
+        for state in asset_states:
+            if (
+                not isinstance(state, dict)
+                or set(state) != {"destination", "existed"}
+                or not isinstance(state.get("destination"), str)
+                or not isinstance(state.get("existed"), bool)
+            ):
+                raise LinuxDeploymentError("deployment snapshot asset state is invalid")
+            actual_destinations.add(state["destination"])
+            if state["existed"]:
+                destination = Path(state["destination"])
+                backup = backup_path / "assets" / destination.relative_to("/")
+                if not backup.is_file():
+                    raise LinuxDeploymentError(
+                        f"system asset backup is missing: {destination}"
+                    )
+        if actual_destinations != expected_destinations or len(asset_states) != len(
+            expected_destinations
+        ):
+            raise LinuxDeploymentError("deployment snapshot asset set is invalid")
+        for component in release.components:
+            self._validate_component_target(
+                component.component_id,
+                self._host_path(component.current_link),
+                Path(previous_targets[component.component_id]),
+            )
+        return document
+
+    def _checked_command(self, operation: str, *command: str) -> CommandResult:
+        try:
+            result = self._runner.run(*command)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise LinuxDeploymentError(f"{operation} could not run: {exc}") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+            raise LinuxDeploymentError(f"{operation} failed: {detail}")
+        return result
+
+    @staticmethod
+    def _atomic_symlink(target: Path, link: Path) -> None:
+        temporary = link.with_name(f".{link.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.symlink_to(target)
+            os.replace(temporary, link)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _atomic_write_json(path: Path, document: object, *, mode: int) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        try:
+            with temporary.open("xb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, mode)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _probe_readiness(check: ReadinessCheck) -> bool:
+        parsed = urlsplit(check.url)
+        if check.kind == "unix_http":
+            assert check.socket is not None
+            connection: http.client.HTTPConnection = _UnixHTTPConnection(check.socket)
+        else:
+            connection = http.client.HTTPConnection(
+                parsed.hostname,
+                parsed.port,
+                timeout=2,
+            )
+        try:
+            path = parsed.path or "/"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            connection.request("GET", path)
+            response = connection.getresponse()
+            payload = response.read()
+            if response.status != 200:
+                return False
+            document = json.loads(payload)
+            return isinstance(document, dict) and document.get("status") == "ready"
+        except (OSError, http.client.HTTPException, json.JSONDecodeError):
+            return False
+        finally:
+            connection.close()

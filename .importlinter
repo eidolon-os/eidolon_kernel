@@ -2,6 +2,7 @@
 root_packages =
     eidolon_kernel
     eidolon_system
+    eidolon_deploy
 
 [importlinter:contract:domain]
 name = Domain is independent
@@ -51,11 +52,25 @@ forbidden_modules =
     eidolon_kernel.composition
 
 [importlinter:contract:processes]
-name = Kernel and System Manager processes are independent
+name = Kernel, System Manager and deployment operations are independent
 type = independence
 modules =
     eidolon_kernel
     eidolon_system
+    eidolon_deploy
+
+[importlinter:contract:deploy-core]
+name = Deployment core does not depend on its Linux or CLI adapters
+type = forbidden
+source_modules =
+    eidolon_deploy.activation
+    eidolon_deploy.fingerprints
+    eidolon_deploy.manifest
+    eidolon_deploy.ports
+    eidolon_deploy.sealing
+forbidden_modules =
+    eidolon_deploy.cli
+    eidolon_deploy.linux
 
 [importlinter:contract:system-domain]
 name = System domain is independent

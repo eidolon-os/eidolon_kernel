@@ -2,9 +2,11 @@
 
 Eidolon Kernel 是 Eidolon OS 的 **Sovereign Microkernel 控制面**。它只保存必须跨服务一致的全局 OS 事实；当前第一个纵向闭环是 **Device Mount**：把 Hub 已准入的 Device 挂入某个 Owner namespace，并可选择附着一个同 Owner Companion，同时提供权威状态、热读投影与有序审计。
 
-当前项目是独立 Git 仓库，发布两个严格隔离的 Python package/进程：`eidolon_kernel`
+当前项目是独立 Git 仓库，发布两个严格隔离的 runtime package/进程：`eidolon_kernel`
 继续承载 Sovereign Kernel；`eidolon_system` 提供独立的机器级 `eidolond` System Manager。
-两者不相互 import、使用不同 SQLite authority，也不修改、导入或直连任何兄弟项目数据库。
+仓库另含不进入 runtime import graph 的 root-operator package `eidolon_deploy`，只负责已准备 target
+release 的封印、预检、原子激活与回滚。三个 package 由架构门禁保持 independence；runtime 使用
+不同 SQLite authority，也不修改、导入或直连任何兄弟项目数据库。
 
 ## 角色与边界
 
@@ -56,6 +58,7 @@ eidolon_system/        # 独立 eidolond package
 ├── composition/       # eidolond 独立依赖组装与生命周期
 ├── contracts/         # 独立 normative JSON Schema 和显式 mapper
 └── config.py          # Host/config 选择，不进入领域层
+eidolon_deploy/        # 独立 root 运维边界；release contract/application/Linux adapter/CLI
 ```
 
 依赖方向由架构测试和 `lint-imports` 阻塞：
@@ -71,8 +74,9 @@ composition -> all layers
 main        -> composition
 ```
 
-`eidolon_system` 使用相同的 inward-only 分层，但与 `eidolon_kernel` 整包 independence；架构测试
-同时检查 package boundary 与 systemd/supervisord 字样不会进入 domain/application/ports。
+`eidolon_system` 使用相同的 inward-only 分层；`eidolon_deploy` 的 activation/manifest/ports/sealing
+不依赖 Linux/CLI adapter。三个 package 整包 independence；架构测试同时检查 package boundary
+与 systemd/supervisord 字样不会进入 runtime domain/application/ports。
 
 ## eidolond System Service 闭环
 
@@ -269,6 +273,26 @@ desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可�
 Companion Attachment、独立 capability degradation 和整机重启恢复。验证仍未修改既有
 Bootstrap/Admin 服务或 Hub 源码。
 
+## Target Release 与回滚
+
+M2-D 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/构建阶段
+先在目标 `linux/aarch64` 上准备原生 Kernel、Data venv 及 Data 实际依赖的 SDK source；随后
+`eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是第三个
+系统服务；可切换 component 仍只有 Kernel/Data，Hub/Admin/Bootstrap 不在本事务中。
+
+激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止
+`eidolond` 与受影响 unit → 安装 allowlist 资产 → 原子切换 Kernel/Data symlink → daemon-reload →
+启动 `eidolond` → 等待 eidolond/Data/Kernel ready → 写回执。任一步失败都恢复 snapshot；显式
+rollback 可由之后的独立运维进程加载同一 snapshot。密钥只校验存在性和 `0600`，从不进入 release、
+snapshot 或回执。
+
+V1 descriptor 明确要求 `database_migrations=[]`。Kernel/Data SQLite 都不由发布工具读取、复制或
+迁移；出现首个真实 schema migration 前，必须先为对应 authority 定义可验证的 backup/forward/
+rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descriptor checksum 只证明本地完整性，
+不是签名或来源认证；首版依赖 root-owned staging/release/snapshot 目录与受控镜像流水线。
+命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
+[ADR-0012](docs/adr/0012-prepared-target-release-activation.md)。
+
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
 Mobile/Bootstrap 的 `claimed + connected` 也不等于应用栈 ready，两条状态链不能合并。详见
@@ -277,10 +301,10 @@ Mobile/Bootstrap 的 `claimed + connected` 也不等于应用栈 ready，两条�
 ## 验证
 
 ```bash
-uv run ruff check eidolon_kernel eidolon_system tests scripts
+uv run ruff check eidolon_kernel eidolon_system eidolon_deploy tests scripts
 uv run lint-imports
 uv run pytest -q
-uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov-report=term-missing -q
+uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov=eidolon_deploy --cov-report=term-missing -q
 ```
 
 测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
