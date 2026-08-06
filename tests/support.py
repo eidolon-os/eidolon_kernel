@@ -125,13 +125,17 @@ class MemoryStore:
 
 
 def sample_mount(
-    revision: int = 1, *, request_id: str = "request-1", active: bool = True
+    revision: int = 1,
+    *,
+    request_id: str = "request-1",
+    active: bool = True,
+    attached_companion_id: str | None = None,
 ) -> DeviceMount:
     now = datetime(2026, 8, 4, 8, 0, tzinfo=UTC) + timedelta(seconds=revision)
     return DeviceMount(
         device_id="device-1",
         owner_id="owner-1",
-        companion_id="companion-1",
+        attached_companion_id=attached_companion_id,
         revision=revision,
         created_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
         updated_at=now,
@@ -146,7 +150,6 @@ def mount_body(**overrides) -> dict[str, object]:
         "operation": "device.mount",
         "request_id": "mount-1",
         "device_id": "device-1",
-        "companion_id": "companion-1",
         "expected_revision": 0,
         "replace_existing": False,
     }

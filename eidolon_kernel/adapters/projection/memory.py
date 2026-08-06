@@ -41,7 +41,10 @@ class InMemoryMountProjection:
             mount
             for mount in sorted(values, key=lambda item: item.device_id)
             if mount.owner_id == owner_id
-            and (companion_id is None or mount.companion_id == companion_id)
+            and (
+                companion_id is None
+                or mount.attached_companion_id == companion_id
+            )
             and (not active_only or mount.active)
             and (after_device_id is None or mount.device_id > after_device_id)
         )[:limit]

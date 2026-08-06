@@ -25,4 +25,7 @@ Kernel 定义最窄 `CompanionAuthority.get_companion(companion_id)` Port，只�
 
 `eidolon_data` 现已发布独立 Companion Authority App：只提供版本化精确 Identity GET，以 opaque Bearer service credential 认证，将底层所有非 `active` 状态收敛为稳定 `inactive`，且不返回 profile/runtime metadata。Kernel 使用独立 HTTP adapter、固定 consumed Schema、严格 binding 和 mapper；404 表示权威拒绝，认证、传输、5xx 与契约错误表示 authority unavailable。Kernel 仍不导入 Data package、不读共享 SQLite，也不依赖 Admin orchestration API。
 
-临时 `UnavailableCompanionAuthority` 已删除，production composition 直接组装真实 consumer。运行时若 Data Authority 不可达，单次 Mount 明确失败，对已有 Mount 的周期对账只记 deferred，不把基础设施故障误判成 Companion inactive。
+临时 `UnavailableCompanionAuthority` 已删除，production composition 直接组装真实
+consumer。Mount 本身不访问 Companion Authority；只有显式 Attach 在运行时若 Data
+Authority 不可达会明确失败。对已有 attachment 的周期对账只记 deferred，不把基础设施
+故障误判成 Companion inactive。

@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 from eidolon_kernel.contracts.bindings import (
+    AttachCompanionRequestWire,
     AuditEventWire,
     CompanionIdentityWire,
+    DetachCompanionRequestWire,
     DeviceMountWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
     MutationResultWire,
     UnmountDeviceRequestWire,
 )
-from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
+from eidolon_kernel.domain.commands import (
+    AttachCompanionCommand,
+    DetachCompanionCommand,
+    MountDeviceCommand,
+    UnmountDeviceCommand,
+)
 from eidolon_kernel.domain.model import (
     AuditEvent,
     CompanionIdentity,
@@ -28,9 +35,31 @@ def mount_request_to_domain(
         request_id=wire.request_id,
         device_id=wire.device_id,
         owner_id=owner_id,
-        companion_id=wire.companion_id,
         expected_revision=wire.expected_revision,
         replace_existing=wire.replace_existing,
+    )
+
+
+def attach_request_to_domain(
+    wire: AttachCompanionRequestWire, *, device_id: str, owner_id: str
+) -> AttachCompanionCommand:
+    return AttachCompanionCommand(
+        request_id=wire.request_id,
+        device_id=device_id,
+        owner_id=owner_id,
+        companion_id=wire.companion_id,
+        expected_revision=wire.expected_revision,
+    )
+
+
+def detach_request_to_domain(
+    wire: DetachCompanionRequestWire, *, device_id: str, owner_id: str
+) -> DetachCompanionCommand:
+    return DetachCompanionCommand(
+        request_id=wire.request_id,
+        device_id=device_id,
+        owner_id=owner_id,
+        expected_revision=wire.expected_revision,
     )
 
 
@@ -49,7 +78,7 @@ def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
     return DeviceMountWire(
         device_id=mount.device_id,
         owner_id=mount.owner_id,
-        companion_id=mount.companion_id,
+        attached_companion_id=mount.attached_companion_id,
         revision=mount.revision,
         created_at=mount.created_at,
         updated_at=mount.updated_at,
@@ -75,7 +104,7 @@ def audit_to_wire(event: AuditEvent) -> AuditEventWire:
         event_type=event.event_type,
         device_id=mount.device_id,
         owner_id=mount.owner_id,
-        companion_id=mount.companion_id,
+        attached_companion_id=mount.attached_companion_id,
         mount_revision=mount.revision,
         active=mount.active,
         request_id=mount.request_id,

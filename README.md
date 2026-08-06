@@ -1,6 +1,6 @@
 # eidolon-kernel
 
-Eidolon Kernel 是 Eidolon OS 的 **Sovereign Microkernel 控制面**。它只保存必须跨服务一致的全局 OS 事实；当前第一个纵向闭环是 **Device Mount**：把 Hub 已准入的 Device 挂入某个 Owner 的 Companion namespace，并提供权威状态、热读投影与有序审计。
+Eidolon Kernel 是 Eidolon OS 的 **Sovereign Microkernel 控制面**。它只保存必须跨服务一致的全局 OS 事实；当前第一个纵向闭环是 **Device Mount**：把 Hub 已准入的 Device 挂入某个 Owner namespace，并可选择附着一个同 Owner Companion，同时提供权威状态、热读投影与有序审计。
 
 当前项目是独立 Git 仓库、独立 Python package 和独占 SQLite authority。它不修改、导入或直连任何兄弟项目数据库。
 
@@ -17,7 +17,7 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 ## 当前状态
 
-Device Mount 的 domain、application、SQLite、projection、Hub consumer、Companion Authority consumer 和 HTTP V1 已形成完整闭环。Hub 与 Data consumer 都使用精确 GET、严格 consumed JSON Schema 和独立服务凭证；生产 composition 不导入或直连兄弟项目数据库。
+Device Mount 与可选 Companion Attachment 的 domain、application、SQLite、projection、Hub/Data authority consumer 和 HTTP V1 已形成完整闭环。Device 不需要 Companion 才能 Mount；Companion 也不需要物理 Device 才能存在。Hub 与 Data consumer 都使用精确 GET、严格 consumed JSON Schema 和独立服务凭证；生产 composition 不导入或直连兄弟项目数据库。
 
 Kernel V1 只有一个安全主体：Owner。`owner_id` 是稳定、opaque 的 namespace principal，类似 OS UID；它不是账号资料、Persona、Companion 或业务对象。Kernel 不建立 token issuer、账号/profile authority 或 identity service。V1 只允许 loopback / trusted same-host ingress，由 `OwnerAuthorizer` 从受信本机安全上下文取得 Owner；request body/query 不能另行指定目标 Owner。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
@@ -39,7 +39,7 @@ HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统
 ```text
 eidolon_kernel/
 ├── domain/          # DeviceMount、Command、不变量和稳定错误
-├── application/     # Mount/Unmount use case、Get/Resolve/List/Audit query
+├── application/     # Mount/Attach/Detach/Unmount use case、Get/Resolve/List/Audit query
 ├── ports/           # Hub、Companion、Authorizer、Store、Projection、Clock
 ├── adapters/        # SQLite、内存投影、Hub/Data Authority HTTP、本机信任、定向对账
 ├── interfaces/http/ # /api/kernel/v1 HTTP/JSON
@@ -66,18 +66,23 @@ main        -> composition
 1. HTTP interface 先通过 normative JSON Schema 校验 wire request，再显式映射为 domain command。
 2. `OwnerAuthorizer` 从本机安全上下文给出唯一 Owner scope；application 不信任 request body/query 自报 owner。
 3. 相同 `request_id + fingerprint` 直接返回原 mutation result，不重新访问外部 authority；同一 request ID 的不同 payload 返回冲突。
-4. 首次/重新挂载前，`DeviceAuthority` 校验 Hub Device 存在、`approved`、owner 匹配；`CompanionAuthority` 校验 Companion 存在、`active`、owner 匹配。
+4. 首次/重新挂载前，`DeviceAuthority` 只校验 Hub Device 存在、`approved`、owner 匹配；Mount 不访问 Companion authority。
 5. application 构造下一 revision；SQLite 用 `BEGIN IMMEDIATE` 和 expected revision 做 CAS，在同一事务提交 mount、幂等结果和 audit event。
 6. 提交成功后更新 typed in-memory projection；若增量更新异常，直接从 SQLite authority 重建。
 7. Get/Resolve/List 走投影；audit 读取 SQLite。进程启动时投影只从当前 mount authority 重建。
+
+Companion Attachment 是 Mount 上独立的可选状态迁移。Attach 时才通过 `CompanionAuthority` 校验 Companion 存在、`active` 且属于相同 Owner；Detach 只清除默认附着，不会 Unmount Device。Attachment 不是 Owner、ACL 或 Channel 当前会话路由。
+跨项目 consumer 的最小边界与迁移门槛见 [ADR-0006](docs/adr/0006-optional-attachment-and-consumer-boundaries.md)。
 
 ### Revision 规则
 
 - 首次挂载：`expected_revision=0`，产生 revision 1。
 - active mount 不能被隐式覆盖；明确 remount 必须设置 `replace_existing=true` 并携带当前 revision。
-- Unmount 必须携带当前 revision，产生 revision + 1 的 inactive tombstone。
+- Unmount 必须携带当前 revision，产生 revision + 1 的 inactive tombstone，并原子结束
+  可选 attachment；previous attachment 只保留在 audit。
 - tombstone 后再次 Mount 必须携带 tombstone revision，产生新的 active revision；不需要 `replace_existing`。
-- V1 每个 Device 最多一个 active mount；一个 Companion 可挂多个 Device。
+- Attach/Detach 必须携带 active Mount 当前 revision，成功后产生 revision + 1；Attach 本身可明确替换已有 attachment。
+- V1 每个 Device 最多一个 active mount 和一个可选默认 attachment；一个 Companion 可附着多个 Device。
 
 `created_at` 表示当前 active mount incarnation 的建立时间；明确 remount 或 tombstone 后重挂会重置它。`updated_at`、request ID 和 fingerprint 表示最后一次状态迁移，记录始终保留同一 Owner。完整历史由 audit 保留。
 
@@ -97,6 +102,8 @@ X-Eidolon-Owner: <owner-id>
 | `GET /api/kernel/v1/device-mounts/devices/{device_id}` | 当前 Owner 内 Get 记录，包含 inactive tombstone |
 | `GET /api/kernel/v1/device-mounts/resolve/{device_id}` | 当前 Owner 内只 Resolve active mount |
 | `GET /api/kernel/v1/device-mounts?companion_id=...` | 当前 Owner scope；可叠加 companion、cursor、limit、active filter |
+| `POST /api/kernel/v1/device-mounts/devices/{device_id}/attachment` | 校验同 Owner active Companion 后 CAS Attach/Reattach |
+| `POST /api/kernel/v1/device-mounts/devices/{device_id}/attachment/detach` | CAS Detach，Device 保持 mounted |
 | `POST /api/kernel/v1/device-mounts/devices/{device_id}/unmount` | CAS Unmount |
 | `GET /api/kernel/v1/audit/events?after_position=...` | 当前 Owner 内按稳定递增位置读取审计 |
 
@@ -124,8 +131,9 @@ GET {companion_authority.base_url}/api/companion-authority/v1/companions/{compan
 consumed JSON Schema，wire DTO 再显式映射为 Kernel domain identity。
 
 生产 composition 会立即并周期性重验所有 active Mount。Device revoked/缺失/Owner
-不匹配，或 Companion inactive/缺失时，Kernel 以当前 revision 做 CAS，写入 inactive
-tombstone 和审计；网络、认证、5xx 或契约故障只延后本轮，不伪造撤销。
+不匹配时，Kernel 以当前 revision 做 CAS，写入 inactive tombstone；只有当前 Mount
+带 attachment 时才重验 Companion，Companion inactive/缺失只 CAS Detach，Device 仍在
+Owner namespace。两种变化都写审计；网络、认证、5xx 或契约故障只延后本轮。
 
 ## 存储
 
@@ -138,14 +146,14 @@ tombstone 和审计；网络、认证、5xx 或契约故障只延后本轮，不
 | `kernel_audit_events` | `AUTOINCREMENT` position 的不可变状态迁移审计 |
 | `kernel_schema_meta` | 精确 schema version |
 
-SQLite 是唯一权威；projection 不是第二事实源。当前 schema version 为 2。空库按当前 schema 创建，旧库、部分库或未知表直接拒绝。开发阶段不提供 migration 或兼容。
+SQLite 是唯一权威；projection 不是第二事实源。当前 schema version 为 3。空库按当前 schema 创建，旧库、部分库或未知表直接拒绝。开发阶段不提供 migration 或兼容。
 
 ## 不变量
 
 1. Device、Owner、Companion 使用稳定 ID，不从 IP、Channel ID、Room 或 transport 推导。
-2. Kernel 不批准设备，也不创建/激活 Companion；Mount 只引用两个外部 authority 已确认的事实。
-3. active DeviceMount 必须同时满足 Device approved + owner 匹配及 Companion active + owner 匹配；Device、Companion 和 Mount 必须属于同一 Owner namespace。
-4. 一个 Device 最多一个 active mount；Companion 可挂多个 Device。
+2. Kernel 不批准设备，也不创建/激活 Companion；Mount 只依赖 Hub Device admission，Attach 才引用 Companion authority。
+3. active DeviceMount 必须满足 Device approved + owner 匹配；可选 attachment 若存在，Companion 必须 active 且与 Mount 属于同一 Owner namespace。
+4. 一个 Device 最多一个 active mount 和一个默认 attachment；Companion 可存在零个 Device，也可附着多个 Device。
 5. 所有 mutation 都要求全局幂等 request ID、canonical fingerprint 和 revision/CAS。
 6. SQLite commit 先于 projection；DB 写失败不得更新内存，projection 必须可重建。
 7. 每个已提交 mutation 恰有一个 audit position；重放不产生新 position。
@@ -173,7 +181,7 @@ uv run pytest --cov=eidolon_kernel --cov-report=term-missing -q
 ```
 
 测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
-[Authority 集成与对账测试报告](docs/testing/reports/2026-08-05-authority-integration.md)。
+[Optional Attachment 与消费者边界收敛测试报告](docs/testing/reports/2026-08-05-optional-attachment-convergence.md)。
 
 ## 后续演进门槛
 

@@ -4,7 +4,7 @@
   "title": "Kernel Audit Event",
   "type": "object",
   "additionalProperties": false,
-  "required": ["operation", "position", "event_id", "event_type", "device_id", "owner_id", "companion_id", "mount_revision", "active", "request_id", "fingerprint", "occurred_at", "data"],
+  "required": ["operation", "position", "event_id", "event_type", "device_id", "owner_id", "attached_companion_id", "mount_revision", "active", "request_id", "fingerprint", "occurred_at", "data"],
   "properties": {
     "operation": {"const": "kernel.audit-event"},
     "position": {"type": "integer", "minimum": 1},
@@ -12,7 +12,7 @@
     "event_type": {"type": "string", "minLength": 1, "maxLength": 255},
     "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
-    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "attached_companion_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
     "mount_revision": {"type": "integer", "minimum": 1},
     "active": {"type": "boolean"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 96},

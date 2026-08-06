@@ -7,10 +7,17 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Header, HTTPException, Query
 from jsonschema import ValidationError
 
-from eidolon_kernel.application.device_mounts import MountDevice, UnmountDevice
+from eidolon_kernel.application.device_mounts import (
+    AttachCompanion,
+    DetachCompanion,
+    MountDevice,
+    UnmountDevice,
+)
 from eidolon_kernel.application.queries import AuditQueries, DeviceMountQueries
 from eidolon_kernel.contracts.bindings import (
+    AttachCompanionRequestWire,
     AuditPageWire,
+    DetachCompanionRequestWire,
     DeviceMountPageWire,
     DeviceMountWire,
     MountDeviceRequestWire,
@@ -18,8 +25,10 @@ from eidolon_kernel.contracts.bindings import (
     UnmountDeviceRequestWire,
 )
 from eidolon_kernel.contracts.mappers import (
+    attach_request_to_domain,
     audit_to_wire,
     commit_to_wire,
+    detach_request_to_domain,
     mount_request_to_domain,
     mount_to_wire,
     unmount_request_to_domain,
@@ -39,6 +48,8 @@ from eidolon_kernel.ports.authorities import OwnerAuthorizer
 @dataclass(frozen=True, slots=True)
 class KernelHttpServices:
     mount_device: MountDevice
+    attach_companion: AttachCompanion
+    detach_companion: DetachCompanion
     unmount_device: UnmountDevice
     mounts: DeviceMountQueries
     audit: AuditQueries
@@ -185,6 +196,70 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
                 mounts=tuple(mount_to_wire(mount) for mount in mounts),
             )
             services.contracts.validate("device-mount/page.schema.json", _document(wire))
+            return wire
+        except Exception as exc:
+            _raise_http(exc)
+
+    @router.post(
+        "/device-mounts/devices/{device_id}/attachment",
+        response_model=MutationResultWire,
+    )
+    async def attach_companion(
+        device_id: str,
+        payload: AttachCompanionRequestWire,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        owner_id_hint: str | None = Header(default=None, alias="X-Eidolon-Owner"),
+    ) -> MutationResultWire:
+        try:
+            services.contracts.validate(
+                "device-mount/attach-request.schema.json", _document(payload)
+            )
+            owner_id = await authorize_owner(
+                action="device-mount:write",
+                authorization=authorization,
+                owner_id_hint=owner_id_hint,
+            )
+            result = await services.attach_companion.execute(
+                attach_request_to_domain(
+                    payload, device_id=device_id, owner_id=owner_id
+                )
+            )
+            wire = commit_to_wire(result)
+            services.contracts.validate(
+                "device-mount/mutation-result.schema.json", _document(wire)
+            )
+            return wire
+        except Exception as exc:
+            _raise_http(exc)
+
+    @router.post(
+        "/device-mounts/devices/{device_id}/attachment/detach",
+        response_model=MutationResultWire,
+    )
+    async def detach_companion(
+        device_id: str,
+        payload: DetachCompanionRequestWire,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        owner_id_hint: str | None = Header(default=None, alias="X-Eidolon-Owner"),
+    ) -> MutationResultWire:
+        try:
+            services.contracts.validate(
+                "device-mount/detach-request.schema.json", _document(payload)
+            )
+            owner_id = await authorize_owner(
+                action="device-mount:write",
+                authorization=authorization,
+                owner_id_hint=owner_id_hint,
+            )
+            result = services.detach_companion.execute(
+                detach_request_to_domain(
+                    payload, device_id=device_id, owner_id=owner_id
+                )
+            )
+            wire = commit_to_wire(result)
+            services.contracts.validate(
+                "device-mount/mutation-result.schema.json", _document(wire)
+            )
             return wire
         except Exception as exc:
             _raise_http(exc)

@@ -5,7 +5,12 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
+from eidolon_kernel.domain.commands import (
+    AttachCompanionCommand,
+    DetachCompanionCommand,
+    MountDeviceCommand,
+    UnmountDeviceCommand,
+)
 from eidolon_kernel.domain.errors import (
     AuthorityRejected,
     AuthorityUnavailable,
@@ -57,7 +62,6 @@ class MountDevice:
     store: MountStore
     projection: MountProjection
     devices: DeviceAuthority
-    companions: CompanionAuthority
     clock: Clock
 
     async def execute(self, command: MountDeviceCommand) -> CommitResult:
@@ -85,14 +89,6 @@ class MountDevice:
             or device.status != "approved"
         ):
             raise AuthorityRejected("Hub device must exist, be approved, and match owner")
-        companion = await self.companions.get_companion(companion_id=command.companion_id)
-        if (
-            companion.companion_id != command.companion_id
-            or companion.owner_id != command.owner_id
-            or companion.status != "active"
-        ):
-            raise AuthorityRejected("Companion must exist, be active, and match owner")
-
         # Another identical call may have committed while this call awaited its
         # external authorities. Preserve concurrent idempotency before evaluating CAS.
         replay = _replay(
@@ -122,7 +118,6 @@ class MountDevice:
             mount = DeviceMount.first(
                 device_id=command.device_id,
                 owner_id=command.owner_id,
-                companion_id=command.companion_id,
                 at=now,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
@@ -131,7 +126,6 @@ class MountDevice:
         else:
             mount = current.mounted_as(
                 owner_id=command.owner_id,
-                companion_id=command.companion_id,
                 at=now,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
@@ -150,6 +144,129 @@ class MountDevice:
                 "previous_revision": actual_revision,
                 "manifest_revision": device.manifest_revision,
                 "replace_existing": command.replace_existing,
+            },
+        )
+        _project_committed(self.store, self.projection, result.mount)
+        return result
+
+
+@dataclass(slots=True)
+class AttachCompanion:
+    store: MountStore
+    projection: MountProjection
+    companions: CompanionAuthority
+    clock: Clock
+
+    async def execute(self, command: AttachCompanionCommand) -> CommitResult:
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="companion.attach",
+            fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        current = self.store.get(command.device_id)
+        if current is None or current.owner_id != command.owner_id or not current.active:
+            raise NotFound("active device mount not found")
+
+        companion = await self.companions.get_companion(companion_id=command.companion_id)
+        if (
+            companion.companion_id != command.companion_id
+            or companion.owner_id != command.owner_id
+            or companion.status != "active"
+        ):
+            raise AuthorityRejected("Companion must exist, be active, and match owner")
+
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="companion.attach",
+            fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        current = self.store.get(command.device_id)
+        if current is None or current.owner_id != command.owner_id or not current.active:
+            raise NotFound("active device mount not found")
+        if current.revision != command.expected_revision:
+            raise RevisionConflict(
+                f"expected revision {command.expected_revision}, current revision is {current.revision}"
+            )
+        if current.attached_companion_id == command.companion_id:
+            raise Conflict("companion is already attached; replay the original request_id")
+
+        mount = current.attached(
+            companion_id=command.companion_id,
+            at=self.clock.now(),
+            request_id=command.request_id,
+            fingerprint=command.fingerprint,
+        )
+        result = self.store.commit(
+            mount=mount,
+            expected_revision=command.expected_revision,
+            operation="companion.attach",
+            event_type=(
+                "eidolon.kernel.companion-attached.v1"
+                if current.attached_companion_id is None
+                else "eidolon.kernel.companion-reattached.v1"
+            ),
+            event_data={
+                "previous_revision": current.revision,
+                "previous_attached_companion_id": current.attached_companion_id,
+            },
+        )
+        _project_committed(self.store, self.projection, result.mount)
+        return result
+
+
+@dataclass(slots=True)
+class DetachCompanion:
+    store: MountStore
+    projection: MountProjection
+    clock: Clock
+
+    def execute(self, command: DetachCompanionCommand) -> CommitResult:
+        replay = _replay(
+            self.store,
+            request_id=command.request_id,
+            operation="companion.detach",
+            fingerprint=command.fingerprint,
+            owner_id=command.owner_id,
+        )
+        if replay is not None:
+            _project_committed(self.store, self.projection, replay.mount)
+            return replay
+
+        current = self.store.get(command.device_id)
+        if current is None or current.owner_id != command.owner_id or not current.active:
+            raise NotFound("active device mount not found")
+        if current.revision != command.expected_revision:
+            raise RevisionConflict(
+                f"expected revision {command.expected_revision}, current revision is {current.revision}"
+            )
+        if current.attached_companion_id is None:
+            raise Conflict("device mount has no companion attachment")
+
+        mount = current.detached(
+            at=self.clock.now(),
+            request_id=command.request_id,
+            fingerprint=command.fingerprint,
+        )
+        result = self.store.commit(
+            mount=mount,
+            expected_revision=command.expected_revision,
+            operation="companion.detach",
+            event_type="eidolon.kernel.companion-detached.v1",
+            event_data={
+                "previous_revision": current.revision,
+                "previous_attached_companion_id": current.attached_companion_id,
             },
         )
         _project_committed(self.store, self.projection, result.mount)
@@ -193,7 +310,10 @@ class UnmountDevice:
             expected_revision=command.expected_revision,
             operation="device.unmount",
             event_type="eidolon.kernel.device-unmounted.v1",
-            event_data={"previous_revision": current.revision},
+            event_data={
+                "previous_revision": current.revision,
+                "previous_attached_companion_id": current.attached_companion_id,
+            },
         )
         _project_committed(self.store, self.projection, result.mount)
         return result
@@ -203,12 +323,13 @@ class UnmountDevice:
 class ReconciliationResult:
     checked: int
     unmounted: int
+    detached: int
     deferred: int
 
 
 @dataclass(slots=True)
 class ReconcileMountPrerequisites:
-    """Tombstone mounts rejected by their current Device or Companion authority."""
+    """Unmount rejected Devices and detach rejected optional Companions."""
 
     store: MountStore
     projection: MountProjection
@@ -219,18 +340,19 @@ class ReconcileMountPrerequisites:
     async def execute(self) -> ReconciliationResult:
         checked = 0
         unmounted = 0
+        detached = 0
         deferred = 0
         for snapshot in self.store.list_all():
             if not snapshot.active:
                 continue
             checked += 1
             try:
-                reason = await self._rejection_reason(snapshot)
+                action, reason = await self._rejection(snapshot)
             except AuthorityUnavailable:
                 # Transport/auth/provider outages are not authoritative revocations.
                 deferred += 1
                 continue
-            if reason is None:
+            if action is None:
                 continue
 
             # Re-read after awaiting external authorities. A concurrent user mutation
@@ -243,67 +365,77 @@ class ReconcileMountPrerequisites:
                 or current.revision != snapshot.revision
             ):
                 continue
-            request_id = self._request_id(current)
+            request_id = self._request_id(current, action)
             fingerprint = request_fingerprint(
-                "device.reconcile-unmount",
+                f"authority.reconcile-{action}",
                 {
                     "device_id": current.device_id,
                     "owner_id": current.owner_id,
                     "expected_revision": current.revision,
                 },
             )
-            tombstone = current.unmounted(
-                at=self.clock.now(),
-                request_id=request_id,
-                fingerprint=fingerprint,
+            transition = current.unmounted if action == "unmount" else current.detached
+            updated = transition(
+                at=self.clock.now(), request_id=request_id, fingerprint=fingerprint
             )
             try:
                 result = self.store.commit(
-                    mount=tombstone,
+                    mount=updated,
                     expected_revision=current.revision,
-                    operation="device.reconcile-unmount",
-                    event_type="eidolon.kernel.device-unmounted-by-authority.v1",
+                    operation=f"authority.reconcile-{action}",
+                    event_type=(
+                        "eidolon.kernel.device-unmounted-by-authority.v1"
+                        if action == "unmount"
+                        else "eidolon.kernel.companion-detached-by-authority.v1"
+                    ),
                     event_data={
                         "previous_revision": current.revision,
+                        "previous_attached_companion_id": current.attached_companion_id,
                         "reason": reason,
                     },
                 )
             except (IdempotencyConflict, RevisionConflict):
                 continue
             _project_committed(self.store, self.projection, result.mount)
-            unmounted += 1
-        return ReconciliationResult(checked, unmounted, deferred)
+            if action == "unmount":
+                unmounted += 1
+            else:
+                detached += 1
+        return ReconciliationResult(checked, unmounted, detached, deferred)
 
-    async def _rejection_reason(self, mount: DeviceMount) -> str | None:
+    async def _rejection(self, mount: DeviceMount) -> tuple[str | None, str | None]:
         try:
             device = await self.devices.get_device(
                 owner_id=mount.owner_id,
                 device_id=mount.device_id,
             )
         except AuthorityRejected:
-            return "device-missing-from-owner-scope"
+            return "unmount", "device-missing-from-owner-scope"
         if (
             device.device_id != mount.device_id
             or device.owner_id != mount.owner_id
             or device.status != "approved"
         ):
-            return "device-not-approved"
+            return "unmount", "device-not-approved"
+
+        if mount.attached_companion_id is None:
+            return None, None
 
         try:
             companion = await self.companions.get_companion(
-                companion_id=mount.companion_id
+                companion_id=mount.attached_companion_id
             )
         except AuthorityRejected:
-            return "companion-missing"
+            return "detach", "companion-missing"
         if (
-            companion.companion_id != mount.companion_id
+            companion.companion_id != mount.attached_companion_id
             or companion.owner_id != mount.owner_id
             or companion.status != "active"
         ):
-            return "companion-not-active"
-        return None
+            return "detach", "companion-not-active"
+        return None, None
 
     @staticmethod
-    def _request_id(mount: DeviceMount) -> str:
-        source = f"{mount.device_id}\0{mount.owner_id}\0{mount.revision}".encode()
-        return "reconcile-device-" + hashlib.sha256(source).hexdigest()
+    def _request_id(mount: DeviceMount, action: str) -> str:
+        source = f"{action}\0{mount.device_id}\0{mount.owner_id}\0{mount.revision}".encode()
+        return f"reconcile-{action}-" + hashlib.sha256(source).hexdigest()

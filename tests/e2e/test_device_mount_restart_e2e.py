@@ -29,7 +29,7 @@ def e2e_app(store):
 
 
 @pytest.mark.asyncio
-async def test_device_mount_survives_restart_then_remounts_and_unmounts(tmp_path) -> None:
+async def test_device_mount_survives_restart_then_attaches_and_unmounts(tmp_path) -> None:
     path = tmp_path / "kernel.sqlite3"
     first_store = SqliteMountStore(path)
     async with httpx.AsyncClient(
@@ -51,15 +51,15 @@ async def test_device_mount_survives_restart_then_remounts_and_unmounts(tmp_path
             "/api/kernel/v1/device-mounts/resolve/device-1",
             headers=headers(),
         )
-        remounted = await client.post(
-            "/api/kernel/v1/device-mounts",
+        attached = await client.post(
+            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
             headers=headers(),
-            json=mount_body(
-                request_id="remount-1",
-                companion_id="companion-2",
-                expected_revision=1,
-                replace_existing=True,
-            ),
+            json={
+                "operation": "companion.attach",
+                "request_id": "attach-1",
+                "companion_id": "companion-2",
+                "expected_revision": 1,
+            },
         )
         unmounted = await client.post(
             "/api/kernel/v1/device-mounts/devices/device-1/unmount",
@@ -75,12 +75,13 @@ async def test_device_mount_survives_restart_then_remounts_and_unmounts(tmp_path
             headers=headers(),
         )
         assert restored.json()["revision"] == 1
-        assert remounted.json()["mount"]["revision"] == 2
-        assert remounted.json()["mount"]["companion_id"] == "companion-2"
+        assert restored.json()["attached_companion_id"] is None
+        assert attached.json()["mount"]["revision"] == 2
+        assert attached.json()["mount"]["attached_companion_id"] == "companion-2"
         assert unmounted.json()["mount"]["revision"] == 3
         assert [event["event_type"] for event in audit.json()["events"]] == [
             "eidolon.kernel.device-mounted.v1",
-            "eidolon.kernel.device-remounted.v1",
+            "eidolon.kernel.companion-attached.v1",
             "eidolon.kernel.device-unmounted.v1",
         ]
     restarted_store.close()

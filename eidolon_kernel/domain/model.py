@@ -44,7 +44,7 @@ class CompanionIdentity:
 class DeviceMount:
     device_id: str
     owner_id: str
-    companion_id: str
+    attached_companion_id: str | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -55,9 +55,12 @@ class DeviceMount:
     def __post_init__(self) -> None:
         object.__setattr__(self, "device_id", require_identifier("device_id", self.device_id))
         object.__setattr__(self, "owner_id", require_identifier("owner_id", self.owner_id, 64))
-        object.__setattr__(
-            self, "companion_id", require_identifier("companion_id", self.companion_id, 64)
-        )
+        if self.attached_companion_id is not None:
+            object.__setattr__(
+                self,
+                "attached_companion_id",
+                require_identifier("attached_companion_id", self.attached_companion_id, 64),
+            )
         object.__setattr__(self, "request_id", require_identifier("request_id", self.request_id, 96))
         if self.revision < 1:
             raise InvalidRequest("revision must be positive")
@@ -74,7 +77,6 @@ class DeviceMount:
         *,
         device_id: str,
         owner_id: str,
-        companion_id: str,
         at: datetime,
         request_id: str,
         fingerprint: str,
@@ -82,7 +84,7 @@ class DeviceMount:
         return cls(
             device_id=device_id,
             owner_id=owner_id,
-            companion_id=companion_id,
+            attached_companion_id=None,
             revision=1,
             created_at=at,
             updated_at=at,
@@ -94,7 +96,6 @@ class DeviceMount:
         self,
         *,
         owner_id: str,
-        companion_id: str,
         at: datetime,
         request_id: str,
         fingerprint: str,
@@ -107,13 +108,52 @@ class DeviceMount:
         return DeviceMount(
             device_id=self.device_id,
             owner_id=owner_id,
-            companion_id=companion_id,
+            attached_companion_id=None,
             revision=self.revision + 1,
             created_at=at,
             updated_at=at,
             request_id=request_id,
             fingerprint=fingerprint,
             active=True,
+        )
+
+    def attached(
+        self,
+        *,
+        companion_id: str,
+        at: datetime,
+        request_id: str,
+        fingerprint: str,
+    ) -> DeviceMount:
+        at = require_utc("attached_at", at)
+        if at < self.updated_at:
+            raise InvalidRequest("attachment transition time cannot move backwards")
+        if not self.active:
+            raise InvalidRequest("cannot attach a companion to an inactive device mount")
+        return replace(
+            self,
+            attached_companion_id=require_identifier("companion_id", companion_id, 64),
+            revision=self.revision + 1,
+            updated_at=at,
+            request_id=request_id,
+            fingerprint=fingerprint,
+        )
+
+    def detached(
+        self, *, at: datetime, request_id: str, fingerprint: str
+    ) -> DeviceMount:
+        at = require_utc("detached_at", at)
+        if at < self.updated_at:
+            raise InvalidRequest("attachment transition time cannot move backwards")
+        if not self.active:
+            raise InvalidRequest("cannot detach a companion from an inactive device mount")
+        return replace(
+            self,
+            attached_companion_id=None,
+            revision=self.revision + 1,
+            updated_at=at,
+            request_id=request_id,
+            fingerprint=fingerprint,
         )
 
     def unmounted(
@@ -124,6 +164,7 @@ class DeviceMount:
             raise InvalidRequest("mount transition time cannot move backwards")
         return replace(
             self,
+            attached_companion_id=None,
             revision=self.revision + 1,
             updated_at=at,
             request_id=request_id,

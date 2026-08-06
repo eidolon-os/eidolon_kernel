@@ -14,14 +14,14 @@ from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
 from eidolon_kernel.domain.model import AuditEvent, DeviceMount
 from eidolon_kernel.ports.runtime import CommitResult, StoredRequest
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _EXPECTED_COLUMNS = {
     "kernel_schema_meta": {"schema_version"},
     "kernel_device_mounts": {
         "device_id",
         "owner_id",
-        "companion_id",
+        "attached_companion_id",
         "revision",
         "created_at",
         "updated_at",
@@ -43,7 +43,7 @@ _EXPECTED_COLUMNS = {
         "event_type",
         "device_id",
         "owner_id",
-        "companion_id",
+        "attached_companion_id",
         "mount_revision",
         "mount_created_at",
         "active",
@@ -63,7 +63,7 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
     return {
         "device_id": mount.device_id,
         "owner_id": mount.owner_id,
-        "companion_id": mount.companion_id,
+        "attached_companion_id": mount.attached_companion_id,
         "revision": mount.revision,
         "created_at": _timestamp(mount.created_at),
         "updated_at": _timestamp(mount.updated_at),
@@ -77,7 +77,7 @@ def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
     return DeviceMount(
         device_id=document["device_id"],
         owner_id=document["owner_id"],
-        companion_id=document["companion_id"],
+        attached_companion_id=document["attached_companion_id"],
         revision=document["revision"],
         created_at=datetime.fromisoformat(document["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(document["updated_at"].replace("Z", "+00:00")),
@@ -91,7 +91,7 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
     return DeviceMount(
         device_id=row["device_id"],
         owner_id=row["owner_id"],
-        companion_id=row["companion_id"],
+        attached_companion_id=row["attached_companion_id"],
         revision=row["revision"],
         created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")),
@@ -139,11 +139,11 @@ class SqliteMountStore:
                 CREATE TABLE kernel_schema_meta (
                     schema_version INTEGER NOT NULL
                 );
-                INSERT INTO kernel_schema_meta(schema_version) VALUES (2);
+                INSERT INTO kernel_schema_meta(schema_version) VALUES (3);
                 CREATE TABLE kernel_device_mounts (
                     device_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
-                    companion_id TEXT NOT NULL,
+                    attached_companion_id TEXT,
                     revision INTEGER NOT NULL CHECK (revision >= 1),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -154,14 +154,14 @@ class SqliteMountStore:
                 CREATE INDEX ix_kernel_mounts_owner_active
                     ON kernel_device_mounts(owner_id, active, device_id);
                 CREATE INDEX ix_kernel_mounts_companion_active
-                    ON kernel_device_mounts(companion_id, active, device_id);
+                    ON kernel_device_mounts(attached_companion_id, active, device_id);
                 CREATE TABLE kernel_audit_events (
                     position INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_id TEXT NOT NULL UNIQUE,
                     event_type TEXT NOT NULL,
                     device_id TEXT NOT NULL,
                     owner_id TEXT NOT NULL,
-                    companion_id TEXT NOT NULL,
+                    attached_companion_id TEXT,
                     mount_revision INTEGER NOT NULL,
                     mount_created_at TEXT NOT NULL,
                     active INTEGER NOT NULL,
@@ -287,7 +287,7 @@ class SqliteMountStore:
                 values = (
                     mount.device_id,
                     mount.owner_id,
-                    mount.companion_id,
+                    mount.attached_companion_id,
                     mount.revision,
                     _timestamp(mount.created_at),
                     _timestamp(mount.updated_at),
@@ -298,7 +298,7 @@ class SqliteMountStore:
                 if current is None:
                     self._connection.execute(
                         """INSERT INTO kernel_device_mounts(
-                            device_id, owner_id, companion_id, revision, created_at, updated_at,
+                            device_id, owner_id, attached_companion_id, revision, created_at, updated_at,
                             request_id, fingerprint, active
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         values,
@@ -306,11 +306,11 @@ class SqliteMountStore:
                 else:
                     cursor = self._connection.execute(
                         """UPDATE kernel_device_mounts SET
-                            companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
+                            attached_companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
                             fingerprint=?, active=?
                         WHERE device_id=? AND owner_id=? AND revision=?""",
                         (
-                            mount.companion_id,
+                            mount.attached_companion_id,
                             mount.revision,
                             _timestamp(mount.created_at),
                             _timestamp(mount.updated_at),
@@ -327,7 +327,7 @@ class SqliteMountStore:
                 event_id = f"kernel:{mount.request_id}:{mount.revision}"
                 cursor = self._connection.execute(
                     """INSERT INTO kernel_audit_events(
-                        event_id, event_type, device_id, owner_id, companion_id, mount_revision,
+                        event_id, event_type, device_id, owner_id, attached_companion_id, mount_revision,
                         mount_created_at, active, request_id, fingerprint, occurred_at, data_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
@@ -335,7 +335,7 @@ class SqliteMountStore:
                         event_type,
                         mount.device_id,
                         mount.owner_id,
-                        mount.companion_id,
+                        mount.attached_companion_id,
                         mount.revision,
                         _timestamp(mount.created_at),
                         int(mount.active),
@@ -388,7 +388,7 @@ class SqliteMountStore:
             document = {
                 "device_id": row["device_id"],
                 "owner_id": row["owner_id"],
-                "companion_id": row["companion_id"],
+                "attached_companion_id": row["attached_companion_id"],
                 "revision": row["mount_revision"],
                 "created_at": row["mount_created_at"],
                 "updated_at": row["occurred_at"],

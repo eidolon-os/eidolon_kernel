@@ -16,7 +16,7 @@ class DeviceMountWire(ContractModel):
     operation: Literal["kernel.device-mount"] = "kernel.device-mount"
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
-    companion_id: str = Field(min_length=1, max_length=64)
+    attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
@@ -29,9 +29,21 @@ class MountDeviceRequestWire(ContractModel):
     operation: Literal["device.mount"]
     request_id: str = Field(min_length=1, max_length=96)
     device_id: str = Field(min_length=1, max_length=128)
-    companion_id: str = Field(min_length=1, max_length=64)
     expected_revision: int = Field(ge=0, strict=True)
     replace_existing: bool = Field(strict=True)
+
+
+class AttachCompanionRequestWire(ContractModel):
+    operation: Literal["companion.attach"]
+    request_id: str = Field(min_length=1, max_length=96)
+    companion_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1, strict=True)
+
+
+class DetachCompanionRequestWire(ContractModel):
+    operation: Literal["companion.detach"]
+    request_id: str = Field(min_length=1, max_length=96)
+    expected_revision: int = Field(ge=1, strict=True)
 
 
 class UnmountDeviceRequestWire(ContractModel):
@@ -67,7 +79,7 @@ class AuditEventWire(ContractModel):
     event_type: str = Field(min_length=1, max_length=255)
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
-    companion_id: str = Field(min_length=1, max_length=64)
+    attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     mount_revision: int = Field(ge=1)
     active: bool
     request_id: str = Field(min_length=1, max_length=96)

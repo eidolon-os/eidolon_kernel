@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
 from eidolon_kernel.contracts.bindings import (
+    AttachCompanionRequestWire,
     CompanionIdentityWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
@@ -25,7 +26,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 9
+    assert len(files) == len(registry.schema_names) == 11
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -36,7 +37,6 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         operation="device.mount",
         request_id="request-1",
         device_id="device-1",
-        companion_id="companion-1",
         expected_revision=0,
         replace_existing=False,
     )
@@ -48,7 +48,6 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
     mount = DeviceMount.first(
         device_id="device-1",
         owner_id="owner-1",
-        companion_id="companion-1",
         at=now,
         request_id="request-1",
         fingerprint="sha256:" + "a" * 64,
@@ -58,13 +57,23 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         "device-mount/mutation-result.schema.json", result.model_dump(mode="json")
     )
 
+    attachment = AttachCompanionRequestWire(
+        operation="companion.attach",
+        request_id="attach-1",
+        companion_id="companion-1",
+        expected_revision=1,
+    )
+    registry.validate(
+        "device-mount/attach-request.schema.json",
+        attachment.model_dump(mode="json"),
+    )
+
 
 def test_schema_and_binding_both_reject_unknown_wire_fields() -> None:
     document = {
         "operation": "device.mount",
         "request_id": "r",
         "device_id": "d",
-        "companion_id": "c",
         "expected_revision": 0,
         "replace_existing": False,
         "surprise": True,
@@ -80,7 +89,6 @@ def test_mount_request_cannot_select_a_target_owner() -> None:
         "operation": "device.mount",
         "request_id": "r",
         "device_id": "d",
-        "companion_id": "c",
         "expected_revision": 0,
         "replace_existing": False,
         "owner_id": "another-owner",

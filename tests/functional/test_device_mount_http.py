@@ -41,6 +41,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         )
         assert mounted.status_code == 200, mounted.text
         assert mounted.json()["mount"]["revision"] == 1
+        assert mounted.json()["mount"]["attached_companion_id"] is None
 
         replay = await client.post(
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
@@ -52,17 +53,47 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             "/api/kernel/v1/device-mounts/resolve/device-1",
             headers=headers(),
         )
-        current = await client.get(
-            "/api/kernel/v1/device-mounts/devices/device-1",
-            headers=headers(),
-        )
-        page = await client.get(
+        unattached_page = await client.get(
             "/api/kernel/v1/device-mounts",
             params={"companion_id": "companion-1"},
             headers=headers(),
         )
-        assert resolved.status_code == current.status_code == page.status_code == 200
-        assert page.json()["mounts"][0]["device_id"] == "device-1"
+        attached = await client.post(
+            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
+            headers=headers(),
+            json={
+                "operation": "companion.attach",
+                "request_id": "attach-1",
+                "companion_id": "companion-1",
+                "expected_revision": 1,
+            },
+        )
+        current = await client.get(
+            "/api/kernel/v1/device-mounts/devices/device-1", headers=headers()
+        )
+        attached_page = await client.get(
+            "/api/kernel/v1/device-mounts",
+            params={"companion_id": "companion-1"},
+            headers=headers(),
+        )
+        assert resolved.status_code == unattached_page.status_code == 200
+        assert unattached_page.json()["mounts"] == []
+        assert attached.status_code == current.status_code == attached_page.status_code == 200
+        assert attached.json()["mount"]["revision"] == 2
+        assert attached_page.json()["mounts"][0]["device_id"] == "device-1"
+
+        detached = await client.post(
+            "/api/kernel/v1/device-mounts/devices/device-1/attachment/detach",
+            headers=headers(),
+            json={
+                "operation": "companion.detach",
+                "request_id": "detach-1",
+                "expected_revision": 2,
+            },
+        )
+        assert detached.status_code == 200
+        assert detached.json()["mount"]["attached_companion_id"] is None
+        assert detached.json()["mount"]["revision"] == 3
 
         unmounted = await client.post(
             "/api/kernel/v1/device-mounts/devices/device-1/unmount",
@@ -70,14 +101,14 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             json={
                 "operation": "device.unmount",
                 "request_id": "unmount-1",
-                "expected_revision": 1,
+                "expected_revision": 3,
             },
         )
         assert unmounted.status_code == 200
         assert unmounted.json()["mount"] == {
-            **current.json(),
-            "revision": 2,
-            "updated_at": "2026-08-04T08:00:01Z",
+            **detached.json()["mount"],
+            "revision": 4,
+            "updated_at": "2026-08-04T08:00:03Z",
             "request_id": "unmount-1",
             "fingerprint": unmounted.json()["mount"]["fingerprint"],
             "active": False,
@@ -98,7 +129,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         )
         assert no_resolution.status_code == 404
         assert inactive.status_code == 200 and inactive.json()["active"] is False
-        assert [event["position"] for event in audit.json()["events"]] == [1, 2]
+        assert [event["position"] for event in audit.json()["events"]] == [1, 2, 3, 4]
 
 
 @pytest.mark.asyncio
@@ -112,8 +143,18 @@ async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> 
         missing_identity = await client.post(
             "/api/kernel/v1/device-mounts", json=mount_body()
         )
-        unavailable = await client.post(
+        mounted = await client.post(
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
+        )
+        unavailable = await client.post(
+            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
+            headers=headers(),
+            json={
+                "operation": "companion.attach",
+                "request_id": "attach",
+                "companion_id": "companion-1",
+                "expected_revision": 1,
+            },
         )
         invalid = await client.post(
             "/api/kernel/v1/device-mounts",
@@ -133,6 +174,7 @@ async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> 
             json=missing_required,
         )
         assert missing_identity.status_code == 403
+        assert mounted.status_code == 200
         assert unavailable.status_code == 503
         assert invalid.status_code == 422
         assert coerced.status_code == 422
@@ -175,7 +217,6 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
             headers=headers("owner-2"),
             json=mount_body(
                 request_id="owner-2-remount",
-                companion_id="companion-2",
                 expected_revision=1,
                 replace_existing=True,
             ),

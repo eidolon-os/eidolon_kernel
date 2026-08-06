@@ -25,7 +25,7 @@ from tests.support import (
 )
 
 
-def handler(*, devices=None, companions=None):
+def handler(*, devices=None):
     store = MemoryStore()
     projection = InMemoryMountProjection()
     return (
@@ -33,7 +33,6 @@ def handler(*, devices=None, companions=None):
             store,
             projection,
             devices or FakeDeviceAuthority(),
-            companions or FakeCompanionAuthority(),
             MutableClock(),
         ),
         UnmountDevice(store, projection, MutableClock()),
@@ -45,80 +44,69 @@ def handler(*, devices=None, companions=None):
 @pytest.mark.asyncio
 async def test_mount_is_idempotent_before_external_revalidation() -> None:
     devices = FakeDeviceAuthority()
-    companions = FakeCompanionAuthority()
-    mount, _, store, projection = handler(devices=devices, companions=companions)
-    command = MountDeviceCommand("request-1", "device-1", "owner-1", "companion-1", 0)
+    mount, _, store, projection = handler(devices=devices)
+    command = MountDeviceCommand("request-1", "device-1", "owner-1", 0)
     first = await mount.execute(command)
     devices.status = "revoked"
-    companions.status = "inactive"
     replay = await mount.execute(command)
     assert first.audit_position == replay.audit_position == 1
     assert replay.replayed is True
-    assert devices.calls == companions.calls == 1
+    assert devices.calls == 1
     assert projection.get("device-1") == store.get("device-1")
 
 
 @pytest.mark.asyncio
 async def test_request_id_reuse_and_authority_mismatches_are_rejected() -> None:
     mount, _, _, _ = handler()
-    command = MountDeviceCommand("same", "device-1", "owner-1", "companion-1", 0)
+    command = MountDeviceCommand("same", "device-1", "owner-1", 0)
     await mount.execute(command)
     with pytest.raises(IdempotencyConflict):
         await mount.execute(
-            MountDeviceCommand("same", "device-2", "owner-1", "companion-1", 0),
+            MountDeviceCommand("same", "device-2", "owner-1", 0),
         )
 
     rejected, _, _, _ = handler(devices=FakeDeviceAuthority(status="revoked"))
     with pytest.raises(AuthorityRejected):
         await rejected.execute(command)
 
-    wrong_companion, _, _, _ = handler(
-        companions=FakeCompanionAuthority(actual_owner="owner-2")
-    )
-    with pytest.raises(AuthorityRejected):
-        await wrong_companion.execute(command)
-
-
 @pytest.mark.asyncio
 async def test_active_mount_requires_explicit_remount_and_cas() -> None:
     mount, _, _, _ = handler()
     first = await mount.execute(
-        MountDeviceCommand("r1", "device-1", "owner-1", "companion-1", 0)
+        MountDeviceCommand("r1", "device-1", "owner-1", 0)
     )
     with pytest.raises(Conflict):
         await mount.execute(
-            MountDeviceCommand("r2", "device-1", "owner-1", "companion-2", 1),
+            MountDeviceCommand("r2", "device-1", "owner-1", 1),
         )
     with pytest.raises(RevisionConflict):
         await mount.execute(
-            MountDeviceCommand("r3", "device-1", "owner-1", "companion-2", 0, True),
+            MountDeviceCommand("r3", "device-1", "owner-1", 0, True),
         )
     remount = await mount.execute(
-        MountDeviceCommand("r4", "device-1", "owner-1", "companion-2", 1, True),
+        MountDeviceCommand("r4", "device-1", "owner-1", 1, True),
     )
     assert first.mount.revision == 1
     assert remount.mount.revision == 2
-    assert remount.mount.companion_id == "companion-2"
+    assert remount.mount.attached_companion_id is None
 
 
 @pytest.mark.asyncio
 async def test_remount_can_never_transfer_a_device_between_owner_namespaces() -> None:
     devices = FakeDeviceAuthority()
-    companions = FakeCompanionAuthority()
-    mount, _, _, _ = handler(devices=devices, companions=companions)
+    mount, _, _, _ = handler(devices=devices)
     await mount.execute(
-        MountDeviceCommand("r1", "device-1", "owner-1", "companion-1", 0)
+        MountDeviceCommand("r1", "device-1", "owner-1", 0)
     )
 
     devices.actual_owner = "owner-2"
-    companions.actual_owner = "owner-2"
     with pytest.raises(NotFound, match="device mount not found"):
         await mount.execute(
-            MountDeviceCommand("r1", "device-1", "owner-2", "companion-2", 0),
+            MountDeviceCommand("r1", "device-1", "owner-2", 0),
         )
     with pytest.raises(NotFound, match="device mount not found"):
         await mount.execute(
-            MountDeviceCommand("r2", "device-1", "owner-2", "companion-2", 1, True),
+            MountDeviceCommand("r2", "device-1", "owner-2", 1, True),
         )
 
 
@@ -126,7 +114,7 @@ async def test_remount_can_never_transfer_a_device_between_owner_namespaces() ->
 async def test_unmount_is_cas_guarded_idempotent_and_reactivatable() -> None:
     mount, unmount, _, projection = handler()
     await mount.execute(
-        MountDeviceCommand("r1", "device-1", "owner-1", "companion-1", 0)
+        MountDeviceCommand("r1", "device-1", "owner-1", 0)
     )
     with pytest.raises(RevisionConflict):
         unmount.execute(UnmountDeviceCommand("u0", "device-1", "owner-1", 2))
@@ -141,7 +129,7 @@ async def test_unmount_is_cas_guarded_idempotent_and_reactivatable() -> None:
     assert not result.mount.active and replay.replayed
     assert projection.get("device-1").revision == 2
     reactivated = await mount.execute(
-        MountDeviceCommand("r2", "device-1", "owner-1", "companion-1", 2)
+        MountDeviceCommand("r2", "device-1", "owner-1", 2)
     )
     assert reactivated.mount.active and reactivated.mount.revision == 3
 
@@ -165,12 +153,11 @@ async def test_failed_authoritative_commit_never_updates_projection() -> None:
         store,
         projection,
         FakeDeviceAuthority(),
-        FakeCompanionAuthority(),
         MutableClock(),
     )
     with pytest.raises(RuntimeError, match="disk full"):
         await use_case.execute(
-            MountDeviceCommand("r", "device", "owner-1", "companion", 0)
+            MountDeviceCommand("r", "device", "owner-1", 0)
         )
     assert projection.get("device") is None
 
@@ -192,11 +179,10 @@ async def test_projection_increment_failure_rebuilds_from_authority() -> None:
         store,
         projection,
         FakeDeviceAuthority(),
-        FakeCompanionAuthority(),
         MutableClock(),
     )
     result = await use_case.execute(
-        MountDeviceCommand("r", "device", "owner-1", "companion", 0)
+        MountDeviceCommand("r", "device", "owner-1", 0)
     )
     assert result.mount == projection.get("device") == store.get("device")
 
@@ -208,21 +194,15 @@ async def test_concurrent_identical_mounts_share_one_stable_outcome() -> None:
             await asyncio.sleep(0)
             return await super().get_device(**kwargs)
 
-    class YieldingCompanion(FakeCompanionAuthority):
-        async def get_companion(self, **kwargs):
-            await asyncio.sleep(0)
-            return await super().get_companion(**kwargs)
-
     store = MemoryStore()
     projection = InMemoryMountProjection()
     use_case = MountDevice(
         store,
         projection,
         YieldingDevice(),
-        YieldingCompanion(),
         MutableClock(),
     )
-    command = MountDeviceCommand("same", "device", "owner-1", "companion", 0)
+    command = MountDeviceCommand("same", "device", "owner-1", 0)
     results = await asyncio.gather(
         use_case.execute(command),
         use_case.execute(command),
@@ -233,27 +213,14 @@ async def test_concurrent_identical_mounts_share_one_stable_outcome() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("device_status", "companion_status", "reason"),
-    [
-        ("revoked", "active", "device-not-approved"),
-        ("approved", "inactive", "companion-not-active"),
-    ],
-)
-async def test_reconciliation_tombstones_rejected_mount_prerequisites(
-    device_status, companion_status, reason
-) -> None:
+async def test_reconciliation_tombstones_a_rejected_device() -> None:
     devices = FakeDeviceAuthority()
     companions = FakeCompanionAuthority()
-    mount, _, store, projection = handler(
-        devices=devices,
-        companions=companions,
-    )
+    mount, _, store, projection = handler(devices=devices)
     await mount.execute(
-        MountDeviceCommand("mount", "device-1", "owner-1", "companion-1", 0)
+        MountDeviceCommand("mount", "device-1", "owner-1", 0)
     )
-    devices.status = device_status
-    companions.status = companion_status
+    devices.status = "revoked"
 
     result = await ReconcileMountPrerequisites(
         store,
@@ -264,13 +231,13 @@ async def test_reconciliation_tombstones_rejected_mount_prerequisites(
     ).execute()
 
     assert result.checked == result.unmounted == 1
-    assert result.deferred == 0
+    assert result.detached == result.deferred == 0
     assert store.get("device-1").active is False
     assert projection.get("device-1").revision == 2
     assert store.events[-1].event_type == (
         "eidolon.kernel.device-unmounted-by-authority.v1"
     )
-    assert store.events[-1].data["reason"] == reason
+    assert store.events[-1].data["reason"] == "device-not-approved"
 
 
 @pytest.mark.asyncio
@@ -281,7 +248,7 @@ async def test_reconciliation_defers_outages_without_revoking_mount() -> None:
 
     mount, _, store, projection = handler()
     await mount.execute(
-        MountDeviceCommand("mount", "device-1", "owner-1", "companion-1", 0)
+        MountDeviceCommand("mount", "device-1", "owner-1", 0)
     )
     result = await ReconcileMountPrerequisites(
         store,
@@ -292,5 +259,5 @@ async def test_reconciliation_defers_outages_without_revoking_mount() -> None:
     ).execute()
 
     assert result.checked == result.deferred == 1
-    assert result.unmounted == 0
+    assert result.unmounted == result.detached == 0
     assert store.get("device-1").active is True

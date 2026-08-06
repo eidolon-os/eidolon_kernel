@@ -20,6 +20,8 @@ from eidolon_kernel.adapters.reconciliation.periodic import (
 from eidolon_kernel.adapters.runtime import SystemClock
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.application.device_mounts import (
+    AttachCompanion,
+    DetachCompanion,
     MountDevice,
     ReconcileMountPrerequisites,
     UnmountDevice,
@@ -61,7 +63,9 @@ def build_services(
     contracts = contracts or ContractRegistry()
     projection.rebuild(store.list_all())
     return KernelHttpServices(
-        mount_device=MountDevice(store, projection, devices, companions, clock),
+        mount_device=MountDevice(store, projection, devices, clock),
+        attach_companion=AttachCompanion(store, projection, companions, clock),
+        detach_companion=DetachCompanion(store, projection, clock),
         unmount_device=UnmountDevice(store, projection, clock),
         mounts=DeviceMountQueries(projection),
         audit=AuditQueries(store),

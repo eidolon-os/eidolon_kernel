@@ -97,7 +97,7 @@ def test_restart_rebuilds_projection_from_only_authoritative_table(tmp_path) -> 
     path = tmp_path / "kernel.sqlite3"
     first = SqliteMountStore(path)
     first.commit(
-        mount=sample_mount(),
+        mount=sample_mount(attached_companion_id="companion-1"),
         expected_revision=0,
         operation="device.mount",
         event_type="mounted",

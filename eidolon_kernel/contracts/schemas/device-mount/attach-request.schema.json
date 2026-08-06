@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/device-mount/attach-request.schema.json",
+  "title": "Attach Companion Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "request_id", "companion_id", "expected_revision"],
+  "properties": {
+    "operation": {"const": "companion.attach"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "expected_revision": {"type": "integer", "minimum": 1}
+  }
+}
