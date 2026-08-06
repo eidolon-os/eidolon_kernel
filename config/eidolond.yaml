@@ -16,3 +16,4 @@ interface:
   host: 127.0.0.1
   port: 8090
   uds: ../var/eidolond.sock
+  uds_mode: "0600"

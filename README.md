@@ -22,6 +22,11 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 Device Mount 与可选 Companion Attachment 的 domain、application、SQLite、projection、Hub/Data authority consumer 和 HTTP V1 已形成完整闭环。Device 不需要 Companion 才能 Mount；Companion 也不需要物理 Device 才能存在。Hub 与 Data consumer 都使用精确 GET、严格 consumed JSON Schema 和独立服务凭证；生产 composition 不导入或直连兄弟项目数据库。
 
+Kernel→Hub 不再保存 Hub 静态地址。生产 composition 只通过本机 `eidolond` 的 ready endpoint
+directory 解析 `hub/device-authority.http`，并同时锁定 protocol 与 contract；解析失败时 Mount 与
+reconciliation fail closed，`/health` 明确返回 degraded。Kernel 自己拥有消费方 Port、Schema、DTO
+与 mapper，不 import `eidolon_system`，也没有静态地址 fallback 或第二目录真源。
+
 Kernel V1 只有一个安全主体：Owner。`owner_id` 是稳定、opaque 的 namespace principal，类似 OS UID；它不是账号资料、Persona、Companion 或业务对象。Kernel 不建立 token issuer、账号/profile authority 或 identity service。V1 只允许 loopback / trusted same-host ingress，由 `OwnerAuthorizer` 从受信本机安全上下文取得 Owner；request body/query 不能另行指定目标 Owner。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
 ## 收敛原则
@@ -35,7 +40,7 @@ Kernel 以 `Port + Contract + Adapter` 定义 System Service：领域 Port 表�
 - Kernel 调用外部 authority 使用服务身份，不冒充 Owner credential。当前 Hub adapter 只能按 Hub 已发布的 management API 携带其要求的 credential；该凭证不进入 Domain、SQLite 或下游调用。
 - 单机本地部署先接受明确的 trusted-local threat model。若以后需要防御同机不可信进程，再根据证据评估 Unix domain socket peer credential、mTLS 或 capability，而不是预建认证体系。
 
-HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统一稳定 ID、principal/request context 和领域错误等必要语义，不统一 payload envelope，不实现 Binder daemon 或通用消息总线。仓库内独立 `eidolond` 只提供窄的机器级服务管理和 endpoint directory，不代理业务调用。依据和边界见 [ADR-0004](docs/adr/0004-system-service-contracts-without-binder.md) 与 [ADR-0007](docs/adr/0007-independent-system-manager-and-host-adapters.md)。
+HTTP、gRPC、NATS、LiveKit 可以继续承载不同交互语义。当前只统一稳定 ID、principal/request context 和领域错误等必要语义，不统一 payload envelope，不实现 Binder daemon 或通用消息总线。仓库内独立 `eidolond` 只提供窄的机器级服务管理和 endpoint directory，不代理业务调用。依据和边界见 [ADR-0004](docs/adr/0004-system-service-contracts-without-binder.md)、[ADR-0007](docs/adr/0007-independent-system-manager-and-host-adapters.md) 与 [ADR-0008](docs/adr/0008-kernel-consumes-system-service-directory.md)。
 
 ## 目录
 
@@ -85,6 +90,8 @@ IPC、配置中心或服务网格。
    不写入 SQLite，进程重启必须重新观察。
 6. Enable/Disable/Restart 都要求幂等 request ID；desired mutation 要求 revision/CAS；每个已提交
    操作获得稳定递增 audit position。Restart 不改变 desired revision。
+7. Kernel 通过 UDS/loopback bootstrap 访问目录；每次低频 Device authority 调用重新 Resolve，
+   校验 service/endpoint/protocol/contract 后才访问 Hub，不缓存失效 endpoint，也不回退静态 URL。
 
 System service 是 machine scope，contract 中没有 `owner_id`。Owner 只属于 Kernel 用户
 namespace；移动端或远端用户不得直接访问 `eidolond`。
@@ -109,7 +116,7 @@ readiness 自动发布；动态端口、多实例、跨 Host 或外部 provider 
 1. HTTP interface 先通过 normative JSON Schema 校验 wire request，再显式映射为 domain command。
 2. `OwnerAuthorizer` 从本机安全上下文给出唯一 Owner scope；application 不信任 request body/query 自报 owner。
 3. 相同 `request_id + fingerprint` 直接返回原 mutation result，不重新访问外部 authority；同一 request ID 的不同 payload 返回冲突。
-4. 首次/重新挂载前，`DeviceAuthority` 只校验 Hub Device 存在、`approved`、owner 匹配；Mount 不访问 Companion authority。
+4. 首次/重新挂载前，`DeviceAuthority` 先通过本机 `eidolond` Resolve ready Hub endpoint，再只校验 Hub Device 存在、`approved`、owner 匹配；Mount 不访问 Companion authority。
 5. application 构造下一 revision；SQLite 用 `BEGIN IMMEDIATE` 和 expected revision 做 CAS，在同一事务提交 mount、幂等结果和 audit event。
 6. 提交成功后更新 typed in-memory projection；若增量更新异常，直接从 SQLite authority 重建。
 7. Get/Resolve/List 走投影；audit 读取 SQLite。进程启动时投影只从当前 mount authority 重建。
@@ -152,16 +159,27 @@ X-Eidolon-Owner: <owner-id>
 
 Normative wire contract 位于 [`eidolon_kernel/contracts/schemas`](eidolon_kernel/contracts/schemas)。FastAPI binding 只负责运行时 normalization；interface 对输入输出再次执行 Draft 2020-12 Schema 校验。Wire DTO 与 Domain Entity 不共享类，由 mapper 显式转换。
 
-Kernel 的 Hub adapter 只调用：
+Kernel 先通过 UDS（macOS/dev 默认 `var/eidolond.sock`）消费目录：
 
 ```text
-GET {hub.base_url}/api/device-management/v1/owners/{owner_id}/devices/{device_id}
+GET /api/system/v1/services/hub/endpoints/device-authority.http
+```
+
+返回值必须严格满足 Kernel 固定的 consumed Schema，且必须声明 `protocol=http` 与
+`contract=eidolon.hub.device-directory.v1`。之后 Hub adapter 只调用解析出的地址：
+
+```text
+GET {resolved_hub_address}/api/device-management/v1/owners/{owner_id}/devices/{device_id}
 ```
 
 并透传 `EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN`。该值必须与 Hub 的
 `EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN` 相同，是只能执行精确 Device Get 的
 opaque capability；它不是 Owner token，也不是不可续期的静态 JWT。Kernel 不消费
 Approval、Revocation、Events、Enrollment 或 Provider API。
+
+目录不可连接、Hub 未 ready、endpoint identity/protocol/contract 漂移时都视为 authority unavailable；
+Mount 不提交 SQLite，周期 reconciliation 延后本轮。Kernel 不保留 Hub 地址 fallback，因为 fallback
+会绕过 `eidolond` readiness 并形成双真源。
 
 Kernel 的 Companion adapter 只调用：
 
@@ -213,6 +231,8 @@ uv run uvicorn eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 
 ```
 
 V1 必须绑定 loopback 或置于已经完成身份认证的同机 ingress 后；不得直接监听不可信网络。Companion Authority 默认由 `127.0.0.1:8084` 提供。
+Kernel 启动不要求 Hub 已经 ready，但写入 readiness 取决于 `eidolond` 是否发布 Hub endpoint；未发布时
+`GET /health` 返回 `status=degraded` 与 `device_mount_write_available=false`，SQLite authority 与热读仍可用。
 
 独立运行 System Manager：
 
@@ -226,11 +246,20 @@ EIDOLON_SYSTEM_SETTINGS_YAML=/etc/eidolon/eidolond.yaml uv run eidolond
 
 `config/eidolond.systemd.example.yaml` 展示 systemd adapter 与 `/run/eidolon/system.sock` 配置。
 Host init 必须启动并拉起 `eidolond`；只有 `eidolond` 应拥有其他 Eidolon unit 的 desired state。
-产品部署应使用 UDS 文件 owner/group/mode 限制调用者。当前 macOS/dev manifest 只包含代码已确认
-target、health 与 authority contract 的 Hub；systemd manifest 是等待树莓派镜像安装/验证 unit
-name 的 deployment example。它不会猜测 Agent/Channel/Memory 的完整依赖关系，也尚未
-接管 Kernel 自身的 dev lifecycle。在 Admin 仍可修改 supervisord enabled symlink 的过渡期，
-不要同时用两处入口修改 Hub enablement；正式切换前必须先把 Admin 降为 `eidolond` client。
+`eidolond` 会自行预绑定 UDS 并把 listener fd 交给 uvicorn，避免 uvicorn 把 socket 改成 `0666`；
+macOS/dev 默认 `0600`，产品 profile 可用 `0660`，其 owner/group 由服务运行用户决定。当前
+macOS/dev 默认 manifest 仍只包含已接线的 Hub，避免与 Admin 当前 supervisord 配置形成双
+desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可冷启动并管理 Hub 与 Kernel。
+树莓派 profile 已包含 Hub 与 Kernel，匹配的非 root unit、受限 Polkit rule 和镜像安装说明位于
+[`deploy/systemd`](deploy/systemd)。只有 `eidolond.service` 由 systemd enable，Hub/Kernel unit
+不带 `WantedBy`，由 `eidolond.sqlite3` 决定是否运行。2026-08-06 已在 Raspberry Pi 5 / Debian
+13 / systemd 257 上完成实际安装、冷启动、受管 Kernel restart、Device Mount 重建与
+`systemd-analyze verify`；验证没有修改既有 Bootstrap/Admin 服务。
+
+Kernel 与 Hub 是软运行时依赖：Hub 不 ready 时 Kernel 仍启动并提供已有 Mount 热读，`/health`
+明确把写入标成 degraded，新 Mount fail closed；因此 system manifest 不伪造硬 dependency。
+Mobile/Bootstrap 的 `claimed + connected` 也不等于应用栈 ready，两条状态链不能合并。详见
+[ADR-0010](docs/adr/0010-single-host-boot-and-systemd-deployment.md)。
 
 ## 验证
 
@@ -242,7 +271,7 @@ uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov-report=term-missin
 ```
 
 测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
-[Optional Attachment 与消费者边界收敛测试报告](docs/testing/reports/2026-08-05-optional-attachment-convergence.md)。
+[单 Host 启动与 Device Mount 进程 E2E 报告](docs/testing/reports/2026-08-06-single-host-boot-device-mount.md)。
 
 ## 后续演进门槛
 
@@ -250,5 +279,6 @@ uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov-report=term-missin
 - Kernel 不拥有 Owner profile/account；未来即使需要读取 Owner lifecycle，也必须由事实拥有方先发布窄且稳定的 authority contract，不能直连兄弟 DB 或在 Kernel 发明用户资料 API。
 - 保持 Kernel local-only 时，trusted-local authorizer 是明确部署假设而不是产品化 blocker；若要直接接入不可信网络或跨 Host，必须先定义可验证 principal 和 ingress-to-Kernel 信任通道，再替换 adapter。不得把 header hints 包装成“认证”。
 - 动态服务自行注册、Lease/Watch、多实例或跨 Host registry 必须先出现真实部署事实；当前 controller-derived local directory 不因此升级为 Binder-like runtime。
+- 产品镜像必须实际创建专用 `eidolon` user/group，并验证 `/run/eidolon/system.sock` 的 owner/group；`uds_mode=0660` 只限定权限位，不替代宿主机账号与 unit 配置。
 - 只有出现跨 Host 服务迁移、能力句柄或通用调用代理等实际需求，才另行评估 Binder-like IPC runtime；“已经用了多种协议”本身不是引入依据。
 - 只有 HTTP/JSON 的测量结果无法满足控制面 SLA 时，才评估 gRPC；媒体热路径永远不经 Device Mount API。

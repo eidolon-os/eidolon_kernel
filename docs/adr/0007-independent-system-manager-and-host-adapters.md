@@ -70,9 +70,10 @@ SQLite 与 Kernel Device Mount SQLite 完全独立。
 ### Machine scope，不引入 Owner 或 JWT
 
 System service 是机器级控制面，不属于 Owner namespace，contract 中禁止 `owner_id`。V1 API
-只允许 loopback 或 Unix Domain Socket。产品部署应使用 UDS 文件权限限制调用者；不把本机
-header、Owner token 或新 JWT 包装成伪安全。远程用户和移动端必须终止在产品 ingress，不能
-直接访问 `eidolond`。
+只允许 loopback 或 Unix Domain Socket。`eidolond` 入口预绑定 UDS、应用配置的 `0600`/`0660`
+mode 后把 listener fd 交给 uvicorn，避免框架默认改成 `0666`。产品部署仍必须以 unit 的运行
+user/group 确立文件 owner/group；不把本机 header、Owner token 或新 JWT 包装成伪安全。
+远程用户和移动端必须终止在产品 ingress，不能直接访问 `eidolond`。
 
 ## HTTP/JSON V1
 
@@ -99,9 +100,12 @@ normalization，mapper 显式转换 domain/wire。
 - macOS/dev 暂时复用现有 supervisord daemon。Admin 迁移完成前不得同时让 Admin symlink 与
   `eidolond` 修改同一服务的 enabled 状态。
 - 默认 macOS/dev manifest 只纳入代码已经确认 target、health 与 authority contract 的 Hub；
-  systemd manifest 明确是待产品镜像验证 unit name 的部署 example。Kernel 自身
-  尚未接入当前 dev supervisord，Agent/Channel/Memory 的完整启动依赖和 readiness contract 也未
-  统一；在事实稳定前不猜测并固化顺序。
+  真实临时 supervisord E2E 已证明同一 adapter 能冷启动 Hub 与 Kernel，但当前 Admin 默认配置
+  尚未安装 Kernel program，因此不把测试配置冒充开发机部署完成。
+- Raspberry Pi profile 已提供与 manifest 一致的 `eidolond`、Hub、Kernel unit 和最小 Polkit
+  rule；具体部署决策见
+  [ADR-0010](0010-single-host-boot-and-systemd-deployment.md)。Agent/Channel/Memory 的完整启动
+  依赖和 readiness contract 仍未统一，在事实稳定前不猜测并固化顺序。
 
 ## Consequences
 
@@ -114,9 +118,10 @@ normalization，mapper 显式转换 domain/wire。
 
 代价与 blocker：
 
-- 当前只是首个 Hub service 闭环，尚未接管完整 dev stack；
-- 树莓派镜像仍需安装实际 systemd unit、专用运行用户/组和 UDS 权限；以 root 运行且开放
-  loopback mutation API 不可作为最终产品部署；
+- 当前只收敛 Hub、Kernel 的单 Host 闭环，尚未接管完整 dev stack；
+- 树莓派 unit 与权限资产已形成，但仍需在真实镜像安装后验证 systemd/polkit 版本、UDS
+  owner/group 和冷启动；以 root 运行或开放 loopback mutation API 不可作为最终产品部署；
 - Admin 必须在迁移后降为 `eidolond` client，才能删除现有 supervisor authority；
-- Kernel→Hub 的静态 URL 尚未切换到 `ServiceDirectoryPort`，应在目录契约稳定后作为下一个
-  独立消费者迁移，不在本 ADR 中制造双 fallback 真源。
+- Kernel→Hub 已按 [ADR-0008](0008-kernel-consumes-system-service-directory.md) 切换到调用方自有
+  `SystemServiceDirectory` Port；静态 URL 已删除且没有 fallback。Companion authority 尚未纳入
+  已验证的 service manifest，因此仍保留原精确地址配置，不能为追求形式统一虚构目录事实。

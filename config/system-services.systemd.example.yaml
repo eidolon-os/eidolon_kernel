@@ -1,6 +1,5 @@
-# Deployment proposal: the Raspberry Pi image must install and verify the unit
-# target named below before adopting this manifest. The current source tree does
-# not claim that this systemd unit already exists.
+# Raspberry Pi/Linux product-image profile. The matching reviewed unit templates
+# live under deploy/systemd; the image builder must install and verify them.
 version: 1
 services:
   - service_id: hub
@@ -15,4 +14,19 @@ services:
         protocol: http
         address: http://127.0.0.1:8082
         contract: eidolon.hub.device-directory.v1
-        health_url: http://127.0.0.1:8082/api/admin/probe/health
+        health_url: http://127.0.0.1:8082/health
+  - service_id: kernel
+    description: Sovereign namespace, Device Mount and authoritative state
+    required: true
+    enabled_by_default: true
+    # Hub/Data availability gates specific mutations, not Kernel startup.
+    # Existing authoritative Mount reads remain available during an outage.
+    dependencies: []
+    host_targets:
+      systemd: eidolon-kernel.service
+    endpoints:
+      - endpoint_id: device-mount.http
+        protocol: http
+        address: http://127.0.0.1:8083
+        contract: eidolon.kernel.device-mount.v1
+        health_url: http://127.0.0.1:8083/health

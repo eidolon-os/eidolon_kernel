@@ -1,0 +1,18 @@
+# Raspberry Pi/Linux product profile for eidolon-kernel.service.
+persistence:
+  path: /var/lib/eidolon/eidolon-kernel.sqlite3
+system_directory:
+  base_url: http://eidolond
+  uds_path: /run/eidolon/system.sock
+  timeout_seconds: 2
+hub:
+  timeout_seconds: 3
+companion_authority:
+  # Data Authority is still an independently deployed exact HTTP contract.
+  base_url: http://127.0.0.1:8084
+  timeout_seconds: 3
+reconciliation:
+  interval_seconds: 30
+deployment:
+  mode: trusted-local
+  trusted_local_ingress: true

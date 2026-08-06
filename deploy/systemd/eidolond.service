@@ -1,0 +1,35 @@
+[Unit]
+Description=Eidolon OS local system manager
+Wants=eidolon-bootstrapd.service
+After=local-fs.target eidolon-bootstrapd.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eidolon
+Group=eidolon
+UMask=0007
+Environment=EIDOLON_SYSTEM_SETTINGS_YAML=/etc/eidolon/eidolond.yaml
+ExecStart=/srv/eidolon/current/eidolon_kernel/.venv/bin/eidolond
+Restart=always
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+StateDirectory=eidolon
+StateDirectoryMode=0750
+RuntimeDirectory=eidolon
+RuntimeDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

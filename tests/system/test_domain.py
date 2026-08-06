@@ -48,3 +48,12 @@ def test_catalog_rejects_unknown_dependencies_duplicate_ids_and_bad_identifiers(
         ServiceCatalog((service("kernel"), service("kernel")))
     with pytest.raises(InvalidManifest, match="service_id"):
         service("Not Valid")
+    with pytest.raises(InvalidManifest, match="service_id"):
+        service("a" * 129)
+    with pytest.raises(InvalidManifest, match="protocol"):
+        ServiceEndpoint(
+            endpoint_id="control.http",
+            protocol="p" * 33,
+            address="http://127.0.0.1",
+            contract="eidolon.test.v1",
+        )

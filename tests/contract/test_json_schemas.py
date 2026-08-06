@@ -13,6 +13,7 @@ from eidolon_kernel.contracts.bindings import (
     CompanionIdentityWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
+    SystemServiceEndpointWire,
 )
 from eidolon_kernel.contracts.mappers import commit_to_wire
 from eidolon_kernel.contracts.registry import ContractRegistry
@@ -26,7 +27,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 11
+    assert len(files) == len(registry.schema_names) == 12
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -155,3 +156,38 @@ def test_consumed_companion_contract_is_a_strict_identity_subset() -> None:
     document["profile_json"] = {"must": "not leak"}
     with pytest.raises(ValidationError):
         ContractRegistry().validate("external/companion-identity.schema.json", document)
+
+
+def test_consumed_system_directory_contract_is_strict_and_machine_scoped() -> None:
+    document = {
+        "operation": "system.service-endpoint",
+        "service_id": "hub",
+        "endpoint_id": "device-authority.http",
+        "protocol": "http",
+        "address": "http://127.0.0.1:8082",
+        "contract": "eidolon.hub.device-directory.v1",
+    }
+    ContractRegistry().validate("external/system-service-endpoint.schema.json", document)
+    assert SystemServiceEndpointWire.model_validate(document).service_id == "hub"
+    document["owner_id"] = "must-not-enter-machine-scope"
+    with pytest.raises(ValidationError):
+        ContractRegistry().validate(
+            "external/system-service-endpoint.schema.json", document
+        )
+
+
+def test_system_directory_producer_and_consumer_contracts_have_identical_shape() -> None:
+    root = Path(__file__).resolve().parents[2]
+    producer = json.loads(
+        (root / "eidolon_system/contracts/schemas/system/endpoint.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    consumer = json.loads(
+        (
+            root
+            / "eidolon_kernel/contracts/schemas/external/system-service-endpoint.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    for keyword in ("type", "additionalProperties", "required", "properties"):
+        assert consumer[keyword] == producer[keyword]

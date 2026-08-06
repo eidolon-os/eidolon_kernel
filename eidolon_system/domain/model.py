@@ -11,8 +11,12 @@ from eidolon_system.domain.errors import InvalidManifest, NotFound
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 
 
-def _identifier(name: str, value: str) -> str:
-    if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+def _identifier(name: str, value: str, *, max_length: int = 128) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) > max_length
+        or not _IDENTIFIER.fullmatch(value)
+    ):
         raise InvalidManifest(f"{name} must be a stable lowercase identifier")
     return value
 
@@ -27,13 +31,20 @@ class ServiceEndpoint:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "endpoint_id", _identifier("endpoint_id", self.endpoint_id))
-        object.__setattr__(self, "protocol", _identifier("protocol", self.protocol))
-        if not self.address.strip():
-            raise InvalidManifest("endpoint address must not be empty")
-        if not self.contract.strip():
-            raise InvalidManifest("endpoint contract must not be empty")
-        if self.health_url is not None and not self.health_url.startswith(("http://", "https://")):
-            raise InvalidManifest("health_url must be HTTP(S)")
+        object.__setattr__(
+            self,
+            "protocol",
+            _identifier("protocol", self.protocol, max_length=32),
+        )
+        if not self.address.strip() or len(self.address) > 2048:
+            raise InvalidManifest("endpoint address must contain 1 to 2048 characters")
+        if not self.contract.strip() or len(self.contract) > 256:
+            raise InvalidManifest("endpoint contract must contain 1 to 256 characters")
+        if self.health_url is not None and (
+            len(self.health_url) > 2048
+            or not self.health_url.startswith(("http://", "https://"))
+        ):
+            raise InvalidManifest("health_url must be HTTP(S) and at most 2048 characters")
 
 
 @dataclass(frozen=True, slots=True)

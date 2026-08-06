@@ -12,4 +12,4 @@ services:
         protocol: http
         address: http://127.0.0.1:8082
         contract: eidolon.hub.device-directory.v1
-        health_url: http://127.0.0.1:8082/api/admin/probe/health
+        health_url: http://127.0.0.1:8082/health

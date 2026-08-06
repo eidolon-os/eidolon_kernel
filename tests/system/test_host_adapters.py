@@ -89,7 +89,7 @@ async def test_supervisord_adapter_supports_inactive_start_and_restart(tmp_path)
     config.write_text("[supervisord]\n", encoding="utf-8")
     runner = FakeRunner(
         [
-            CommandResult(0, "agent:agent STOPPED Not started\n", ""),
+            CommandResult(3, "agent:agent STOPPED Not started\n", ""),
             CommandResult(0, "started\n", ""),
             CommandResult(0, "restarted\n", ""),
         ]
@@ -98,3 +98,14 @@ async def test_supervisord_adapter_supports_inactive_start_and_restart(tmp_path)
     assert (await host.inspect("agent:agent")).active is False
     await host.start("agent:agent")
     await host.restart("agent:agent")
+
+
+@pytest.mark.asyncio
+async def test_supervisord_adapter_rejects_non_status_error_output(tmp_path) -> None:
+    config = tmp_path / "supervisord.conf"
+    config.write_text("[supervisord]\n", encoding="utf-8")
+    runner = FakeRunner([CommandResult(3, "missing ERROR (no such process)\n", "")])
+    host = SupervisordHostSupervisor(runner=runner, config_path=config)
+
+    with pytest.raises(HostOperationFailed, match="no such process"):
+        await host.inspect("missing")

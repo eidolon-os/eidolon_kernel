@@ -117,3 +117,12 @@ class CompanionIdentityWire(ContractModel):
     companion_id: str = Field(min_length=1, max_length=64)
     owner_id: str = Field(min_length=1, max_length=64)
     lifecycle_state: Literal["active", "inactive"]
+
+
+class SystemServiceEndpointWire(ContractModel):
+    operation: Literal["system.service-endpoint"]
+    service_id: str = Field(min_length=1, max_length=128)
+    endpoint_id: str = Field(min_length=1, max_length=128)
+    protocol: str = Field(min_length=1, max_length=32)
+    address: str = Field(min_length=1, max_length=2048)
+    contract: str = Field(min_length=1, max_length=256)

@@ -125,6 +125,16 @@ def test_owner_is_the_only_kernel_security_namespace_principal() -> None:
     assert not (PACKAGE / "contracts/schemas/common/actor.schema.json").exists()
 
 
+def test_kernel_hub_authority_has_one_service_directory_route_not_static_config() -> None:
+    config_text = (PACKAGE / "config.py").read_text(encoding="utf-8")
+    composition_text = (PACKAGE / "composition/app.py").read_text(encoding="utf-8")
+    settings_text = (ROOT / "config/settings.yaml").read_text(encoding="utf-8")
+    assert "hub.base_url" not in config_text + composition_text
+    assert "base_url: http://127.0.0.1:8082" not in settings_text
+    assert "DirectoryRoutedHubDeviceAuthority" in composition_text
+    assert "eidolon_system" not in composition_text
+
+
 def test_kernel_and_system_manager_are_independent_packages() -> None:
     assert SYSTEM_PACKAGE.is_dir()
     violations = []

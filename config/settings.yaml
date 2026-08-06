@@ -1,7 +1,10 @@
 persistence:
   path: var/eidolon-kernel.sqlite3
+system_directory:
+  base_url: http://eidolond
+  uds_path: var/eidolond.sock
+  timeout_seconds: 2.0
 hub:
-  base_url: http://127.0.0.1:8082
   timeout_seconds: 3.0
 companion_authority:
   base_url: http://127.0.0.1:8084

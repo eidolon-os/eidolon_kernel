@@ -46,6 +46,7 @@ class InterfaceSettings(SettingsModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8090, ge=1, le=65535)
     uds: Path | None = None
+    uds_mode: Literal["0600", "0660"] = "0600"
 
     @field_validator("host")
     @classmethod
@@ -53,6 +54,10 @@ class InterfaceSettings(SettingsModel):
         if value not in {"127.0.0.1", "::1", "localhost"}:
             raise ValueError("eidolond V1 interface must bind loopback or a Unix socket")
         return value
+
+    @property
+    def uds_mode_bits(self) -> int:
+        return int(self.uds_mode, 8)
 
 
 class SystemSettings(SettingsModel):

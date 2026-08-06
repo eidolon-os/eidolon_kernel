@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import stat
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -44,6 +47,11 @@ interface: {host: 127.0.0.1, port: 8090}
         HostSettings(driver="supervisord")
     with pytest.raises(ValidationError):
         InterfaceSettings(host="0.0.0.0")
+    assert InterfaceSettings(uds_mode="0600").uds_mode_bits == 0o600
+    with pytest.raises(ValidationError):
+        InterfaceSettings(uds_mode="666")
+    with pytest.raises(ValidationError):
+        InterfaceSettings(uds_mode="0680")
 
 
 @pytest.mark.asyncio
@@ -100,3 +108,76 @@ def test_main_factory_and_runner_use_configured_binding(monkeypatch, tmp_path) -
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
     main.run()
     assert calls[0][1]["port"] == 8190
+
+
+def test_main_runner_prebinds_uds_with_configured_mode(monkeypatch, tmp_path) -> None:
+    import uvicorn
+
+    import eidolon_system.main as main
+
+    class FakeListener:
+        closed = False
+
+        def fileno(self) -> int:
+            return 42
+
+        def close(self) -> None:
+            self.closed = True
+
+    listener = FakeListener()
+    socket_path = tmp_path / "system.sock"
+    settings = SystemSettings(
+        interface=InterfaceSettings(uds=socket_path, uds_mode="0660")
+    )
+    bind_calls = []
+    run_calls = []
+    monkeypatch.setattr(main, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        main,
+        "_bind_unix_socket",
+        lambda path, mode: bind_calls.append((path, mode)) or listener,
+    )
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: run_calls.append(kwargs))
+
+    main.run()
+
+    assert bind_calls == [(socket_path, 0o660)]
+    assert run_calls == [{"factory": True, "fd": 42}]
+    assert listener.closed is True
+
+
+def test_uds_binder_refuses_to_replace_a_non_socket_path(tmp_path) -> None:
+    from eidolon_system.main import _bind_unix_socket, _remove_unix_socket
+
+    protected = tmp_path / "system.sock"
+    protected.write_text("keep", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="non-socket"):
+        _bind_unix_socket(protected, 0o600)
+    _remove_unix_socket(protected)
+    assert protected.read_text(encoding="utf-8") == "keep"
+
+
+def test_uds_binder_applies_restrictive_permissions() -> None:
+    from eidolon_system.main import _bind_unix_socket, _remove_unix_socket
+
+    with tempfile.TemporaryDirectory(prefix="es-", dir="/tmp") as temp_dir:
+        socket_path = Path(temp_dir) / "system.sock"
+        try:
+            listener = _bind_unix_socket(socket_path, 0o600)
+        except PermissionError:
+            pytest.skip("test sandbox forbids binding Unix domain sockets")
+        try:
+            assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
+            listener.listen()
+            with pytest.raises(RuntimeError, match="already active"):
+                _bind_unix_socket(socket_path, 0o600)
+        finally:
+            listener.close()
+        replacement = _bind_unix_socket(socket_path, 0o660)
+        try:
+            assert stat.S_IMODE(socket_path.stat().st_mode) == 0o660
+        finally:
+            replacement.close()
+            _remove_unix_socket(socket_path)
+        assert not socket_path.exists()
+        _remove_unix_socket(socket_path)

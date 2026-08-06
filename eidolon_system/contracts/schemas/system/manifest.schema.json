@@ -14,14 +14,14 @@
         "additionalProperties": false,
         "required": ["service_id", "host_targets"],
         "properties": {
-          "service_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+          "service_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
           "description": {"type": "string", "maxLength": 256, "default": ""},
           "required": {"type": "boolean", "default": false},
           "enabled_by_default": {"type": "boolean", "default": true},
           "dependencies": {
             "type": "array",
             "uniqueItems": true,
-            "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
             "default": []
           },
           "host_targets": {
@@ -36,8 +36,8 @@
               "additionalProperties": false,
               "required": ["endpoint_id", "protocol", "address", "contract"],
               "properties": {
-                "endpoint_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
-                "protocol": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"},
+                "endpoint_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
+                "protocol": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 32},
                 "address": {"type": "string", "minLength": 1, "maxLength": 2048},
                 "contract": {"type": "string", "minLength": 1, "maxLength": 256},
                 "health_url": {"type": ["string", "null"], "format": "uri", "maxLength": 2048}

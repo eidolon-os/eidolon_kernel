@@ -15,3 +15,5 @@ interface:
   host: 127.0.0.1
   port: 8090
   uds: /run/eidolon/system.sock
+  # Requires the service unit to run with the intended eidolon user/group.
+  uds_mode: "0660"

@@ -11,6 +11,7 @@ from eidolon_kernel.contracts.bindings import (
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
     MutationResultWire,
+    SystemServiceEndpointWire,
     UnmountDeviceRequestWire,
 )
 from eidolon_kernel.domain.commands import (
@@ -26,6 +27,7 @@ from eidolon_kernel.domain.model import (
     DeviceMount,
 )
 from eidolon_kernel.ports.runtime import CommitResult
+from eidolon_kernel.ports.system_services import ResolvedServiceEndpoint
 
 
 def mount_request_to_domain(
@@ -128,4 +130,16 @@ def companion_identity_to_domain(wire: CompanionIdentityWire) -> CompanionIdenti
         companion_id=wire.companion_id,
         owner_id=wire.owner_id,
         status=wire.lifecycle_state,
+    )
+
+
+def system_service_endpoint_to_port(
+    wire: SystemServiceEndpointWire,
+) -> ResolvedServiceEndpoint:
+    return ResolvedServiceEndpoint(
+        service_id=wire.service_id,
+        endpoint_id=wire.endpoint_id,
+        protocol=wire.protocol,
+        address=wire.address,
+        contract=wire.contract,
     )

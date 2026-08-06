@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SettingsModel(BaseModel):
@@ -17,16 +18,32 @@ class PersistenceSettings(SettingsModel):
     path: Path = Path("var/eidolon-kernel.sqlite3")
 
 
-class HubSettings(SettingsModel):
-    base_url: str = "http://127.0.0.1:8082"
-    timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+class SystemDirectorySettings(SettingsModel):
+    base_url: str = "http://eidolond"
+    uds_path: Path | None = Path("var/eidolond.sock")
+    timeout_seconds: float = Field(default=2.0, gt=0, le=30)
 
     @field_validator("base_url")
     @classmethod
     def _http_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("hub.base_url must be HTTP(S)")
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("system_directory.base_url must be HTTP(S)")
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _local_transport_only(self):
+        if self.uds_path is None:
+            hostname = urlparse(self.base_url).hostname
+            if hostname not in {"127.0.0.1", "::1", "localhost"}:
+                raise ValueError(
+                    "system_directory without UDS must use a loopback HTTP address"
+                )
+        return self
+
+
+class HubSettings(SettingsModel):
+    timeout_seconds: float = Field(default=3.0, gt=0, le=30)
 
 
 class CompanionAuthoritySettings(SettingsModel):
@@ -59,6 +76,7 @@ class DeploymentSettings(SettingsModel):
 
 class KernelSettings(SettingsModel):
     persistence: PersistenceSettings = PersistenceSettings()
+    system_directory: SystemDirectorySettings = SystemDirectorySettings()
     hub: HubSettings = HubSettings()
     companion_authority: CompanionAuthoritySettings = CompanionAuthoritySettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
@@ -73,6 +91,13 @@ def load_settings(path: Path | None = None) -> KernelSettings:
     settings = KernelSettings.model_validate(document)
     if not settings.persistence.path.is_absolute():
         settings.persistence.path = (project_root / settings.persistence.path).resolve()
+    if (
+        settings.system_directory.uds_path is not None
+        and not settings.system_directory.uds_path.is_absolute()
+    ):
+        settings.system_directory.uds_path = (
+            project_root / settings.system_directory.uds_path
+        ).resolve()
     return settings
 
 

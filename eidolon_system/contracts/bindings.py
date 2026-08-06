@@ -54,11 +54,11 @@ class DesiredStateWire(ContractModel):
 
 class EndpointWire(ContractModel):
     operation: Literal["system.service-endpoint"] = "system.service-endpoint"
-    service_id: str
-    endpoint_id: str
-    protocol: str
-    address: str
-    contract: str
+    service_id: str = Field(min_length=1, max_length=128)
+    endpoint_id: str = Field(min_length=1, max_length=128)
+    protocol: str = Field(min_length=1, max_length=32)
+    address: str = Field(min_length=1, max_length=2048)
+    contract: str = Field(min_length=1, max_length=256)
 
 
 class ServiceStatusWire(ContractModel):

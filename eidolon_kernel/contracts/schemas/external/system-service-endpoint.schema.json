@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://eidolon.dev/system/contracts/service-endpoint-v1.schema.json",
+  "$id": "https://eidolon.dev/kernel/consumed-contracts/system/service-endpoint-v1.schema.json",
+  "title": "Consumed eidolond Service Endpoint V1",
+  "description": "Pinned contract for GET /api/system/v1/services/{service_id}/endpoints/{endpoint_id}; copied on 2026-08-06.",
   "type": "object",
   "additionalProperties": false,
   "required": ["operation", "service_id", "endpoint_id", "protocol", "address", "contract"],

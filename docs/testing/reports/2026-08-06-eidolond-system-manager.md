@@ -1,5 +1,8 @@
 # eidolond System Manager 第一阶段测试报告
 
+> 后续 M2-B 已补齐 Hub/Kernel systemd 资产、真实 supervisord 冷启动与进程级 Device Mount；
+> 见 [单 Host 启动报告](2026-08-06-single-host-boot-device-mount.md)。以下保留为第一阶段历史基线。
+
 - 日期：2026-08-06
 - 范围：`eidolon_kernel` 仓库内新增的独立 `eidolon_system` package/process
 - 目标：建立本机服务 desired-state、Host reconciliation、ready directory 和系统操作审计的
@@ -57,10 +60,12 @@ uv run lint-imports
    Kernel 置于 `eidolond` desired state 前，需要先提供经过部署验证的 macOS 与 systemd unit。
 2. Admin 仍直接拥有 supervisord enable/disable surface。迁移期间不得由 Admin 和 `eidolond`
    同时修改同一 service desired state；下一步应让 Admin 成为 System Manager consumer。
-3. Kernel→Hub 仍使用静态 `hub.base_url`。目录契约稳定后应由 Kernel 自己定义
-   `ServiceDirectoryPort` 和 consumed wire contract，再删除静态地址；不建立永久 fallback 双真源。
+3. **已于同日后续收敛**：Kernel→Hub 已定义调用方自有 `SystemServiceDirectory` Port 与 consumed
+   wire contract，并删除静态地址和 fallback；见
+   [ADR-0008](../../adr/0008-kernel-consumes-system-service-directory.md)。
 4. Agent、Channel、Memory、NATS、LiveKit 尚未纳入 seed manifest。只有各自真实 dependency、
    readiness 和 host target 经代码/部署确认后才逐项接入；不能根据端口表猜测。
-5. 树莓派镜像还需确定 systemd unit 安装、运行用户/组、polkit/root 权限和 UDS mode。当前代码
-   不把 loopback HTTP + root 伪装成最终安全部署。
+5. **部分已于同日后续收敛**：代码已预绑定 UDS 并限制 `0600`/`0660` mode；树莓派镜像仍需
+   确定 systemd unit 安装、运行用户/组、socket owner/group 与 polkit/root 权限。当前代码不把
+   loopback HTTP + root 伪装成最终安全部署。
 6. 没有动态 Register/Heartbeat/Lease/Watch、多实例或跨 Host registry；出现真实需求前不实现。
