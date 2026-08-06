@@ -14,7 +14,7 @@ Eidolon Kernel 是 Eidolon OS 的 **Sovereign Microkernel 控制面**。它只�
 | Kernel | 全局 namespace、Device Mount、revision/CAS、幂等结果、authoritative state、audit |
 | `eidolond` | 机器级系统服务 desired state、Host reconciliation、ready endpoint directory、系统操作审计；不是 Owner namespace |
 | Companion authority (`eidolon_data`) | Companion 是否存在、是否 active、owner；Kernel 只消费稳定精确 Identity GET |
-| Channel / Agent / Admin / Data | Kernel 的消费者或编排方，不把业务语义放入 Kernel |
+| Channel / Agent / Admin | Kernel 的消费者或编排方，不把业务语义放入 Kernel |
 
 Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/media、Agent、模型、Memory、Persona，也不引入 NATS、Redis、gRPC、通用消息总线或共享黑板。Mount/Resolve 是低频 HTTP/JSON 控制面，不是媒体热路径。
 
@@ -22,10 +22,11 @@ Kernel 明确不实现 mDNS、MQTT、WSS、LiveKit、设备 command/state/event/
 
 Device Mount 与可选 Companion Attachment 的 domain、application、SQLite、projection、Hub/Data authority consumer 和 HTTP V1 已形成完整闭环。Device 不需要 Companion 才能 Mount；Companion 也不需要物理 Device 才能存在。Hub 与 Data consumer 都使用精确 GET、严格 consumed JSON Schema 和独立服务凭证；生产 composition 不导入或直连兄弟项目数据库。
 
-Kernel→Hub 不再保存 Hub 静态地址。生产 composition 只通过本机 `eidolond` 的 ready endpoint
-directory 解析 `hub/device-authority.http`，并同时锁定 protocol 与 contract；解析失败时 Mount 与
-reconciliation fail closed，`/health` 明确返回 degraded。Kernel 自己拥有消费方 Port、Schema、DTO
-与 mapper，不 import `eidolon_system`，也没有静态地址 fallback 或第二目录真源。
+Kernel→Hub/Data 不再保存静态地址。生产 composition 只通过本机 `eidolond` 的 ready endpoint
+directory 解析 `hub/device-authority.http` 与 `data/companion-authority.http`，并同时锁定 endpoint
+identity、protocol 与 contract；解析失败时对应 mutation/reconciliation fail closed。Kernel 自己
+拥有消费方 Port、Schema、DTO 与 mapper，不 import `eidolon_system`，也没有静态地址 fallback
+或第二目录真源。
 
 Kernel V1 只有一个安全主体：Owner。`owner_id` 是稳定、opaque 的 namespace principal，类似 OS UID；它不是账号资料、Persona、Companion 或业务对象。Kernel 不建立 token issuer、账号/profile authority 或 identity service。V1 只允许 loopback / trusted same-host ingress，由 `OwnerAuthorizer` 从受信本机安全上下文取得 Owner；request body/query 不能另行指定目标 Owner。Headless 一体机中的远端用户认证应终止在产品 ingress，Kernel 不重复验证终端用户 credential。只有 Kernel 需要直接暴露到不可信网络或跨 Host 时，才替换 authorizer adapter。详见 [ADR-0003](docs/adr/0003-v1-identity-and-authorization.md)。
 
@@ -90,8 +91,9 @@ IPC、配置中心或服务网格。
    不写入 SQLite，进程重启必须重新观察。
 6. Enable/Disable/Restart 都要求幂等 request ID；desired mutation 要求 revision/CAS；每个已提交
    操作获得稳定递增 audit position。Restart 不改变 desired revision。
-7. Kernel 通过 UDS/loopback bootstrap 访问目录；每次低频 Device authority 调用重新 Resolve，
-   校验 service/endpoint/protocol/contract 后才访问 Hub，不缓存失效 endpoint，也不回退静态 URL。
+7. Kernel 通过 UDS/loopback bootstrap 访问目录；每次低频 Device/Companion authority 调用重新
+   Resolve，校验 service/endpoint/protocol/contract 后才访问 Hub/Data，不缓存失效 endpoint，也
+   不回退静态 URL。
 
 System service 是 machine scope，contract 中没有 `owner_id`。Owner 只属于 Kernel 用户
 namespace；移动端或远端用户不得直接访问 `eidolond`。
@@ -181,10 +183,17 @@ Approval、Revocation、Events、Enrollment 或 Provider API。
 Mount 不提交 SQLite，周期 reconciliation 延后本轮。Kernel 不保留 Hub 地址 fallback，因为 fallback
 会绕过 `eidolond` readiness 并形成双真源。
 
-Kernel 的 Companion adapter 只调用：
+Kernel 先解析 Data 的稳定 Companion endpoint：
 
 ```text
-GET {companion_authority.base_url}/api/companion-authority/v1/companions/{companion_id}
+GET /api/system/v1/services/data/endpoints/companion-authority.http
+```
+
+目录返回的 contract 必须等于 Data producer schema 的规范 `$id`：
+`https://eidolon.dev/data/contracts/v1/companion/identity.schema.json`。之后 adapter 只调用：
+
+```text
+GET {resolved_data_address}/api/companion-authority/v1/companions/{companion_id}
 ```
 
 并透传 `EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN`。该值必须与 Data Authority 的
@@ -230,9 +239,10 @@ export EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN='<same opaque token as Data auth
 uv run uvicorn eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 8083
 ```
 
-V1 必须绑定 loopback 或置于已经完成身份认证的同机 ingress 后；不得直接监听不可信网络。Companion Authority 默认由 `127.0.0.1:8084` 提供。
-Kernel 启动不要求 Hub 已经 ready，但写入 readiness 取决于 `eidolond` 是否发布 Hub endpoint；未发布时
-`GET /health` 返回 `status=degraded` 与 `device_mount_write_available=false`，SQLite authority 与热读仍可用。
+V1 必须绑定 loopback 或置于已经完成身份认证的同机 ingress 后；不得直接监听不可信网络。
+Kernel 启动不要求 Hub/Data 已经 ready。`GET /health` 分别报告
+`device_mount_write_available` 与 `companion_attachment_write_available`；任一 authority endpoint
+未发布时状态为 degraded，但 SQLite authority、已有 Mount 热读以及不依赖该 authority 的能力仍可用。
 
 独立运行 System Manager：
 
@@ -250,14 +260,15 @@ Host init 必须启动并拉起 `eidolond`；只有 `eidolond` 应拥有其他 E
 macOS/dev 默认 `0600`，产品 profile 可用 `0660`，其 owner/group 由服务运行用户决定。当前
 macOS/dev 默认 manifest 仍只包含已接线的 Hub，避免与 Admin 当前 supervisord 配置形成双
 desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可冷启动并管理 Hub 与 Kernel。
-树莓派 profile 已包含 Hub 与 Kernel，匹配的非 root unit、受限 Polkit rule 和镜像安装说明位于
-[`deploy/systemd`](deploy/systemd)。只有 `eidolond.service` 由 systemd enable，Hub/Kernel unit
+树莓派 profile 已包含 Data、Hub 与 Kernel，匹配的非 root unit、受限 Polkit rule 和镜像安装说明位于
+[`deploy/systemd`](deploy/systemd)。只有 `eidolond.service` 由 systemd enable，Data/Hub/Kernel unit
 不带 `WantedBy`，由 `eidolond.sqlite3` 决定是否运行。2026-08-06 已在 Raspberry Pi 5 / Debian
-13 / systemd 257 上完成实际安装、冷启动、受管 Kernel restart、Device Mount 重建与
-`systemd-analyze verify`；验证没有修改既有 Bootstrap/Admin 服务。
+13 / systemd 257 上完成 M2-B 的实际安装、整机重启、受管 Kernel restart、Device Mount 重建与
+`systemd-analyze verify`；验证没有修改既有 Bootstrap/Admin 服务。Data 的 unit、manifest、迁移
+边界和本地进程 E2E 已在 M2-C 完成，Pi 持久化激活仍是单独受控部署动作。
 
-Kernel 与 Hub 是软运行时依赖：Hub 不 ready 时 Kernel 仍启动并提供已有 Mount 热读，`/health`
-明确把写入标成 degraded，新 Mount fail closed；因此 system manifest 不伪造硬 dependency。
+Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
+Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
 Mobile/Bootstrap 的 `claimed + connected` 也不等于应用栈 ready，两条状态链不能合并。详见
 [ADR-0010](docs/adr/0010-single-host-boot-and-systemd-deployment.md)。
 
@@ -271,6 +282,8 @@ uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov-report=term-missin
 ```
 
 测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
+[Data directory 与 Companion Attachment 报告](docs/testing/reports/2026-08-06-data-directory-companion-attachment.md)；
+M2-B 真机重启基线见
 [单 Host 启动与 Device Mount 进程 E2E 报告](docs/testing/reports/2026-08-06-single-host-boot-device-mount.md)。
 
 ## 后续演进门槛

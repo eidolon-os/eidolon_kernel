@@ -1,5 +1,8 @@
 # Eidolon Kernel → Eidolon Data V2 适配验证报告
 
+> 后续 M2-C 已把 Data Companion Authority 纳入 `eidolond` manifest，Kernel 删除静态 Data 地址并
+> 改为逐次 directory Resolve；本报告以下内容保留当时的适配验证上下文，现状见 ADR-0011。
+
 - 日期：2026-08-06
 - Kernel 基线：`18ce039` 加工作树中既有的 eidolond directory routing 变更
 - Data 只读基线：`2a33894` (`refactor: complete system data v2 boundary`)
@@ -113,9 +116,8 @@ uv run python scripts/benchmark_kernel_control_plane.py --iterations 500 --worke
 
 ## 剩余风险与后续边界
 
-1. Companion Authority 尚未进入已验证的 eidolond host manifest；Kernel 当前保留唯一 loopback
-   base URL。Admin 部署先提供真实 supervisord/systemd target、readiness 和 service credential，
-   再由 Kernel 改为 directory consumer；不得同时保留静态 fallback。
+1. 已完成：Companion Authority 的 systemd target、readiness、service credential 与 directory
+   consumer 已实现，静态 fallback 已删除；Raspberry Pi 的持久化激活仍需显式部署授权。
 2. Kernel→Data 校验与 Kernel commit 不是分布式事务。Data lifecycle 在校验后变化时由 30 秒默认
    reconciliation 收敛；网络/认证/5xx 只 deferred，不能伪造成 Detach。
 3. Kernel 本地审计尚未接入全局 audit dispatcher。Admin 不能通过直读 Kernel SQLite 填补；后续应

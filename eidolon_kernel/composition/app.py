@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from fastapi import FastAPI
 
-from eidolon_kernel.adapters.companion.eidolon_data_http import (
-    EidolonDataHttpCompanionAuthority,
+from eidolon_kernel.adapters.companion.directory_routed import (
+    DirectoryRoutedEidolonDataCompanionAuthority,
 )
 from eidolon_kernel.adapters.device_registry.directory_routed import (
     DirectoryRoutedHubDeviceAuthority,
@@ -55,6 +56,12 @@ class KernelRuntime:
     projection: MountProjection
 
 
+@dataclass(frozen=True, slots=True)
+class KernelReadinessChecks:
+    device_mount_write: Callable[[], Awaitable[bool]]
+    companion_attachment_write: Callable[[], Awaitable[bool]]
+
+
 def build_services(
     *,
     store: MountStore,
@@ -82,8 +89,7 @@ def build_services(
 def create_http_app(
     *,
     services: KernelHttpServices,
-    write_readiness: Callable[[], Awaitable[bool]] | None = None,
-    write_blocker: str = "a required authority endpoint is unavailable",
+    readiness_checks: KernelReadinessChecks | None = None,
     startup: Callable[[], None] | None = None,
     shutdown: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
@@ -106,14 +112,28 @@ def create_http_app(
 
     @app.get("/health", tags=["operations"])
     async def health() -> dict[str, object]:
-        write_available = (
-            await write_readiness() if write_readiness is not None else True
-        )
+        if readiness_checks is None:
+            device_mount_write_available = True
+            companion_attachment_write_available = True
+        else:
+            (
+                device_mount_write_available,
+                companion_attachment_write_available,
+            ) = await asyncio.gather(
+                readiness_checks.device_mount_write(),
+                readiness_checks.companion_attachment_write(),
+            )
+        blockers = []
+        if not device_mount_write_available:
+            blockers.append("Hub device authority endpoint is not ready in eidolond")
+        if not companion_attachment_write_available:
+            blockers.append("Data companion authority endpoint is not ready in eidolond")
         return {
-            "status": "ready" if write_available else "degraded",
+            "status": "ready" if not blockers else "degraded",
             "authoritative_store": "ready",
-            "device_mount_write_available": write_available,
-            "blocker": None if write_available else write_blocker,
+            "device_mount_write_available": device_mount_write_available,
+            "companion_attachment_write_available": companion_attachment_write_available,
+            "blockers": blockers,
         }
 
     return app
@@ -140,8 +160,8 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
         timeout_seconds=settings.hub.timeout_seconds,
         contracts=contracts,
     )
-    companions = EidolonDataHttpCompanionAuthority(
-        base_url=settings.companion_authority.base_url,
+    companions = DirectoryRoutedEidolonDataCompanionAuthority(
+        directory=directory,
         bearer_token=companion_token,
         timeout_seconds=settings.companion_authority.timeout_seconds,
         contracts=contracts,
@@ -170,15 +190,17 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
     async def shutdown() -> None:
         await reconciliation_worker.close()
         await devices.close()
-        await directory.close()
         await companions.close()
+        await directory.close()
         store.close()
 
     return KernelRuntime(
         app=create_http_app(
             services=services,
-            write_readiness=devices.is_available,
-            write_blocker="Hub device authority endpoint is not ready in eidolond",
+            readiness_checks=KernelReadinessChecks(
+                device_mount_write=devices.is_available,
+                companion_attachment_write=companions.is_available,
+            ),
             startup=reconciliation_worker.start,
             shutdown=shutdown,
         ),

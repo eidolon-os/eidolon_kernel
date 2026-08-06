@@ -26,23 +26,24 @@ unit 的 start/stop/restart。
 
 ### 非 root、最小 systemd 权限
 
-三个进程均使用非登录 `eidolon` 用户，设置 `NoNewPrivileges=yes`、空 capability bounding set 和
+四个进程均使用非登录 `eidolon` 用户，设置 `NoNewPrivileges=yes`、空 capability bounding set 和
 只读系统保护。Polkit rule 同时校验：
 
 - action 必须是 `org.freedesktop.systemd1.manage-units`；
 - subject 必须是 `eidolon` 且来自 `eidolond.service`；
 - systemd 必须确认 subject 的 `NoNewPrivileges`；
-- target 只能是 Hub/Kernel 两个 unit；
+- target 只能是 Data/Hub/Kernel 三个 unit；
 - verb 只能是 start/stop/restart。
 
 规则不授权 enable/disable unit file、daemon reload 或任意 unit 管理。服务 secret 只放在 root-owned
 `/etc/eidolon/*.env`，不进入 YAML、unit、Domain 或 SQLite。
 
-### Hub 是 Kernel 写入的软依赖
+### Hub 与 Data 是相互独立的 Kernel 写入软依赖
 
-Kernel 不声明对 Hub 的硬 service dependency。Hub 不 ready 时，Kernel 仍应启动、恢复自己的
-SQLite/projection 并服务已有 Owner-scoped Mount 读取；新 Mount 和 prerequisite reconciliation 通过
-directory fail closed。Kernel `/health` 区分 authoritative store 与 write availability。
+Kernel 不声明对 Hub/Data 的硬 service dependency。Hub 不 ready 只阻断新 Mount；Data 不 ready
+只阻断 Attach/Companion reconciliation。Kernel 仍应启动、恢复自己的 SQLite/projection 并服务已有
+Owner-scoped Mount 读取。两条 mutation 链都通过 directory fail closed，`/health` 分别报告
+authoritative store、Device Mount write 与 Companion Attachment write availability。
 
 因此 eidolond 的 Kernel process readiness 可以保持 ready，而 Kernel capability health 返回
 degraded。这不是状态矛盾：前者说明进程可服务，后者说明特定写能力缺少外部 authority。
@@ -78,6 +79,11 @@ Raspberry Pi 5 / Debian 13 / systemd 257 真机还验证了：
 5. eidolond 受管重启 Kernel 后，revision 1 Mount 从独占 SQLite 恢复；
 6. eidolond、Hub、Kernel 三个 SQLite `integrity_check=ok`。
 
+随后对整机执行真实 reboot，并以新的 systemd boot ID 复核：Bootstrap 与 eidolond 自动启动，
+Hub/Kernel 仍只由 eidolond desired state 拉起；directory 和两个服务 health 恢复，revision 1 Mount
+继续可读，三个 SQLite 再次 `integrity_check=ok`，本次 boot journal 无 warning/error。该验证属于
+M2-B 基线；Data unit 的 M2-C 持久化激活另行记录，不能回写成已经发生的事实。
+
 首轮真机启动还发现 Hub mDNS 的 Linux interface discovery 需要 `AF_NETLINK`；原 unit 的 address
 family 白名单阻断了 ifaddr。部署测试先复现失败，Hub unit 随后只增加 `AF_NETLINK`，Kernel 与
 eidolond 的白名单没有放宽。
@@ -85,7 +91,9 @@ eidolond 的白名单没有放宽。
 ## Consequences and blockers
 
 - 不新增 NATS、Binder、动态 registration/lease/watch、launchd adapter 或完整 stack manifest。
-- Agent、Channel、Memory、Data 尚未纳入 system manifest；必须逐项确认真实 target、hard/soft
-  dependency 与 readiness 后再加入。
+- Data 的 unit、ready endpoint、独立迁移边界和 soft dependency 已纳入 manifest，并通过本地真实
+  Data/Kernel 进程 E2E；Raspberry Pi 激活需单独执行受控的 unit/config/Polkit 安装与短暂重启。
+- Agent、Channel、Memory 尚未纳入 system manifest；必须逐项确认真实 target、hard/soft dependency
+  与 readiness 后再加入。
 - Admin 仍拥有现有 supervisord 管理入口。迁移期间不能让 Admin 与 eidolond 同时修改同一 service
   desired state；后续应让 Admin 只消费 System Manager API。

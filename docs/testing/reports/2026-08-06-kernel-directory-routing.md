@@ -55,8 +55,8 @@ source distribution and wheel built successfully
 
 1. 当前 dev supervisord 没有 Kernel program，`eidolond` 尚未接管 Kernel 自身 lifecycle。必须先有
    经过实际部署验证的 macOS program 与 Raspberry Pi systemd unit，不能猜测 target。
-2. Companion authority 尚未纳入已验证的 system service manifest，因此仍保留精确静态配置；
-   只有其 lifecycle target 与 readiness 已确认后才迁移。
+2. 后续 M2-C 已将 Companion authority 纳入已验证的 system service manifest，并删除静态地址；
+   详细边界与证据见 ADR-0011 和 Data directory 测试报告。
 3. Admin 仍是当前 supervisord 操作入口；在它迁移为 `eidolond` client 前，不允许两个 desired-state
    写入口同时管理 Hub。
 4. 产品 Raspberry Pi 镜像仍需落实专用用户/组、UDS owner/group 与 systemd unit 安装验证；

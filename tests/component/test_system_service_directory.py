@@ -8,6 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+from eidolon_kernel.adapters.companion.directory_routed import (
+    DirectoryRoutedEidolonDataCompanionAuthority,
+)
 from eidolon_kernel.adapters.device_registry.directory_routed import (
     DirectoryRoutedHubDeviceAuthority,
 )
@@ -25,10 +28,17 @@ from eidolon_system.adapters.persistence.sqlite import SqliteSystemStateStore
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.composition.app import create_http_app as create_system_http_app
 from eidolon_system.domain.model import ServiceCatalog, ServiceDefinition, ServiceEndpoint
+from tests.component.test_companion_http_authority import (
+    TOKEN as COMPANION_TOKEN,
+)
+from tests.component.test_companion_http_authority import (
+    document as companion_document,
+)
 from tests.component.test_hub_http_authority import HUB_READER_TOKEN, document
 from tests.system.support import FakeHostSupervisor, FakeReadinessProbe, FixedClock
 
 HUB_CONTRACT = "eidolon.hub.device-directory.v1"
+DATA_COMPANION_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
 
 
 def endpoint_document(**overrides) -> dict:
@@ -198,9 +208,7 @@ async def test_directory_adapter_fails_closed_on_status_shape_and_contract_drift
     status, body, message
 ) -> None:
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(status, json=body)
-        ),
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body)),
         base_url="http://eidolond.test",
     )
     directory = EidolondHttpServiceDirectory(
@@ -268,13 +276,29 @@ class FakeDirectory:
         )
 
 
+class FakeCompanionDirectory:
+    def __init__(self, *, unavailable: bool = False) -> None:
+        self.unavailable = unavailable
+        self.calls = []
+
+    async def resolve(self, **arguments) -> ResolvedServiceEndpoint:
+        self.calls.append(arguments)
+        if self.unavailable:
+            raise ServiceDirectoryUnavailable("offline")
+        return ResolvedServiceEndpoint(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            protocol="http",
+            address="https://data.test",
+            contract=DATA_COMPANION_CONTRACT,
+        )
+
+
 @pytest.mark.asyncio
 async def test_directory_routed_hub_authority_resolves_then_calls_existing_contract() -> None:
     directory = FakeDirectory()
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=document())
-        )
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=document()))
     )
     authority = DirectoryRoutedHubDeviceAuthority(
         directory=directory,
@@ -298,9 +322,7 @@ async def test_directory_routed_hub_authority_resolves_then_calls_existing_contr
 @pytest.mark.asyncio
 async def test_directory_routed_hub_authority_maps_directory_failure() -> None:
     client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: pytest.fail("Hub must not be called")
-        )
+        transport=httpx.MockTransport(lambda request: pytest.fail("Hub must not be called"))
     )
     authority = DirectoryRoutedHubDeviceAuthority(
         directory=FakeDirectory(unavailable=True),
@@ -310,6 +332,51 @@ async def test_directory_routed_hub_authority_maps_directory_failure() -> None:
     )
     with pytest.raises(AuthorityUnavailable, match="Service Directory"):
         await authority.get_device(owner_id="owner", device_id="device")
+    assert await authority.is_available() is False
+    await authority.close()
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_directory_routed_companion_authority_resolves_then_calls_existing_contract() -> None:
+    directory = FakeCompanionDirectory()
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=companion_document())
+        )
+    )
+    authority = DirectoryRoutedEidolonDataCompanionAuthority(
+        directory=directory,
+        bearer_token=COMPANION_TOKEN,
+        contracts=ContractRegistry(),
+        client=client,
+    )
+    identity = await authority.get_companion(companion_id="companion one")
+    assert identity.status == "active"
+    assert await authority.is_available() is True
+    expected_resolve = {
+        "service_id": "data",
+        "endpoint_id": "companion-authority.http",
+        "required_protocol": "http",
+        "required_contract": DATA_COMPANION_CONTRACT,
+    }
+    assert directory.calls == [expected_resolve, expected_resolve]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_directory_routed_companion_authority_maps_directory_failure() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: pytest.fail("Data must not be called"))
+    )
+    authority = DirectoryRoutedEidolonDataCompanionAuthority(
+        directory=FakeCompanionDirectory(unavailable=True),
+        bearer_token=COMPANION_TOKEN,
+        contracts=ContractRegistry(),
+        client=client,
+    )
+    with pytest.raises(AuthorityUnavailable, match="Service Directory"):
+        await authority.get_companion(companion_id="companion")
     assert await authority.is_available() is False
     await authority.close()
     await client.aclose()

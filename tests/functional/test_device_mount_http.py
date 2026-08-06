@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
-from eidolon_kernel.composition.app import build_services, create_http_app
+from eidolon_kernel.composition.app import (
+    KernelReadinessChecks,
+    build_services,
+    create_http_app,
+)
 from tests.support import (
     FakeCompanionAuthority,
     FakeDeviceAuthority,
@@ -17,7 +23,7 @@ from tests.support import (
 )
 
 
-def app(*, companions=None, devices=None):
+def app(*, companions=None, devices=None, readiness_checks=None):
     services = build_services(
         store=MemoryStore(),
         projection=InMemoryMountProjection(),
@@ -26,7 +32,28 @@ def app(*, companions=None, devices=None):
         authorizer=TrustedLocalOwnerAuthorizer(),
         clock=MutableClock(),
     )
-    return create_http_app(services=services)
+    return create_http_app(services=services, readiness_checks=readiness_checks)
+
+
+@pytest.mark.asyncio
+async def test_health_reports_mount_and_attachment_capabilities_independently() -> None:
+    checks = KernelReadinessChecks(
+        device_mount_write=AsyncMock(return_value=True),
+        companion_attachment_write=AsyncMock(return_value=False),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(readiness_checks=checks)),
+        base_url="http://kernel.test",
+    ) as client:
+        health = await client.get("/health")
+
+    assert health.json() == {
+        "status": "degraded",
+        "authoritative_store": "ready",
+        "device_mount_write_available": True,
+        "companion_attachment_write_available": False,
+        "blockers": ["Data companion authority endpoint is not ready in eidolond"],
+    }
 
 
 @pytest.mark.asyncio
@@ -135,14 +162,10 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
 @pytest.mark.asyncio
 async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> None:
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(
-            app=app(companions=OfflineCompanionAuthority())
-        ),
+        transport=httpx.ASGITransport(app=app(companions=OfflineCompanionAuthority())),
         base_url="http://kernel.test",
     ) as client:
-        missing_identity = await client.post(
-            "/api/kernel/v1/device-mounts", json=mount_body()
-        )
+        missing_identity = await client.post("/api/kernel/v1/device-mounts", json=mount_body())
         mounted = await client.post(
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
         )
@@ -186,9 +209,7 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app()), base_url="http://kernel.test"
     ) as client:
-        await client.post(
-            "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
-        )
+        await client.post("/api/kernel/v1/device-mounts", headers=headers(), json=mount_body())
         hidden = await client.get(
             "/api/kernel/v1/device-mounts/devices/device-1",
             headers=headers("owner-2"),
@@ -197,12 +218,8 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
             "/api/kernel/v1/device-mounts/resolve/device-1",
             headers=headers("owner-2"),
         )
-        empty_list = await client.get(
-            "/api/kernel/v1/device-mounts", headers=headers("owner-2")
-        )
-        empty_audit = await client.get(
-            "/api/kernel/v1/audit/events", headers=headers("owner-2")
-        )
+        empty_list = await client.get("/api/kernel/v1/device-mounts", headers=headers("owner-2"))
+        empty_audit = await client.get("/api/kernel/v1/audit/events", headers=headers("owner-2"))
         denied_unmount = await client.post(
             "/api/kernel/v1/device-mounts/devices/device-1/unmount",
             headers=headers("owner-2"),
@@ -232,9 +249,7 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
         assert empty_audit.json()["events"] == []
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(
-            app=app(devices=FakeDeviceAuthority(status="revoked"))
-        ),
+        transport=httpx.ASGITransport(app=app(devices=FakeDeviceAuthority(status="revoked"))),
         base_url="http://kernel.test",
     ) as client:
         rejected = await client.post(

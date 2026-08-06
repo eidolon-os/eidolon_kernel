@@ -8,8 +8,6 @@ system_directory:
 hub:
   timeout_seconds: 3
 companion_authority:
-  # Data Authority is still an independently deployed exact HTTP contract.
-  base_url: http://127.0.0.1:8084
   timeout_seconds: 3
 reconciliation:
   interval_seconds: 30

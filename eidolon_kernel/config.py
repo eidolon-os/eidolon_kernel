@@ -36,9 +36,7 @@ class SystemDirectorySettings(SettingsModel):
         if self.uds_path is None:
             hostname = urlparse(self.base_url).hostname
             if hostname not in {"127.0.0.1", "::1", "localhost"}:
-                raise ValueError(
-                    "system_directory without UDS must use a loopback HTTP address"
-                )
+                raise ValueError("system_directory without UDS must use a loopback HTTP address")
         return self
 
 
@@ -47,15 +45,7 @@ class HubSettings(SettingsModel):
 
 
 class CompanionAuthoritySettings(SettingsModel):
-    base_url: str = "http://127.0.0.1:8084"
     timeout_seconds: float = Field(default=3.0, gt=0, le=30)
-
-    @field_validator("base_url")
-    @classmethod
-    def _http_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("companion_authority.base_url must be HTTP(S)")
-        return value.rstrip("/")
 
 
 class ReconciliationSettings(SettingsModel):
@@ -86,7 +76,9 @@ class KernelSettings(SettingsModel):
 def load_settings(path: Path | None = None) -> KernelSettings:
     project_root = Path(__file__).resolve().parents[1]
     configured = os.environ.get("EIDOLON_KERNEL_SETTINGS_YAML")
-    settings_path = path or (Path(configured) if configured else project_root / "config/settings.yaml")
+    settings_path = path or (
+        Path(configured) if configured else project_root / "config/settings.yaml"
+    )
     document = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
     settings = KernelSettings.model_validate(document)
     if not settings.persistence.path.is_absolute():
@@ -104,16 +96,12 @@ def load_settings(path: Path | None = None) -> KernelSettings:
 def load_hub_token() -> str:
     token = (os.environ.get("EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN") or "").strip()
     if len(token.encode()) < 32:
-        raise RuntimeError(
-            "EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN must contain at least 32 bytes"
-        )
+        raise RuntimeError("EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN must contain at least 32 bytes")
     return token
 
 
 def load_companion_authority_token() -> str:
-    token = (
-        os.environ.get("EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN") or ""
-    ).strip()
+    token = (os.environ.get("EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN") or "").strip()
     if len(token) < 24:
         raise RuntimeError(
             "EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN must contain at least 24 characters"

@@ -75,7 +75,9 @@ def test_production_composition_rejects_unconfigured_identity_root(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_production_composition_builds_exclusive_store_and_closes(tmp_path, monkeypatch) -> None:
+async def test_production_composition_builds_exclusive_store_and_closes(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv(
         "EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN",
         "hub-device-registry-reader-token-0001",
@@ -102,7 +104,11 @@ async def test_production_composition_builds_exclusive_store_and_closes(tmp_path
         "status": "degraded",
         "authoritative_store": "ready",
         "device_mount_write_available": False,
-        "blocker": "Hub device authority endpoint is not ready in eidolond",
+        "companion_attachment_write_available": False,
+        "blockers": [
+            "Hub device authority endpoint is not ready in eidolond",
+            "Data companion authority endpoint is not ready in eidolond",
+        ],
     }
     # Drive lifespan explicitly and prove shutdown releases the database lock.
     context = runtime.app.router.lifespan_context(runtime.app)

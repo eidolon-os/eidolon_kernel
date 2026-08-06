@@ -1,0 +1,30 @@
+[Unit]
+Description=Eidolon System Data and Companion identity authority
+After=local-fs.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eidolon
+Group=eidolon
+UMask=0007
+EnvironmentFile=-/etc/eidolon/data.env
+Environment=EIDOLON_DATA_SQLITE_PATH=/var/lib/eidolon/eidolon-system.sqlite3 EIDOLON_DATA_OBJECT_STORE_PATH=/var/lib/eidolon/objects
+ExecStart=/srv/eidolon/current/eidolon_data/.venv/bin/uvicorn eidolon_data.api.companion_authority:create_app --factory --host 127.0.0.1 --port 8084
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+StateDirectory=eidolon
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

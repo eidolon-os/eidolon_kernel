@@ -9,14 +9,16 @@ eidolon-bootstrapd (Admin-owned, always-on onboarding)
         v
 eidolond (systemd starts this one unit)
         |
+        +-- systemctl start/stop/restart eidolon-data.service
         +-- systemctl start/stop/restart eidolon-hub.service
         +-- systemctl start/stop/restart eidolon-kernel.service
 ```
 
-Only `eidolond.service` has an `[Install]` target. Hub and Kernel deliberately
-have no `WantedBy=` entry: systemd owns their PIDs, cgroups, signals and crash
-restart, while `eidolond.sqlite3` remains the sole desired-state authority.
-Enabling Hub or Kernel independently would create a second desired-state source.
+Only `eidolond.service` has an `[Install]` target. Data, Hub and Kernel
+deliberately have no `WantedBy=` entry: systemd owns their PIDs, cgroups,
+signals and crash restart, while `eidolond.sqlite3` remains the sole
+desired-state authority. Enabling a child unit independently would create a
+second desired-state source.
 
 The image builder must:
 
@@ -29,22 +31,27 @@ The image builder must:
    `kernel.yaml`, and `hub.yaml`, while
    `system-services.systemd.example.yaml` retains its name because
    `eidolond.yaml` resolves that manifest relative to its own directory;
-5. create root-owned `hub.env` and `kernel.env` files with mode `0600` for
-   service credentials; never place secrets in unit files or YAML. Hub requires
+5. install a fresh Eidolon Data V2 database with the Data release's tracked
+   Alembic baseline before enabling eidolond; runtime startup validates the
+   schema and never creates or repairs it;
+6. create root-owned `data.env`, `hub.env` and `kernel.env` files with mode
+   `0600` for service credentials; never place secrets in unit files or YAML.
+   Data requires `EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN`; Hub requires
    `EIDOLON_HUB_MANAGEMENT_JWT_SECRET`,
    `EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN`, and
    `EIDOLON_HUB_CHANNEL_PROVIDER_TOKEN`; Kernel receives the same reader token
    as `EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN` plus the independently scoped
    `EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN`;
-6. install Hub and Kernel releases under `/srv/eidolon/current/` with the paths
-   used by the units;
-7. run `systemd-analyze verify` on all three units, reload systemd, and enable
+7. install Data, Hub and Kernel releases under `/srv/eidolon/current/` with the
+   paths used by the units; Data's Python environment must contain its declared
+   `api` extra and the reviewed `eidolon-sdk` build it depends on;
+8. run `systemd-analyze verify` on all four units, reload systemd, and enable
    only `eidolond.service` (Bootstrap is installed and enabled by its own
    product-image boundary).
 
 The Polkit rule does not grant general systemd administration. It accepts only
 requests made by the `eidolon` process running inside `eidolond.service` with
-`NoNewPrivileges=yes`, for the exact Hub/Kernel unit names and the three verbs
+`NoNewPrivileges=yes`, for the exact Data/Hub/Kernel unit names and the three verbs
 implemented by the Host adapter. Unit-file enable/disable and daemon reload are
 not granted.
 

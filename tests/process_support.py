@@ -10,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException
 def create_dependency_app() -> FastAPI:
     hub_token = os.environ["EIDOLON_TEST_HUB_TOKEN"]
     base_url = os.environ["EIDOLON_TEST_DEPENDENCY_BASE_URL"].rstrip("/")
+    data_base_url = os.environ["EIDOLON_TEST_DATA_BASE_URL"].rstrip("/")
     app = FastAPI(title="Kernel E2E dependency authority")
 
     @app.get("/health")
@@ -25,6 +26,17 @@ def create_dependency_app() -> FastAPI:
             "protocol": "http",
             "address": base_url,
             "contract": "eidolon.hub.device-directory.v1",
+        }
+
+    @app.get("/api/system/v1/services/data/endpoints/companion-authority.http")
+    async def resolve_data() -> dict[str, str]:
+        return {
+            "operation": "system.service-endpoint",
+            "service_id": "data",
+            "endpoint_id": "companion-authority.http",
+            "protocol": "http",
+            "address": data_base_url,
+            "contract": ("https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"),
         }
 
     @app.get("/api/device-management/v1/owners/{owner_id}/devices/{device_id}")

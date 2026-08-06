@@ -50,6 +50,12 @@ enable，Hub/Kernel 由 eidolond desired state 拉起。
 - Kernel 创建 revision 1、active、无 Companion Attachment 的 Mount，audit position 为 1；
 - 两次由 eidolond 发起的 Kernel restart 均进入递增系统审计；Mount 在重启后仍为 revision 1。
 
+经明确授权后又执行了一次整机 reboot。新 boot ID 为
+`488449d3-0489-445b-aa30-52bb1e753ed7`；Bootstrap 与 eidolond 自动 active，Hub/Kernel 继续由
+eidolond 拉起且 directory/health 恢复。revision 1 Mount 未丢失，eidolond、Hub、Kernel 三个 SQLite
+再次 `integrity_check=ok`，当前 boot journal 未发现 warning/error。这验证的是上述 M2-B 部署，
+不代表尚未激活的 Data M2-C unit 已在树莓派运行。
+
 ## 已执行命令
 
 ```text
@@ -80,5 +86,7 @@ sdist + wheel built successfully
 
 ## 剩余边界
 
-- 未把 Agent、Channel、Memory、Data 纳入 manifest；
+- 后续 M2-C 已把 Data unit 与 endpoint 纳入仓库中的产品 manifest，并完成本地真实进程 E2E；本报告
+  的 Pi 部署仍是 Data 激活前的 M2-B 基线；
+- 未把 Agent、Channel、Memory 纳入 manifest；
 - 未修改 Admin 默认 supervisord 配置，避免在迁移完成前形成双 desired-state authority。

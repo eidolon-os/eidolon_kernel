@@ -205,7 +205,6 @@ hub:
         f"""persistence:
   path: {kernel_database}
 {hub_bootstrap}companion_authority:
-  base_url: {data_url}
   timeout_seconds: 2
 reconciliation:
   interval_seconds: 3600
@@ -241,6 +240,7 @@ deployment:
                 **os.environ,
                 "EIDOLON_TEST_HUB_TOKEN": HUB_TOKEN,
                 "EIDOLON_TEST_DEPENDENCY_BASE_URL": dependency_url,
+                "EIDOLON_TEST_DATA_BASE_URL": data_url,
             },
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

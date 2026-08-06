@@ -159,7 +159,6 @@ system_directory:
 hub:
   timeout_seconds: 1
 companion_authority:
-  base_url: http://127.0.0.1:{_free_port()}
   timeout_seconds: 1
 reconciliation:
   interval_seconds: 3600
@@ -413,7 +412,8 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                     await _eventually(
                         lambda: kernel.get("/health"),
                         lambda response: (
-                            response.status_code == 200 and response.json()["status"] == "ready"
+                            response.status_code == 200
+                            and response.json()["device_mount_write_available"] is True
                         ),
                         message="Kernel did not become ready after managed restart",
                     )

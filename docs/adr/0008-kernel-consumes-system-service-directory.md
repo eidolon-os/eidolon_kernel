@@ -1,14 +1,14 @@
-# ADR-0008: Kernel 通过本机 System Service Directory 解析 Hub
+# ADR-0008: Kernel 通过本机 System Service Directory 解析外部 Authority
 
 - 状态：Accepted，已实现
 - 日期：2026-08-06
 
 ## Context
 
-`eidolond` 已拥有单机受管服务的 observed readiness 与 ready endpoint directory，但 Kernel 的
-Hub consumer 仍从 `hub.base_url` 读取静态地址。这产生两个不一致事实：`eidolond` 可以判定 Hub
-未 ready 或发布新地址，Kernel 却仍绕过目录访问旧地址。Device Mount 是低频控制面，不需要为此
-引入 watch、缓存、通用 IPC 或消息总线。
+`eidolond` 已拥有单机受管服务的 observed readiness 与 ready endpoint directory，但 Kernel 最初的
+Hub/Data consumer 仍分别从静态地址读取。这产生两个不一致事实：`eidolond` 可以判定 authority
+未 ready 或发布新地址，Kernel 却仍绕过目录访问旧地址。Device Mount/Attachment 是低频控制面，
+不需要为此引入 watch、缓存、通用 IPC 或消息总线。
 
 Kernel 与 `eidolon_system` 必须继续是独立 package/process。共享 producer DTO 或 domain class 会
 把进程边界退化成源码耦合；直接读取 `eidolond` SQLite 则会制造第二个 observed-state reader。
@@ -38,9 +38,21 @@ contract 必须完全匹配，之后才由既有 Hub adapter 执行 owner-scoped
 endpoint 未 ready、wire 漂移或约束不匹配全部 fail closed 为 authority unavailable；没有静态地址
 fallback。Hub credential 仍只属于 Hub 已发布的精确 GET，不发送给 `eidolond`。
 
-`GET /health` 使用相同 Resolve 判定 Device Mount 写 readiness。目录暂不可用不会否定 SQLite
-authoritative store，也不阻止已有 projection 热读，因此 Kernel 可以先于 Hub ready 启动，但会明确
-报告 degraded，且 mutation 不会绕过 prerequisite。
+Data `CompanionAuthority` 使用同一 Port/Adapter 模式，固定请求：
+
+- `service_id=data`
+- `endpoint_id=companion-authority.http`
+- `protocol=http`
+- `contract=https://eidolon.dev/data/contracts/v1/companion/identity.schema.json`
+
+contract 是 Data producer Schema 的规范 `$id`。解析成功后才调用既有精确 Companion Identity GET；
+Data credential 同样只发送给 Data。Hub 与 Data 是相互独立的软能力依赖，目录不为二者制造 hard
+dependency，也不代理业务请求。
+
+`GET /health` 使用相同 Resolve，分别判定 Device Mount 与 Companion Attachment 写 readiness。
+某一 endpoint 暂不可用不会否定 SQLite authoritative store、另一项写能力或已有 projection 热读，
+因此 Kernel 可以先于 Hub/Data ready 启动，但会明确报告对应 degraded capability，且 mutation 不会
+绕过 prerequisite。
 
 ## Why per-call Resolve
 
@@ -52,15 +64,15 @@ readiness，避免在 Kernel 新增 TTL、失效、watch 和并发缓存语义�
 
 收益：
 
-- 删除 Kernel→Hub 静态地址与目录的双真源；
-- Hub degraded 后不再继续向旧 endpoint 写入；
+- 删除 Kernel→Hub/Data 静态地址与目录的双真源；
+- authority degraded 后不再继续向旧 endpoint 写入；
 - 保持 Kernel Port 与进程独立，不把 `eidolond` 变成业务代理或 Binder；
 - UDS/loopback bootstrap 可由同一代码适配 macOS/dev 与 Raspberry Pi/Linux。
 
 剩余边界：
 
-- Companion authority 尚未成为 `eidolond` 中经过生命周期与 readiness 验证的服务，继续使用现有
-  精确配置；在 producer/host target 稳定前不做形式化迁移。
+- Data 的 producer contract、systemd target 与 readiness 已由代码和进程 E2E 验证并纳入产品
+  manifest；Raspberry Pi 持久化激活仍是部署动作，不改变本 ADR 的调用边界。
 - 真实隔离 supervisord E2E 已验证 `eidolond` 可接管 Kernel 生命周期；当前 Admin 默认
   supervisord 尚未安装 Kernel program，所以 macOS/dev 仍是部署接线 blocker，不是 adapter blocker。
 - Raspberry Pi profile 已在 Debian 13 / systemd 257 真机完成安装、目录解析、Device Mount 与受管

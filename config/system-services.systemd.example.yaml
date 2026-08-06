@@ -2,6 +2,19 @@
 # live under deploy/systemd; the image builder must install and verify them.
 version: 1
 services:
+  - service_id: data
+    description: System Data and Companion identity authority
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-data.service
+    endpoints:
+      - endpoint_id: companion-authority.http
+        protocol: http
+        address: http://127.0.0.1:8084
+        contract: https://eidolon.dev/data/contracts/v1/companion/identity.schema.json
+        health_url: http://127.0.0.1:8084/health
   - service_id: hub
     description: Device onboarding, registry and policy authority
     required: true
