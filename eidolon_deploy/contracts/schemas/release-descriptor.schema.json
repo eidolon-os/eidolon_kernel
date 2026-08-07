@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://eidolon.dev/deploy/contracts/v1/release-descriptor.schema.json",
+  "$id": "https://eidolon.dev/deploy/contracts/v2/release-descriptor.schema.json",
   "title": "Eidolon Target Release Descriptor",
   "type": "object",
   "additionalProperties": false,
@@ -17,7 +17,7 @@
     "database_migrations"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "release_id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
@@ -34,8 +34,8 @@
     },
     "components": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 4,
+      "maxItems": 4,
       "items": {"$ref": "#/$defs/component"}
     },
     "support_sources": {
@@ -46,27 +46,36 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 14,
+      "maxItems": 14,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 6,
+      "maxItems": 6,
       "items": {"$ref": "#/$defs/requiredSecret"}
     },
     "affected_units": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 6,
+      "maxItems": 6,
       "uniqueItems": true,
-      "items": {"enum": ["eidolon-data.service", "eidolon-kernel.service"]}
+      "items": {
+        "enum": [
+          "eidolon-admin.service",
+          "eidolon-local-api.service",
+          "eidolon-bootstrapd.service",
+          "eidolon-data.service",
+          "eidolon-hub.service",
+          "eidolon-kernel.service"
+        ]
+      }
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 3,
-      "maxItems": 3,
+      "minItems": 6,
+      "maxItems": 6,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {
@@ -92,7 +101,9 @@
         "required_entrypoints"
       ],
       "properties": {
-        "component_id": {"enum": ["eidolon_kernel", "eidolon_data"]},
+        "component_id": {
+          "enum": ["eidolon_kernel", "eidolon_data", "eidolon_hub", "eidolon_admin"]
+        },
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "release_path": {"type": "string", "pattern": "^/srv/eidolon/releases/"},
         "current_link": {"type": "string", "minLength": 1, "maxLength": 200},
@@ -129,7 +140,7 @@
         "mode"
       ],
       "properties": {
-        "source_component_id": {"const": "eidolon_kernel"},
+        "source_component_id": {"enum": ["eidolon_kernel", "eidolon_admin"]},
         "source": {"type": "string", "minLength": 1, "maxLength": 200},
         "destination": {"type": "string", "minLength": 1, "maxLength": 200},
         "sha256": {"$ref": "#/$defs/sha256"},
@@ -141,22 +152,32 @@
       "additionalProperties": false,
       "required": ["path", "mode"],
       "properties": {
-        "path": {"type": "string", "pattern": "^/etc/eidolon/"},
+        "path": {
+          "enum": [
+            "/etc/eidolon/data.env",
+            "/etc/eidolon/hub.env",
+            "/etc/eidolon/kernel.env",
+            "/etc/eidolon/admin.env",
+            "/etc/eidolon/bootstrap.env",
+            "/var/lib/eidolon-bootstrap/host_identity.ed25519"
+          ]
+        },
         "mode": {"const": "0600"}
       }
     },
     "readinessCheck": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["check_id", "kind", "url"],
+      "required": ["check_id", "kind", "url", "expected_status"],
       "properties": {
         "check_id": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$"
         },
-        "kind": {"enum": ["http", "unix_http"]},
-        "url": {"type": "string", "pattern": "^http://"},
-        "socket": {"type": "string", "pattern": "^/run/eidolon/"}
+        "kind": {"enum": ["http", "https", "unix_http"]},
+        "url": {"type": "string", "pattern": "^https?://"},
+        "socket": {"type": "string", "pattern": "^/run/eidolon/"},
+        "expected_status": {"enum": ["ready", "ok"]}
       }
     }
   }

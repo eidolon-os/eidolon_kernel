@@ -16,39 +16,105 @@ from jsonschema import Draft202012Validator, ValidationError
 _COMPONENT_LINKS = {
     "eidolon_kernel": Path("/srv/eidolon/current/eidolon_kernel"),
     "eidolon_data": Path("/srv/eidolon/current/eidolon_data"),
+    "eidolon_hub": Path("/srv/eidolon/current/eidolon_hub"),
+    "eidolon_admin": Path("/srv/eidolon/current/eidolon_admin"),
 }
-V1_COMPONENT_ENTRYPOINTS = {
+V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (Path(".venv/bin/eidolond"), Path(".venv/bin/uvicorn")),
     "eidolon_data": (Path(".venv/bin/uvicorn"),),
-}
-V1_SYSTEM_ASSETS = {
-    Path("/etc/systemd/system/eidolond.service"): Path(
-        "deploy/systemd/eidolond.service"
-    ),
-    Path("/etc/systemd/system/eidolon-data.service"): Path(
-        "deploy/systemd/eidolon-data.service"
-    ),
-    Path("/etc/systemd/system/eidolon-kernel.service"): Path(
-        "deploy/systemd/eidolon-kernel.service"
-    ),
-    Path("/etc/eidolon/eidolond.yaml"): Path("config/eidolond.systemd.example.yaml"),
-    Path("/etc/eidolon/kernel.yaml"): Path("config/kernel.systemd.example.yaml"),
-    Path("/etc/eidolon/system-services.systemd.example.yaml"): Path(
-        "config/system-services.systemd.example.yaml"
-    ),
-    Path("/etc/polkit-1/rules.d/60-eidolon-system-manager.rules"): Path(
-        "deploy/polkit/60-eidolon-system-manager.rules"
+    "eidolon_hub": (Path(".venv/bin/uvicorn"),),
+    "eidolon_admin": (
+        Path(".venv/bin/eidolon-admin"),
+        Path(".venv/bin/eidolon-bootstrapd"),
+        Path(".venv/bin/eidolon-local-api"),
     ),
 }
-V1_REQUIRED_SECRETS = (
+V2_SYSTEM_ASSETS = {
+    Path("/etc/systemd/system/eidolond.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolond.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-data.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-data.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-hub.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-hub.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-kernel.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-kernel.service"),
+    ),
+    Path("/etc/eidolon/eidolond.yaml"): (
+        "eidolon_kernel",
+        Path("config/eidolond.systemd.example.yaml"),
+    ),
+    Path("/etc/eidolon/kernel.yaml"): (
+        "eidolon_kernel",
+        Path("config/kernel.systemd.example.yaml"),
+    ),
+    Path("/etc/eidolon/hub.yaml"): (
+        "eidolon_kernel",
+        Path("config/hub.systemd.example.yaml"),
+    ),
+    Path("/etc/eidolon/system-services.systemd.example.yaml"): (
+        "eidolon_kernel",
+        Path("config/system-services.systemd.example.yaml"),
+    ),
+    Path("/etc/polkit-1/rules.d/60-eidolon-system-manager.rules"): (
+        "eidolon_kernel",
+        Path("deploy/polkit/60-eidolon-system-manager.rules"),
+    ),
+    Path("/etc/systemd/system/eidolon-bootstrapd.service"): (
+        "eidolon_admin",
+        Path("deploy/systemd/eidolon-bootstrapd.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-local-api.service"): (
+        "eidolon_admin",
+        Path("deploy/systemd/eidolon-local-api.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-admin.service"): (
+        "eidolon_admin",
+        Path("deploy/systemd/eidolon-admin.service"),
+    ),
+    Path("/etc/polkit-1/rules.d/60-eidolon-bootstrap-network.rules"): (
+        "eidolon_admin",
+        Path("deploy/polkit/60-eidolon-bootstrap-network.rules"),
+    ),
+    Path("/etc/avahi/services/eidolon-local-api.service"): (
+        "eidolon_admin",
+        Path("deploy/avahi/eidolon-local-api.service"),
+    ),
+}
+V2_REQUIRED_SECRETS = (
     Path("/etc/eidolon/data.env"),
+    Path("/etc/eidolon/hub.env"),
     Path("/etc/eidolon/kernel.env"),
+    Path("/etc/eidolon/admin.env"),
+    Path("/etc/eidolon/bootstrap.env"),
+    Path("/var/lib/eidolon-bootstrap/host_identity.ed25519"),
 )
-V1_AFFECTED_UNITS = ("eidolon-data.service", "eidolon-kernel.service")
-V1_READINESS = {
-    "eidolond": ("unix_http", "http://eidolond/health", Path("/run/eidolon/system.sock")),
-    "kernel": ("http", "http://127.0.0.1:8083/health", None),
-    "data": ("http", "http://127.0.0.1:8084/health", None),
+V2_AFFECTED_UNITS = (
+    "eidolon-admin.service",
+    "eidolon-local-api.service",
+    "eidolon-bootstrapd.service",
+    "eidolon-data.service",
+    "eidolon-hub.service",
+    "eidolon-kernel.service",
+)
+V2_READINESS = {
+    "eidolond": (
+        "unix_http",
+        "http://eidolond/health",
+        Path("/run/eidolon/system.sock"),
+        "ready",
+    ),
+    "data": ("http", "http://127.0.0.1:8084/health", None, "ready"),
+    "hub": ("http", "http://127.0.0.1:8082/health", None, "ok"),
+    "kernel": ("http", "http://127.0.0.1:8083/health", None, "ready"),
+    "admin": ("http", "http://127.0.0.1:9000/healthz", None, "ready"),
+    "local-api": ("https", "https://127.0.0.1:9002/healthz", None, "ok"),
 }
 
 
@@ -104,6 +170,7 @@ class ReadinessCheck:
     kind: str
     url: str
     socket: Path | None
+    expected_status: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +227,9 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
     components = tuple(_component_from_wire(item) for item in document["components"])
     component_ids = [item.component_id for item in components]
     if set(component_ids) != set(_COMPONENT_LINKS) or len(component_ids) != len(set(component_ids)):
-        raise ReleaseDescriptorError("release descriptor component set must be unique Kernel/Data")
+        raise ReleaseDescriptorError(
+            "release descriptor component set must be unique Kernel/Data/Hub/Admin"
+        )
     for component in components:
         expected_path = Path("/srv/eidolon/releases") / release_id / component.component_id
         if component.release_path != expected_path:
@@ -175,9 +244,9 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         for entrypoint in component.required_entrypoints:
             if entrypoint.is_absolute() or ".." in entrypoint.parts:
                 raise ReleaseDescriptorError("component entrypoint must stay inside release path")
-        if component.required_entrypoints != V1_COMPONENT_ENTRYPOINTS[component.component_id]:
+        if component.required_entrypoints != V2_COMPONENT_ENTRYPOINTS[component.component_id]:
             raise ReleaseDescriptorError(
-                f"component entrypoint set is not the fixed V1 set: {component.component_id}"
+                f"component entrypoint set is not the fixed V2 set: {component.component_id}"
             )
 
     support_sources = tuple(
@@ -203,12 +272,13 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
     destinations = [asset.destination for asset in assets]
     if len(destinations) != len(set(destinations)):
         raise ReleaseDescriptorError("system asset destination must be unique")
-    if set(destinations) != set(V1_SYSTEM_ASSETS):
-        raise ReleaseDescriptorError("system asset set must equal the fixed V1 set")
+    if set(destinations) != set(V2_SYSTEM_ASSETS):
+        raise ReleaseDescriptorError("system asset set must equal the fixed V2 set")
     for asset in assets:
         if asset.source.is_absolute() or ".." in asset.source.parts:
             raise ReleaseDescriptorError("system asset source must stay inside its component")
-        if asset.source != V1_SYSTEM_ASSETS[asset.destination]:
+        expected_component, expected_source = V2_SYSTEM_ASSETS[asset.destination]
+        if asset.source_component_id != expected_component or asset.source != expected_source:
             raise ReleaseDescriptorError(
                 f"system asset source mapping is not fixed: {asset.destination}"
             )
@@ -217,27 +287,27 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         RequiredSecret(path=Path(item["path"]), mode=int(item["mode"], 8))
         for item in document["required_secrets"]
     )
-    if tuple(secret.path for secret in secrets) != V1_REQUIRED_SECRETS:
-        raise ReleaseDescriptorError("required secret set must equal the fixed V1 set")
+    if tuple(secret.path for secret in secrets) != V2_REQUIRED_SECRETS:
+        raise ReleaseDescriptorError("required secret set must equal the fixed V2 set")
 
     affected_units = tuple(str(item) for item in document["affected_units"])
-    if affected_units != V1_AFFECTED_UNITS:
-        raise ReleaseDescriptorError("affected unit set must equal the fixed V1 set")
+    if affected_units != V2_AFFECTED_UNITS:
+        raise ReleaseDescriptorError("affected unit set must equal the fixed V2 set")
 
     readiness = tuple(_readiness_from_wire(item) for item in document["readiness_checks"])
     check_ids = [check.check_id for check in readiness]
     if len(check_ids) != len(set(check_ids)):
         raise ReleaseDescriptorError("readiness check id must be unique")
-    if set(check_ids) != set(V1_READINESS) or any(
-        (check.kind, check.url, check.socket) != V1_READINESS[check.check_id]
+    if set(check_ids) != set(V2_READINESS) or any(
+        (check.kind, check.url, check.socket, check.expected_status) != V2_READINESS[check.check_id]
         for check in readiness
     ):
-        raise ReleaseDescriptorError("readiness set must equal the fixed V1 set")
+        raise ReleaseDescriptorError("readiness set must equal the fixed V2 set")
 
     migrations = tuple(str(item) for item in document["database_migrations"])
     if migrations:
         raise ReleaseDescriptorError(
-            "database migration is outside release descriptor V1 rollback semantics"
+            "database migration is outside release descriptor V2 rollback semantics"
         )
     return ReleaseDescriptor(
         schema_version=int(document["schema_version"]),
@@ -285,9 +355,11 @@ def _readiness_from_wire(value: dict) -> ReadinessCheck:
     url = str(value["url"])
     socket = Path(value["socket"]) if "socket" in value else None
     parsed = urlparse(url)
-    if kind == "http":
+    if kind in {"http", "https"}:
         if socket is not None or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
             raise ReleaseDescriptorError("HTTP readiness must use loopback without a socket")
+        if parsed.scheme != kind:
+            raise ReleaseDescriptorError("HTTP readiness scheme must match its kind")
     elif socket != Path("/run/eidolon/system.sock") or parsed.hostname != "eidolond":
         raise ReleaseDescriptorError("Unix HTTP readiness must use the eidolond system socket")
     return ReadinessCheck(
@@ -295,4 +367,5 @@ def _readiness_from_wire(value: dict) -> ReadinessCheck:
         kind=kind,
         url=url,
         socket=socket,
+        expected_status=str(value["expected_status"]),
     )

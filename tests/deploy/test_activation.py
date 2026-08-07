@@ -37,6 +37,8 @@ class FakeDeploymentHost:
         return {
             "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
             "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
+            "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
+            "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
         }
 
     def create_snapshot(self, release, previous_targets) -> DeploymentSnapshot:
@@ -59,7 +61,7 @@ class FakeDeploymentHost:
     def reload_systemd(self) -> None:
         self._call("reload")
 
-    def start_manager(self) -> None:
+    def start_release(self, release) -> None:
         self._call("start")
 
     def wait_ready(self, release) -> None:
@@ -147,6 +149,8 @@ def test_explicit_rollback_restores_snapshot_and_records_result() -> None:
         previous_targets={
             "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
             "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
+            "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
+            "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
         },
         backup_path="/var/lib/eidolon/deployments/tx-previous",
     )

@@ -277,24 +277,24 @@ Bootstrap/Admin 服务或 Hub 源码。
 
 ## Target Release 与回滚
 
-M2-D 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/构建阶段
-先在目标 `linux/aarch64` 上准备原生 Kernel、Data venv 及 Data 实际依赖的 SDK source；随后
-`eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是第三个
-系统服务；可切换 component 仍只有 Kernel/Data，Hub/Admin/Bootstrap 不在本事务中。
+统一 Release V2 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/
+构建阶段先在目标 `linux/aarch64` 上准备原生 Kernel、Data、Hub、Admin venv 及 SDK support source；
+随后 `eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是
+系统服务；四个 service component 与 Kernel/Admin 提供的产品系统资产在同一事务中切换。
 
-激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止
-`eidolond` 与受影响 unit → 安装 allowlist 资产 → 原子切换 Kernel/Data symlink → daemon-reload →
-启动 `eidolond` → 等待 eidolond/Data/Kernel ready → 写回执。任一步失败都恢复 snapshot；显式
+激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止外部入口、
+Bootstrap、`eidolond` 与 children → 安装 allowlist 资产 → 原子切换四个 symlink → daemon-reload →
+按 Bootstrap/eidolond/Local API/Admin 顺序启动 → 等待六个独立 readiness → 写回执。任一步失败都恢复 snapshot；显式
 rollback 可由之后的独立运维进程加载同一 snapshot。snapshot V2 除内容与 mode 外显式记录既有系统
 资产的 UID/GID，并在原子替换前恢复 ownership；缺失 ownership 的旧 snapshot fail closed，不做开发期
 兼容。密钥只校验存在性和 `0600`，从不进入 release、snapshot 或回执。
 
-V1 descriptor 明确要求 `database_migrations=[]`。Kernel/Data SQLite 都不由发布工具读取、复制或
+V2 descriptor 明确要求 `database_migrations=[]`。任何 authority SQLite 都不由发布工具读取、复制或
 迁移；出现首个真实 schema migration 前，必须先为对应 authority 定义可验证的 backup/forward/
 rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descriptor checksum 只证明本地完整性，
 不是签名或来源认证；首版依赖 root-owned staging/release/snapshot 目录与受控镜像流水线。
 命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
-[ADR-0012](docs/adr/0012-prepared-target-release-activation.md)。
+[ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
 
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。

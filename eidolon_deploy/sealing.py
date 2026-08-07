@@ -19,17 +19,18 @@ from eidolon_deploy.fingerprints import (
     source_tree_sha256,
 )
 from eidolon_deploy.manifest import (
-    V1_AFFECTED_UNITS,
-    V1_COMPONENT_ENTRYPOINTS,
-    V1_READINESS,
-    V1_REQUIRED_SECRETS,
-    V1_SYSTEM_ASSETS,
+    V2_AFFECTED_UNITS,
+    V2_COMPONENT_ENTRYPOINTS,
+    V2_READINESS,
+    V2_REQUIRED_SECRETS,
+    V2_SYSTEM_ASSETS,
     release_descriptor_from_document,
 )
 
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _RELEASES = Path("/srv/eidolon/releases")
+
 
 class PreparationError(RuntimeError):
     """The target release is incomplete or cannot be sealed safely."""
@@ -39,12 +40,14 @@ class PreparationError(RuntimeError):
 class ReleaseRevisions:
     kernel: str
     data: str
+    hub: str
+    admin: str
     sdk: str
 
     def __post_init__(self) -> None:
         if any(
             _REVISION.fullmatch(value) is None
-            for value in (self.kernel, self.data, self.sdk)
+            for value in (self.kernel, self.data, self.hub, self.admin, self.sdk)
         ):
             raise PreparationError("each release revision must be a full lowercase Git object id")
 
@@ -98,7 +101,7 @@ def seal_prepared_release(
     system: str | None = None,
     machine: str | None = None,
 ) -> Path:
-    """Validate and seal the fixed Kernel/Data/SDK release layout on its target."""
+    """Validate and seal the fixed Eidolon OS V2 release layout on its target."""
 
     if _RELEASE_ID.fullmatch(release_id) is None:
         raise PreparationError("release id is invalid")
@@ -115,8 +118,10 @@ def seal_prepared_release(
     release_root = _host_path(root, canonical_root)
     kernel = release_root / "eidolon_kernel"
     data = release_root / "eidolon_data"
+    hub = release_root / "eidolon_hub"
+    admin = release_root / "eidolon_admin"
     sdk = release_root / "eidolon_sdk"
-    for source in (kernel, data, sdk):
+    for source in (kernel, data, hub, admin, sdk):
         if not source.is_dir():
             raise PreparationError(f"release source directory is missing: {source.name}")
 
@@ -126,13 +131,25 @@ def seal_prepared_release(
             "eidolon_kernel",
             revisions.kernel,
             kernel,
-            tuple(str(item) for item in V1_COMPONENT_ENTRYPOINTS["eidolon_kernel"]),
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_kernel"]),
         ),
         (
             "eidolon_data",
             revisions.data,
             data,
-            tuple(str(item) for item in V1_COMPONENT_ENTRYPOINTS["eidolon_data"]),
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_data"]),
+        ),
+        (
+            "eidolon_hub",
+            revisions.hub,
+            hub,
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_hub"]),
+        ),
+        (
+            "eidolon_admin",
+            revisions.admin,
+            admin,
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_admin"]),
         ),
     )
     components: list[dict[str, object]] = []
@@ -171,13 +188,14 @@ def seal_prepared_release(
     assert python_version is not None
 
     assets: list[dict[str, object]] = []
-    for destination, source_value in V1_SYSTEM_ASSETS.items():
-        source = kernel / source_value
+    component_roots = {"eidolon_kernel": kernel, "eidolon_admin": admin}
+    for destination, (source_component_id, source_value) in V2_SYSTEM_ASSETS.items():
+        source = component_roots[source_component_id] / source_value
         if not source.is_file() or source.is_symlink():
             raise PreparationError(f"system asset source is missing: {source_value}")
         assets.append(
             {
-                "source_component_id": "eidolon_kernel",
+                "source_component_id": source_component_id,
                 "source": str(source_value),
                 "destination": str(destination),
                 "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -186,7 +204,7 @@ def seal_prepared_release(
         )
 
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "release_id": release_id,
         "target": {
             "system": "linux",
@@ -203,18 +221,17 @@ def seal_prepared_release(
             }
         ],
         "system_assets": assets,
-        "required_secrets": [
-            {"path": str(path), "mode": "0600"} for path in V1_REQUIRED_SECRETS
-        ],
-        "affected_units": list(V1_AFFECTED_UNITS),
+        "required_secrets": [{"path": str(path), "mode": "0600"} for path in V2_REQUIRED_SECRETS],
+        "affected_units": list(V2_AFFECTED_UNITS),
         "readiness_checks": [
             {
                 "check_id": check_id,
                 "kind": values[0],
                 "url": values[1],
                 **({"socket": str(values[2])} if values[2] is not None else {}),
+                "expected_status": values[3],
             }
-            for check_id, values in V1_READINESS.items()
+            for check_id, values in V2_READINESS.items()
         ],
         "database_migrations": [],
     }

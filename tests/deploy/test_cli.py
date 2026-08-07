@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import MappingProxyType
 
@@ -16,15 +17,30 @@ from tests.deploy.support import release_document, write_release_document
 
 
 class FakeHost:
+    @staticmethod
+    def exclusive_activation():
+        return nullcontext()
+
     def load_snapshot(self, release, path: Path) -> DeploymentSnapshot:
         return DeploymentSnapshot(
             transaction_id="tx-cli",
             previous_targets={
                 "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
                 "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
+                "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
+                "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
             },
             backup_path=str(path),
         )
+
+    @staticmethod
+    def doctor(release) -> dict[str, object]:
+        return {
+            "release_id": release.release_id,
+            "active_targets": {},
+            "units": (),
+            "readiness_checks": (),
+        }
 
 
 class FakeActivator:
@@ -55,6 +71,8 @@ def _receipt(status: ActivationStatus) -> ActivationReceipt:
             {
                 "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
                 "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
+                "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
+                "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
             }
         ),
     )
@@ -78,6 +96,10 @@ def test_cli_seals_prepared_release(monkeypatch, capsys, tmp_path: Path) -> None
             "a" * 40,
             "--data-revision",
             "b" * 40,
+            "--hub-revision",
+            "d" * 40,
+            "--admin-revision",
+            "e" * 40,
             "--sdk-revision",
             "c" * 40,
         ]
@@ -85,6 +107,8 @@ def test_cli_seals_prepared_release(monkeypatch, capsys, tmp_path: Path) -> None
 
     assert result == 0
     assert captured["release_id"] == "20260806-m2d-test"
+    assert captured["revisions"].hub == "d" * 40
+    assert captured["revisions"].admin == "e" * 40
     assert json.loads(capsys.readouterr().out)["status"] == "sealed"
 
 
@@ -96,6 +120,12 @@ def test_cli_dry_run_and_explicit_rollback(monkeypatch, capsys, tmp_path: Path) 
 
     assert cli.main(["activate", str(descriptor), "--dry-run"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
+
+    assert cli.main(["deploy", str(descriptor), "--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
+
+    assert cli.main(["doctor", str(descriptor)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "healthy"
 
     assert cli.main(["rollback", str(descriptor), "/var/lib/eidolon/deployments/tx"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "restored"
@@ -113,9 +143,7 @@ def test_cli_reports_activation_and_rollback_failures(monkeypatch, capsys, tmp_p
         assert json.loads(capsys.readouterr().err)["status"] == "rolled_back"
 
         FakeActivator.failure = "rollback"
-        assert cli.main(
-            ["rollback", str(descriptor), "/var/lib/eidolon/deployments/tx"]
-        ) == 3
+        assert cli.main(["rollback", str(descriptor), "/var/lib/eidolon/deployments/tx"]) == 3
         assert json.loads(capsys.readouterr().err)["status"] == "rollback_failed"
     finally:
         FakeActivator.failure = None

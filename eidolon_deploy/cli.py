@@ -34,6 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 revisions=ReleaseRevisions(
                     kernel=arguments.kernel_revision,
                     data=arguments.data_revision,
+                    hub=arguments.hub_revision,
+                    admin=arguments.admin_revision,
                     sdk=arguments.sdk_revision,
                 ),
             )
@@ -42,8 +44,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         release = load_release_descriptor(arguments.descriptor)
         host = LinuxDeploymentHost()
+        if arguments.operation == "doctor":
+            with host.exclusive_activation():
+                _print_json({"status": "healthy", **host.doctor(release)})
+            return 0
         activator = ReleaseActivator(host)
-        if arguments.operation == "activate":
+        if arguments.operation in {"activate", "deploy"}:
             receipt = activator.activate(release, dry_run=arguments.dry_run)
         else:
             snapshot = host.load_snapshot(release, arguments.snapshot)
@@ -87,11 +93,22 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("release_id")
     seal.add_argument("--kernel-revision", required=True)
     seal.add_argument("--data-revision", required=True)
+    seal.add_argument("--hub-revision", required=True)
+    seal.add_argument("--admin-revision", required=True)
     seal.add_argument("--sdk-revision", required=True)
 
     activate = operations.add_parser("activate", help="preflight and activate a release")
     activate.add_argument("descriptor", type=Path)
     activate.add_argument("--dry-run", action="store_true")
+
+    deploy = operations.add_parser(
+        "deploy", help="preflight and atomically deploy a sealed release"
+    )
+    deploy.add_argument("descriptor", type=Path)
+    deploy.add_argument("--dry-run", action="store_true")
+
+    doctor = operations.add_parser("doctor", help="verify the active release, units and readiness")
+    doctor.add_argument("descriptor", type=Path)
 
     rollback = operations.add_parser("rollback", help="restore an activation snapshot")
     rollback.add_argument("descriptor", type=Path)

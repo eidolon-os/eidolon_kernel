@@ -1,77 +1,100 @@
-# Target release runbook
+# Raspberry Pi target release runbook
 
-本文只面向 Eidolon 产品镜像/设备的 root 运维，不是终端用户 CLI。当前目标固定为
-Raspberry Pi/Linux `aarch64`，部署事务只切换 Kernel/Data；Hub、Admin、Bootstrap 不在范围内。
+本文面向 Eidolon 产品镜像/设备的 root 运维。V2 目标固定为 Raspberry Pi/Linux `aarch64`，同一
+release 事务覆盖 Data、Hub、Kernel、Admin，以及 Admin 所有的 Bootstrap/Local API 产品进程。
 
-## 1. 准备阶段（允许网络，不属于 activation）
+## 1. Target-native preparation
 
-在受控 staging 中为唯一 `release_id` 创建：
+受控 staging 先创建固定目录：
 
 ```text
-/srv/eidolon/releases/<release_id>/eidolon_kernel
-/srv/eidolon/releases/<release_id>/eidolon_data
-/srv/eidolon/releases/<release_id>/eidolon_sdk
+/srv/eidolon/releases/<release_id>/
+├── eidolon_kernel/
+├── eidolon_data/
+├── eidolon_hub/
+├── eidolon_admin/
+└── eidolon_sdk/
 ```
 
-三棵 source 必须对应 review 后的完整 Git object ID 且无开发期缓存/未跟踪产物。Kernel/Data 使用目标
-Python 创建原生 venv；Data 安装 `api` extra 和同 release 根的 SDK。完成测试和 import smoke 后再 seal，
-不要先 seal 再修改 source 或 venv。activation 阶段不会联网、安装依赖或修复环境。
+五棵 source 必须对应 review 后的完整 Git object ID。四个 service component 必须使用目标 Python
+建立 `.venv` 并以 lock 安装；Data 必须包含 `api` extra。SDK 是 Data/Admin 的同 release support
+source，不是 service component。activation 不联网、不安装依赖，也不执行 descriptor 提供的命令。
 
-当前 V1 不提供源码下载/通用 installer。流水线必须显式完成 source staging 和 native environment build；
-这是避免把 Git credential、package registry、任意脚本和跨平台构建混入 root activation 的边界。
+首次装机还必须由 image/provisioning 边界创建 `eidolon`、`eidolon-bootstrap` 用户和目录，生成 Data V2
+空库，制造期写入 Host identity，并创建以下 mode `0600` 文件：
 
-## 2. Seal
+```text
+/etc/eidolon/data.env
+/etc/eidolon/hub.env
+/etc/eidolon/kernel.env
+/etc/eidolon/admin.env
+/etc/eidolon/bootstrap.env
+/var/lib/eidolon-bootstrap/host_identity.ed25519
+```
 
-在目标机使用新 Kernel venv 中的运维入口：
+正常 release 不创建、迁移、备份或旋转这些权威状态。当前仓库尚未提供 source transfer/first-install
+provisioner；不得把下面的 target-native 命令描述成已经实现的无人值守远程安装。
+
+## 2. Seal / prepare
 
 ```bash
 sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release seal \
   <release_id> \
   --kernel-revision <40-hex-kernel-commit> \
   --data-revision <40-hex-data-commit> \
+  --hub-revision <40-hex-hub-commit> \
+  --admin-revision <40-hex-admin-commit> \
   --sdk-revision <40-hex-sdk-commit>
 ```
 
-成功生成 `release.json` 和 `release.json.sha256`。同一 release 不允许重新 seal。checksum 只提供本地
-完整性，不是发布签名。
+成功生成 strict V2 `release.json` 和 `.sha256` sidecar。同一 release 不允许重新 seal；checksum 是本地
+完整性证据，不是发布签名。
 
 ## 3. Dry-run
 
 ```bash
-sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release activate \
+sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
   /srv/eidolon/releases/<release_id>/release.json --dry-run
 ```
 
 dry-run 持有短暂排他锁并执行完整预检，但不停止服务、不创建 snapshot、不切换 link、不改系统资产。
-必须保存 JSON 输出，并确认 previous targets 正是当前期望 release。
 
-## 4. Activate
+## 4. Deploy
 
 ```bash
-sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release activate \
+sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
   /srv/eidolon/releases/<release_id>/release.json
 ```
 
-成功输出 `status=activated` 与 transaction ID。对应证据在：
+事务先停止 Admin、Local API、Bootstrap，再停止 eidolond 与其 Data/Hub/Kernel children；随后原子安装
+14 个 allowlist 资产、切换四个 component symlink、reload systemd，并按 Bootstrap → eidolond →
+Local API → Admin 顺序启动。Data/Hub/Kernel 仍由 eidolond desired state 拉起，不形成第二个 lifecycle
+authority。
+
+六个就绪检查分别验证 eidolond UDS、Data、Hub、Kernel、Admin loopback HTTP 与 Local API loopback
+HTTPS。HTTPS readiness 只证明本机进程与 Bootstrap 可用，不替代移动端的 Host ID/SPKI 校验。
+
+成功 receipt 和 rollback snapshot 位于：
 
 ```text
 /var/lib/eidolon/deployments/<release_id>-<transaction_id>/snapshot.json
 /var/lib/eidolon/deployments/<release_id>-<transaction_id>/receipt.json
 ```
 
-当前 snapshot 内部格式为 V2：既有系统资产除备份内容/mode 外还记录原始数值 UID/GID，rollback 在
-原子替换前恢复 ownership。缺少这些字段的开发期 V1 snapshot 会在停服务前被拒绝；不要手工补字段、
-猜测用户组或跨版本复用 snapshot。
+## 5. Doctor
 
-不要删除旧 release 或 snapshot。随后复核 eidolond directory、Data/Kernel health、关键 SQLite
-`PRAGMA integrity_check`，再执行整机 reboot/recovery 验证。
+```bash
+sudo /srv/eidolon/current/eidolon_kernel/.venv/bin/eidolon-release doctor \
+  /srv/eidolon/releases/<release_id>/release.json
+```
 
-## 5. 自动失败与显式 rollback
+doctor 只读复核 descriptor/source/lock/venv/entrypoint/asset/secret、四个 active link、七个 systemd
+unit 和六个 readiness。输出 `status=healthy` 才表示这一个 release 的当前主机状态一致。
 
-activation 失败且自动恢复成功时返回非零并输出 `status=rolled_back`；先验证旧服务和数据库，不要立刻
-重复执行。若输出 `rollback_failed`，系统状态未知，应停止自动重试，保留 snapshot/journal 并人工处置。
+## 6. Rollback
 
-已成功 activation 也可显式恢复：
+失败且自动恢复成功时返回非零并输出 `status=rolled_back`；`rollback_failed` 表示主机状态未知，必须停止
+自动重试并保留 journal/snapshot。显式恢复命令为：
 
 ```bash
 sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release rollback \
@@ -79,5 +102,6 @@ sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release
   /var/lib/eidolon/deployments/<release_id>-<transaction_id>
 ```
 
-rollback 只恢复 allowlist 系统资产和 Kernel/Data symlink；不会修改 secret 或任何 SQLite。若新版本已执行
-数据库 migration，本命令不具备安全语义——V1 因此直接拒绝带 migration 的 descriptor。
+rollback 只恢复 allowlist 系统资产和四个 symlink，不修改 secret、Host identity 或任何 SQLite。V2 仍
+强制 `database_migrations=[]`；首个 schema 变更必须另行定义 authority-owned backup/forward/rollback
+语义。

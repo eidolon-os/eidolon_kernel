@@ -68,9 +68,7 @@ def prepared_release(tmp_path: Path):
         component["lock_sha256"] = hashlib.sha256(
             (release_path / "uv.lock").read_bytes()
         ).hexdigest()
-        component["environment_sha256"] = environment_sha256(
-            "pip==25.1\neidolon-test==1.0\n"
-        )
+        component["environment_sha256"] = environment_sha256("pip==25.1\neidolon-test==1.0\n")
 
         old_target = _host_path(
             root,
@@ -84,14 +82,15 @@ def prepared_release(tmp_path: Path):
     for support_source in document["support_sources"]:
         support_path = _host_path(root, support_source["release_path"])
         support_path.mkdir(parents=True)
-        (support_path / "pyproject.toml").write_text(
-            "[project]\nname='eidolon_sdk'\n"
-        )
+        (support_path / "pyproject.toml").write_text("[project]\nname='eidolon_sdk'\n")
         support_source["source_tree_sha256"] = source_tree_sha256(support_path)
 
-    kernel_root = _host_path(root, document["components"][0]["release_path"])
+    component_roots = {
+        component["component_id"]: _host_path(root, component["release_path"])
+        for component in document["components"]
+    }
     for asset in document["system_assets"]:
-        source = kernel_root / asset["source"]
+        source = component_roots[asset["source_component_id"]] / asset["source"]
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text(f"asset:{asset['destination']}\n")
         asset["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -155,10 +154,65 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
 
     previous = host.preflight(release)
 
-    assert set(previous) == {"eidolon_kernel", "eidolon_data"}
+    assert set(previous) == {
+        "eidolon_kernel",
+        "eidolon_data",
+        "eidolon_hub",
+        "eidolon_admin",
+    }
     assert previous["eidolon_kernel"].endswith("/old/eidolon_kernel")
-    assert any(call[:2] == ("/usr/bin/systemd-analyze", "verify") for call in runner.calls)
+    verify_call = next(
+        call for call in runner.calls if call[:2] == ("/usr/bin/systemd-analyze", "verify")
+    )
+    assert len(verify_call[2:]) == 7
+    assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_quiesce_and_start_order_prevents_competing_restart_authorities(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+
+    host.quiesce(release)
+    host.start_release(release)
+
+    systemctl_calls = [call[1:] for call in runner.calls if call[0] == "/usr/bin/systemctl"]
+    assert systemctl_calls == [
+        ("stop", "eidolon-admin.service"),
+        ("stop", "eidolon-local-api.service"),
+        ("stop", "eidolon-bootstrapd.service"),
+        ("stop", "eidolond.service"),
+        ("stop", "eidolon-data.service"),
+        ("stop", "eidolon-hub.service"),
+        ("stop", "eidolon-kernel.service"),
+        ("start", "eidolon-bootstrapd.service"),
+        ("start", "eidolond.service"),
+        ("start", "eidolon-local-api.service"),
+        ("start", "eidolon-admin.service"),
+    ]
+
+
+def test_doctor_requires_the_sealed_release_to_be_active(tmp_path: Path) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+
+    with pytest.raises(LinuxDeploymentError, match="not active release"):
+        host.doctor(release)
+
+    host.switch_components(release)
+    report = host.doctor(release)
+
+    assert report["release_id"] == release.release_id
+    assert set(report["active_targets"]) == {
+        "eidolon_kernel",
+        "eidolon_data",
+        "eidolon_hub",
+        "eidolon_admin",
+    }
+    active_checks = [
+        call for call in runner.calls if call[:3] == ("/usr/bin/systemctl", "is-active", "--quiet")
+    ]
+    assert len(active_checks) == 7
 
 
 def test_preflight_fails_closed_on_source_or_secret_drift(tmp_path: Path) -> None:
@@ -170,10 +224,8 @@ def test_preflight_fails_closed_on_source_or_secret_drift(tmp_path: Path) -> Non
         host.preflight(release)
 
     (kernel_path / "pyproject.toml").write_text("[project]\nname='eidolon_kernel'\n")
-    corrected = replace(
-        release.components[0], source_tree_sha256=source_tree_sha256(kernel_path)
-    )
-    release = replace(release, components=(corrected, release.components[1]))
+    corrected = replace(release.components[0], source_tree_sha256=source_tree_sha256(kernel_path))
+    release = replace(release, components=(corrected, *release.components[1:]))
     _host_path(root, "/etc/eidolon/data.env").chmod(0o644)
     with pytest.raises(LinuxDeploymentError, match="secret mode"):
         host.preflight(release)
@@ -192,12 +244,45 @@ def test_preflight_rejects_current_link_outside_release_namespace(tmp_path: Path
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        (lambda root, release: _host_path(root, release.components[0].release_path).joinpath("uv.lock").write_text("drift\n"), "source tree"),
-        (lambda root, release: _host_path(root, release.components[0].release_path).joinpath(".venv/bin/python").chmod(0o644), "virtual environment"),
-        (lambda root, release: _host_path(root, release.components[0].release_path).joinpath(".venv/bin/eidolond").chmod(0o644), "entrypoint"),
-        (lambda root, release: _host_path(root, release.components[0].current_link).unlink(), "current link"),
-        (lambda root, release: (_host_path(root, release.components[0].release_path) / release.system_assets[0].source).write_text("drift\n"), "source tree"),
-        (lambda root, release: _host_path(root, release.required_secrets[0].path).unlink(), "secret is missing"),
+        (
+            lambda root, release: (
+                _host_path(root, release.components[0].release_path)
+                .joinpath("uv.lock")
+                .write_text("drift\n")
+            ),
+            "source tree",
+        ),
+        (
+            lambda root, release: (
+                _host_path(root, release.components[0].release_path)
+                .joinpath(".venv/bin/python")
+                .chmod(0o644)
+            ),
+            "virtual environment",
+        ),
+        (
+            lambda root, release: (
+                _host_path(root, release.components[0].release_path)
+                .joinpath(".venv/bin/eidolond")
+                .chmod(0o644)
+            ),
+            "entrypoint",
+        ),
+        (
+            lambda root, release: _host_path(root, release.components[0].current_link).unlink(),
+            "current link",
+        ),
+        (
+            lambda root, release: (
+                _host_path(root, release.components[0].release_path)
+                / release.system_assets[0].source
+            ).write_text("drift\n"),
+            "source tree",
+        ),
+        (
+            lambda root, release: _host_path(root, release.required_secrets[0].path).unlink(),
+            "secret is missing",
+        ),
     ],
 )
 def test_preflight_rejects_incomplete_prepared_state(
@@ -218,7 +303,7 @@ def test_preflight_rejects_target_python_and_environment_mismatch(tmp_path: Path
 
     root, release, host, runner = prepared_release(tmp_path / "environment")
     component = replace(release.components[0], environment_sha256="f" * 64)
-    release = replace(release, components=(component, release.components[1]))
+    release = replace(release, components=(component, *release.components[1:]))
     with pytest.raises(LinuxDeploymentError, match="environment fingerprint"):
         host.preflight(release)
 
@@ -255,7 +340,10 @@ def test_snapshot_switch_and_restore_are_recoverable(tmp_path: Path) -> None:
             root, component.release_path
         )
     for asset in release.system_assets:
-        source = _host_path(root, release.components[0].release_path) / asset.source
+        source = (
+            _host_path(root, release.components_by_id[asset.source_component_id].release_path)
+            / asset.source
+        )
         assert _host_path(root, asset.destination).read_bytes() == source.read_bytes()
 
     host.restore(release, snapshot)
@@ -302,8 +390,7 @@ def test_snapshot_v2_records_and_restores_asset_ownership(
     restored_state = next(
         item
         for item in restored
-        if item[0].parent == destination.parent
-        and item[0].name.startswith(f".{destination.name}.")
+        if item[0].parent == destination.parent and item[0].name.startswith(f".{destination.name}.")
     )
     assert restored_state[1:] == (expected.st_uid, expected.st_gid)
 
@@ -395,12 +482,7 @@ def test_receipt_is_atomic_machine_readable_evidence(tmp_path: Path) -> None:
         )
     )
 
-    receipt = json.loads(
-        (
-            Path(snapshot.backup_path)
-            / "receipt.json"
-        ).read_text(encoding="utf-8")
-    )
+    receipt = json.loads((Path(snapshot.backup_path) / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["status"] == "activated"
     assert receipt["release_id"] == release.release_id
     assert not list(Path(snapshot.backup_path).glob("*.tmp"))
@@ -521,7 +603,41 @@ def test_default_http_readiness_probe_accepts_only_ready_json(monkeypatch) -> No
     check = release_descriptor_from_document(release_document()).readiness_checks[1]
     assert LinuxDeploymentHost._probe_readiness(check)
 
-    Connection.response = Response(503, b'{}')
+    Connection.response = Response(503, b"{}")
     assert not LinuxDeploymentHost._probe_readiness(check)
-    Connection.response = Response(200, b'not-json')
+    Connection.response = Response(200, b"not-json")
     assert not LinuxDeploymentHost._probe_readiness(check)
+
+
+def test_https_readiness_uses_descriptor_status_over_loopback(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"status":"ok"}'
+
+    class Connection:
+        def __init__(self, host, port, *, timeout, context) -> None:
+            assert host == "127.0.0.1"
+            assert port == 9002
+            assert timeout == 2
+            assert context.check_hostname is False
+
+        @staticmethod
+        def request(method: str, path: str) -> None:
+            assert (method, path) == ("GET", "/healthz")
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    from eidolon_deploy import linux
+
+    monkeypatch.setattr(linux.http.client, "HTTPSConnection", Connection)
+    check = release_descriptor_from_document(release_document()).readiness_checks[-1]
+    assert LinuxDeploymentHost._probe_readiness(check)

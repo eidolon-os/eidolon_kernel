@@ -19,7 +19,10 @@ def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
     assert [component.component_id for component in release.components] == [
         "eidolon_kernel",
         "eidolon_data",
+        "eidolon_hub",
+        "eidolon_admin",
     ]
+    assert release.schema_version == 2
     assert release.components[0].release_path == Path(
         "/srv/eidolon/releases/20260806-m2d-test/eidolon_kernel"
     )
@@ -75,9 +78,7 @@ def test_rejects_missing_invalid_sidecar_and_invalid_json(tmp_path: Path) -> Non
             "release path",
         ),
         (
-            lambda value: value["components"][0].update(
-                {"current_link": "/tmp/eidolon_kernel"}
-            ),
+            lambda value: value["components"][0].update({"current_link": "/tmp/eidolon_kernel"}),
             "current link",
         ),
         (
@@ -87,15 +88,11 @@ def test_rejects_missing_invalid_sidecar_and_invalid_json(tmp_path: Path) -> Non
             "support source",
         ),
         (
-            lambda value: value["system_assets"][0].update(
-                {"destination": "/etc/passwd"}
-            ),
+            lambda value: value["system_assets"][0].update({"destination": "/etc/passwd"}),
             "system asset set",
         ),
         (
-            lambda value: value.update(
-                {"database_migrations": ["alembic upgrade head"]}
-            ),
+            lambda value: value.update({"database_migrations": ["alembic upgrade head"]}),
             "migration",
         ),
     ],
@@ -126,14 +123,12 @@ def test_rejects_relative_entrypoint_and_duplicate_readiness_id(tmp_path: Path) 
     [
         (
             lambda value: value.update(
-                {"components": [dict(value["components"][0]), dict(value["components"][0])]}
+                {"components": [dict(value["components"][0]) for _ in range(4)]}
             ),
             "component set",
         ),
         (
-            lambda value: value["system_assets"].__setitem__(
-                -1, dict(value["system_assets"][0])
-            ),
+            lambda value: value["system_assets"].__setitem__(-1, dict(value["system_assets"][0])),
             "destination must be unique",
         ),
         (
@@ -142,7 +137,7 @@ def test_rejects_relative_entrypoint_and_duplicate_readiness_id(tmp_path: Path) 
         ),
         (
             lambda value: value["required_secrets"].__setitem__(
-                -1, {"path": "/etc/eidolon/unapproved.env", "mode": "0600"}
+                -1, dict(value["required_secrets"][0])
             ),
             "secret set",
         ),
@@ -160,13 +155,23 @@ def test_rejects_relative_entrypoint_and_duplicate_readiness_id(tmp_path: Path) 
         ),
     ],
 )
-def test_rejects_semantically_unsafe_contract_values(
-    tmp_path: Path, mutate, message: str
-) -> None:
+def test_rejects_semantically_unsafe_contract_values(tmp_path: Path, mutate, message: str) -> None:
     path = tmp_path / "release.json"
     document = release_document()
     mutate(document)
     write_release_document(path, document)
 
     with pytest.raises(ReleaseDescriptorError, match=message):
+        load_release_descriptor(path)
+
+
+def test_rejects_v1_descriptor_instead_of_claiming_full_stack_coverage(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "release.json"
+    document = release_document()
+    document["schema_version"] = 1
+    write_release_document(path, document)
+
+    with pytest.raises(ReleaseDescriptorError, match="contract"):
         load_release_descriptor(path)
