@@ -305,11 +305,11 @@ class LinuxDeploymentHost:
         self._assert_privileged()
         for unit in release.affected_units:
             if unit in _PRE_MANAGER_UNITS:
-                self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
-        self._checked_command("manager stop", _SYSTEMCTL, "stop", _MANAGER_UNIT)
+                self._stop_unit_if_loaded(unit, operation="service stop")
+        self._stop_unit_if_loaded(_MANAGER_UNIT, operation="manager stop")
         for unit in release.affected_units:
             if unit not in _PRE_MANAGER_UNITS:
-                self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
+                self._stop_unit_if_loaded(unit, operation="service stop")
 
     def install_assets(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
@@ -603,6 +603,21 @@ class LinuxDeploymentHost:
             detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
             raise LinuxDeploymentError(f"{operation} failed: {detail}")
         return result
+
+    def _stop_unit_if_loaded(self, unit: str, *, operation: str) -> None:
+        state = self._checked_command(
+            "systemd unit load-state inspection",
+            _SYSTEMCTL,
+            "show",
+            "--property=LoadState",
+            "--value",
+            unit,
+        ).stdout.strip()
+        if state == "not-found":
+            return
+        if not state:
+            raise LinuxDeploymentError(f"systemd returned an empty load state for {unit}")
+        self._checked_command(operation, _SYSTEMCTL, "stop", unit)
 
     @staticmethod
     def _atomic_symlink(target: Path, link: Path) -> None:

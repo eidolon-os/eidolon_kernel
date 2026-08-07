@@ -24,11 +24,15 @@ class FakeRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail_command: tuple[str, ...] | None = None
+        self.missing_units: set[str] = set()
 
     def run(self, *command: str) -> CommandResult:
         self.calls.append(command)
         if self.fail_command and command[: len(self.fail_command)] == self.fail_command:
             return CommandResult(1, "", "injected command failure")
+        if command[1:4] == ("show", "--property=LoadState", "--value"):
+            state = "not-found" if command[-1] in self.missing_units else "loaded"
+            return CommandResult(0, f"{state}\n", "")
         if len(command) >= 3 and command[-2] == "-c" and "metadata.distributions" in command[-1]:
             return CommandResult(0, "pip==25.1\neidolon-test==1.0\n", "")
         if command[-2:] == (
@@ -177,7 +181,9 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
     host.quiesce(release)
     host.start_release(release)
 
-    systemctl_calls = [call[1:] for call in runner.calls if call[0] == "/usr/bin/systemctl"]
+    systemctl_calls = [
+        call[1:] for call in runner.calls if call[0] == "/usr/bin/systemctl" and call[1] != "show"
+    ]
     assert systemctl_calls == [
         ("stop", "eidolon-admin.service"),
         ("stop", "eidolon-local-api.service"),
@@ -192,6 +198,24 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
         ("start", "eidolon-local-api.service"),
         ("start", "eidolon-admin.service"),
     ]
+
+
+def test_quiesce_skips_units_not_installed_before_first_activation(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.missing_units = {
+        "eidolon-admin.service",
+        "eidolon-data-workspace.service",
+    }
+
+    host.quiesce(release)
+
+    stopped = {call[-1] for call in runner.calls if call[:2] == ("/usr/bin/systemctl", "stop")}
+    assert "eidolon-admin.service" not in stopped
+    assert "eidolon-data-workspace.service" not in stopped
+    assert "eidolon-bootstrapd.service" in stopped
+    assert "eidolond.service" in stopped
 
 
 def test_doctor_requires_the_sealed_release_to_be_active(tmp_path: Path) -> None:
