@@ -289,10 +289,11 @@ rollback 可由之后的独立运维进程加载同一 snapshot。snapshot V2 �
 资产的 UID/GID，并在原子替换前恢复 ownership；缺失 ownership 的旧 snapshot fail closed，不做开发期
 兼容。密钥只校验存在性和 `0600`，从不进入 release、snapshot 或回执。
 
-V2 descriptor 明确要求 `database_migrations=[]`。任何 authority SQLite 都不由发布工具读取、复制或
-迁移；出现首个真实 schema migration 前，必须先为对应 authority 定义可验证的 backup/forward/
-rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descriptor checksum 只证明本地完整性，
-不是签名或来源认证；首版依赖 root-owned staging/release/snapshot 目录与受控镜像流水线。
+V2 descriptor 明确要求 `database_migrations=[]`。任何 authority SQLite 都不由发布工具复制或迁移；
+preflight 只读核对当前 Admin、候选 Admin 与 Bootstrap SQLite 的 schema 版本必须相同，从而在停服务前
+拒绝隐式 schema transition。真实 schema migration 必须先在独立 authority 流程中定义可验证的
+backup/forward/rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descriptor checksum 只
+证明本地完整性，不是签名或来源认证；首版依赖 root-owned staging/release/snapshot 目录与受控镜像流水线。
 命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
 [ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
 

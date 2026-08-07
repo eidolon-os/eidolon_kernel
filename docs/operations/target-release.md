@@ -64,6 +64,11 @@ current links、secret 和数据库不变。SDK 是 Data/Admin 的 support sourc
 正常 release 不创建、迁移、备份或旋转这些权威状态。当前工具是已 provision 主机的升级路径；没有
 实现新机 first-install，不得用它代替制造流程。
 
+Bootstrap 是当前唯一会在应用初始化时演进本地 schema 的 authority。为保证本发布事务仍可代码回滚，
+preflight 会分别读取当前 Admin、候选 Admin 声明的 Bootstrap schema 版本以及 SQLite `user_version`，
+三者必须完全一致；任何 schema transition 都会在停止服务前 fail closed。制造或独立 migration 流程必须
+先定义数据备份、前向迁移和失败恢复，再把新 schema 作为下一次代码发布的共同基线。
+
 ## 3. 工作站到 Pi 的统一升级入口
 
 ```bash
@@ -135,5 +140,5 @@ sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release
 ```
 
 rollback 只恢复 allowlist 系统资产和四个 symlink，不修改 secret、Host identity 或任何 SQLite。V2 仍
-强制 `database_migrations=[]`；首个 schema 变更必须另行定义 authority-owned backup/forward/rollback
-语义。
+强制 `database_migrations=[]`；Bootstrap 的同版本门禁确保应用启动不会借发布事务隐式跨 schema。
+任何新 schema 变更必须另行定义 authority-owned backup/forward/rollback 语义。

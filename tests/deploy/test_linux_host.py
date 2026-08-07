@@ -25,6 +25,9 @@ class FakeRunner:
         self.calls: list[tuple[str, ...]] = []
         self.fail_command: tuple[str, ...] | None = None
         self.missing_units: set[str] = set()
+        self.current_bootstrap_schema_version = 5
+        self.release_bootstrap_schema_version = 5
+        self.bootstrap_database_schema_version = 5
 
     def run(self, *command: str) -> CommandResult:
         self.calls.append(command)
@@ -42,6 +45,15 @@ class FakeRunner:
             raise AssertionError("unexpected Python probe shape")
         if len(command) >= 3 and command[-2] == "-c" and "python_version_tuple" in command[-1]:
             return CommandResult(0, "3.13\n", "")
+        if len(command) >= 3 and command[1] == "-c" and "BOOTSTRAP_SCHEMA_VERSION" in command[2]:
+            version = (
+                self.current_bootstrap_schema_version
+                if "/old/eidolon_admin/" in command[0]
+                else self.release_bootstrap_schema_version
+            )
+            return CommandResult(0, f"{version}\n", "")
+        if len(command) == 4 and command[1] == "-c" and "PRAGMA user_version" in command[2]:
+            return CommandResult(0, f"{self.bootstrap_database_schema_version}\n", "")
         return CommandResult(0, "", "")
 
 
@@ -79,6 +91,11 @@ def prepared_release(tmp_path: Path):
             f"/srv/eidolon/releases/old/{component['component_id']}",
         )
         old_target.mkdir(parents=True)
+        if component["component_id"] == "eidolon_admin":
+            old_python = old_target / ".venv/bin/python"
+            old_python.parent.mkdir(parents=True)
+            old_python.write_text("#!/bin/sh\n")
+            old_python.chmod(0o755)
         current_link = _host_path(root, component["current_link"])
         current_link.parent.mkdir(parents=True, exist_ok=True)
         current_link.symlink_to(old_target)
@@ -107,6 +124,10 @@ def prepared_release(tmp_path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("secret\n")
         path.chmod(0o600)
+
+    bootstrap_database = _host_path(root, "/var/lib/eidolon-bootstrap/bootstrap.sqlite3")
+    bootstrap_database.parent.mkdir(parents=True, exist_ok=True)
+    bootstrap_database.write_bytes(b"test database placeholder")
 
     for component in document["components"]:
         component["source_tree_sha256"] = source_tree_sha256(
@@ -171,6 +192,26 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
     assert len(verify_call[2:]) == 8
     assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_rejects_bootstrap_schema_transition_before_host_mutation(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.current_bootstrap_schema_version = 4
+
+    with pytest.raises(LinuxDeploymentError, match="outside release rollback semantics"):
+        host.preflight(release)
+
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_rejects_bootstrap_database_schema_drift(tmp_path: Path) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.bootstrap_database_schema_version = 4
+
+    with pytest.raises(LinuxDeploymentError, match="authority schema"):
+        host.preflight(release)
 
 
 def test_quiesce_and_start_order_prevents_competing_restart_authorities(

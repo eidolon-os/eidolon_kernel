@@ -51,6 +51,18 @@ _RELEASE_UNITS = (
 )
 _SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")
 _ACTIVATION_LOCK = Path("/run/lock/eidolon-release.lock")
+_BOOTSTRAP_DATABASE = Path("/var/lib/eidolon-bootstrap/bootstrap.sqlite3")
+_BOOTSTRAP_SCHEMA_VERSION_SCRIPT = (
+    "from eidolon_admin_server.bootstrap.adapters.persistence import sqlite as store;"
+    "print(store.BOOTSTRAP_SCHEMA_VERSION "
+    "if hasattr(store, 'BOOTSTRAP_SCHEMA_VERSION') else store._SCHEMA_VERSION)"
+)
+_SQLITE_USER_VERSION_SCRIPT = (
+    "import sqlite3,sys;"
+    "connection=sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True);"
+    "print(connection.execute('PRAGMA user_version').fetchone()[0]);"
+    "connection.close()"
+)
 _SNAPSHOT_SCHEMA_VERSION = 2
 
 
@@ -220,6 +232,15 @@ class LinuxDeploymentHost:
             previous_targets[component.component_id] = previous_target
 
         components = release.components_by_id
+        current_admin = self._validate_component_target(
+            "eidolon_admin",
+            self._host_path(components["eidolon_admin"].current_link),
+            Path(previous_targets["eidolon_admin"]),
+        )
+        self._verify_bootstrap_schema_compatibility(
+            current_admin=current_admin,
+            release_admin=self._host_path(components["eidolon_admin"].release_path),
+        )
         service_sources: list[str] = []
         for asset in release.system_assets:
             source = (
@@ -603,6 +624,54 @@ class LinuxDeploymentHost:
             detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
             raise LinuxDeploymentError(f"{operation} failed: {detail}")
         return result
+
+    def _verify_bootstrap_schema_compatibility(
+        self,
+        *,
+        current_admin: Path,
+        release_admin: Path,
+    ) -> None:
+        database = self._host_path(_BOOTSTRAP_DATABASE)
+        if not database.is_file() or database.is_symlink():
+            raise LinuxDeploymentError(
+                f"bootstrap authority database is missing or unsafe: {_BOOTSTRAP_DATABASE}"
+            )
+        current_version = self._bootstrap_code_schema_version(current_admin)
+        release_version = self._bootstrap_code_schema_version(release_admin)
+        database_version = self._schema_version_from_command(
+            "bootstrap database schema inspection",
+            str(release_admin / ".venv/bin/python"),
+            "-c",
+            _SQLITE_USER_VERSION_SCRIPT,
+            str(database),
+        )
+        if current_version != release_version:
+            raise LinuxDeploymentError(
+                "bootstrap schema transition is outside release rollback semantics: "
+                f"current code expects {current_version}, release expects {release_version}"
+            )
+        if database_version != release_version:
+            raise LinuxDeploymentError(
+                "bootstrap authority schema does not match the rollback-compatible release: "
+                f"database is {database_version}, code expects {release_version}"
+            )
+
+    def _bootstrap_code_schema_version(self, admin_root: Path) -> int:
+        python = admin_root / ".venv/bin/python"
+        if not python.is_file() or not os.access(python, os.X_OK):
+            raise LinuxDeploymentError(f"bootstrap schema probe runtime is unavailable: {python}")
+        return self._schema_version_from_command(
+            "bootstrap code schema inspection",
+            str(python),
+            "-c",
+            _BOOTSTRAP_SCHEMA_VERSION_SCRIPT,
+        )
+
+    def _schema_version_from_command(self, operation: str, *command: str) -> int:
+        value = self._checked_command(operation, *command).stdout.strip()
+        if not value.isascii() or not value.isdecimal():
+            raise LinuxDeploymentError(f"{operation} returned an invalid version")
+        return int(value)
 
     def _stop_unit_if_loaded(self, unit: str, *, operation: str) -> None:
         state = self._checked_command(
