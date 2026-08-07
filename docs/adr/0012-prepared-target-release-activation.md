@@ -1,6 +1,6 @@
 # ADR-0012: 已准备 Target Release 的离线原子激活
 
-- 状态：Accepted；本地实现与测试完成，Raspberry Pi 激活验证待 clean commit 后执行
+- 状态：Accepted；本地实现、Raspberry Pi 激活/回滚/重启验证完成
 - 日期：2026-08-06
 
 ## Context
@@ -88,5 +88,5 @@ owner、backup 一致性点、forward compatibility、恢复验证和失败处�
 - V1 没有签名、TPM trust root、A/B 分区或断电原子性证明；root-owned 本机边界是明确部署假设；
 - snapshot wire 已提升为 V2；开发验证期生成的 V1 snapshot 不兼容，也不能用于新版显式 rollback；
 - release source staging 仍属于产品镜像流水线；待出现第二类产品载体和稳定 artifact 分发事实后再抽象；
-- Raspberry Pi 上的 dry-run、成功激活、故障注入自动回滚、显式回滚和重启恢复必须在本实现形成 clean
-  commit 后执行，revision 字段不得冒充未提交工作树。
+- Raspberry Pi 已完成 dry-run、成功激活、瞬态端口故障自动回滚、跨进程显式回滚和重启恢复；后续
+  release 仍必须从 clean commit 构建，并在 seal 前用 `git rev-parse` 逐项核对完整 revision。
