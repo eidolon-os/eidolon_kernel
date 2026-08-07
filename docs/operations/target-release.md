@@ -3,9 +3,38 @@
 本文面向 Eidolon 产品镜像/设备的 root 运维。V2 目标固定为 Raspberry Pi/Linux `aarch64`，同一
 release 事务覆盖 Data、Hub、Kernel、Admin，以及 Admin 所有的 Bootstrap/Local API 产品进程。
 
-## 1. Target-native preparation
+## 1. Commit-pinned bundle（工作站）
 
-受控 staging 先创建固定目录：
+五个 revision 都必须显式给出完整 40-hex commit ID；工具使用 `git archive <commit>`，不会读取或夹带
+working-tree 修改。输出是一个包含五个 source tar、strict manifest、逐文件 SHA-256 和 standalone
+target preparer 的目录：
+
+```bash
+.venv/bin/eidolon-release bundle <release_id> /absolute/path/to/bundle \
+  --kernel-repo /path/to/eidolon_kernel \
+  --data-repo /path/to/eidolon_data \
+  --hub-repo /path/to/eidolon_hub \
+  --admin-repo /path/to/eidolon_admin \
+  --sdk-repo /path/to/eidolon_sdk \
+  --kernel-revision <40-hex-kernel-commit> \
+  --data-revision <40-hex-data-commit> \
+  --hub-revision <40-hex-hub-commit> \
+  --admin-revision <40-hex-admin-commit> \
+  --sdk-revision <40-hex-sdk-commit>
+```
+
+SHA-256 检测传输/磁盘损坏，不提供来源认证；发布签名和设备 trust root 仍未实现。
+
+## 2. Target-native prepare + seal
+
+将 bundle 传到目标后，以 root 运行其中的纯标准库 preparer：
+
+```bash
+sudo python3 /path/to/bundle/prepare_target.py /path/to/bundle \
+  --uv /usr/local/bin/uv
+```
+
+它校验 bundle、拒绝 unsafe tar member，在 preparation lock 下创建固定目录：
 
 ```text
 /srv/eidolon/releases/<release_id>/
@@ -16,9 +45,9 @@ release 事务覆盖 Data、Hub、Kernel、Admin，以及 Admin 所有的 Bootst
 └── eidolon_sdk/
 ```
 
-五棵 source 必须对应 review 后的完整 Git object ID。四个 service component 必须使用目标 Python
-建立 `.venv` 并以 lock 安装；Data 必须包含 `api` extra。SDK 是 Data/Admin 的同 release support
-source，不是 service component。activation 不联网、不安装依赖，也不执行 descriptor 提供的命令。
+随后在目标用 `uv sync --frozen --no-dev` 建立四个原生 `.venv`（Data 明确安装 `api` extra），并调用
+新 Kernel venv 的 `eidolon-release seal`。任一受控失败会删除这次新建的 release 目录；既有 release、
+current links、secret 和数据库不变。SDK 是 Data/Admin 的 support source，不是 service component。
 
 首次装机还必须由 image/provisioning 边界创建 `eidolon`、`eidolon-bootstrap` 用户和目录，生成 Data V2
 空库，制造期写入 Host identity，并创建以下 mode `0600` 文件：
@@ -32,14 +61,15 @@ source，不是 service component。activation 不联网、不安装依赖，也
 /var/lib/eidolon-bootstrap/host_identity.ed25519
 ```
 
-正常 release 不创建、迁移、备份或旋转这些权威状态。当前仓库尚未提供 source transfer/first-install
-provisioner；不得把下面的 target-native 命令描述成已经实现的无人值守远程安装。
+正常 release 不创建、迁移、备份或旋转这些权威状态。当前工具是已 provision 主机的升级路径；没有
+实现新机 first-install，不得用它代替制造流程。
 
-## 2. Seal / prepare
+## 3. 工作站到 Pi 的统一升级入口
 
 ```bash
-sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release seal \
-  <release_id> \
+./deploy/raspberry-pi/eidolon-pi-release.sh \
+  --target <user@pi-host> --release-id <release_id> \
+  --output /absolute/path/to/bundle \
   --kernel-revision <40-hex-kernel-commit> \
   --data-revision <40-hex-data-commit> \
   --hub-revision <40-hex-hub-commit> \
@@ -47,10 +77,12 @@ sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release
   --sdk-revision <40-hex-sdk-commit>
 ```
 
-成功生成 strict V2 `release.json` 和 `.sha256` sidecar。同一 release 不允许重新 seal；checksum 是本地
-完整性证据，不是发布签名。
+默认只执行 bundle → BatchMode SSH/SCP transfer → target prepare/seal → deploy dry-run，不切换服务。
+复核 JSON previous targets 后，用完全相同参数追加 `--resume --activate`，脚本会重新 dry-run、执行事务并
+doctor。SSH host key、账号、sudo policy 和网络连通性由设备运维边界预先配置；脚本不接受密码或内嵌
+credential。我们没有在本次实现中连接真实 Pi。
 
-## 3. Dry-run
+## 4. 独立 Dry-run
 
 ```bash
 sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
@@ -59,7 +91,7 @@ sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release
 
 dry-run 持有短暂排他锁并执行完整预检，但不停止服务、不创建 snapshot、不切换 link、不改系统资产。
 
-## 4. Deploy
+## 5. 独立 Deploy
 
 ```bash
 sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
@@ -81,7 +113,7 @@ HTTPS。HTTPS readiness 只证明本机进程与 Bootstrap 可用，不替代移
 /var/lib/eidolon/deployments/<release_id>-<transaction_id>/receipt.json
 ```
 
-## 5. Doctor
+## 6. Doctor
 
 ```bash
 sudo /srv/eidolon/current/eidolon_kernel/.venv/bin/eidolon-release doctor \
@@ -91,7 +123,7 @@ sudo /srv/eidolon/current/eidolon_kernel/.venv/bin/eidolon-release doctor \
 doctor 只读复核 descriptor/source/lock/venv/entrypoint/asset/secret、四个 active link、七个 systemd
 unit 和六个 readiness。输出 `status=healthy` 才表示这一个 release 的当前主机状态一致。
 
-## 6. Rollback
+## 7. Rollback
 
 失败且自动恢复成功时返回非零并输出 `status=rolled_back`；`rollback_failed` 表示主机状态未知，必须停止
 自动重试并保留 journal/snapshot。显式恢复命令为：

@@ -112,6 +112,52 @@ def test_cli_seals_prepared_release(monkeypatch, capsys, tmp_path: Path) -> None
     assert json.loads(capsys.readouterr().out)["status"] == "sealed"
 
 
+def test_cli_builds_commit_pinned_source_bundle(monkeypatch, capsys, tmp_path: Path) -> None:
+    manifest = tmp_path / "bundle/bundle.json"
+    captured = {}
+
+    def fake_build(**arguments):
+        captured.update(arguments)
+        return manifest
+
+    monkeypatch.setattr(cli, "build_source_bundle", fake_build)
+    result = cli.main(
+        [
+            "bundle",
+            "20260807-bundle",
+            str(tmp_path / "bundle"),
+            "--kernel-repo",
+            str(tmp_path / "kernel"),
+            "--data-repo",
+            str(tmp_path / "data"),
+            "--hub-repo",
+            str(tmp_path / "hub"),
+            "--admin-repo",
+            str(tmp_path / "admin"),
+            "--sdk-repo",
+            str(tmp_path / "sdk"),
+            "--kernel-revision",
+            "a" * 40,
+            "--data-revision",
+            "b" * 40,
+            "--hub-revision",
+            "d" * 40,
+            "--admin-revision",
+            "e" * 40,
+            "--sdk-revision",
+            "c" * 40,
+        ]
+    )
+
+    assert result == 0
+    assert captured["revisions"].admin == "e" * 40
+    assert captured["repositories"]["eidolon_hub"] == tmp_path / "hub"
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "bundled",
+        "manifest": str(manifest),
+    }
+
+
 def test_cli_dry_run_and_explicit_rollback(monkeypatch, capsys, tmp_path: Path) -> None:
     descriptor = tmp_path / "release.json"
     write_release_document(descriptor, release_document())

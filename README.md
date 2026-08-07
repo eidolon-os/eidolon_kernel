@@ -296,6 +296,11 @@ rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descri
 命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
 [ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
 
+已 provision Pi 的 source staging 由 commit-pinned bundle 和 standalone target preparer 完成；工作站
+driver 默认只传输、原生构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
+读取 working-tree 修改，也不接管 first-install identity/secret/Data baseline。详见
+[ADR-0014](docs/adr/0014-commit-pinned-pi-release-bundle.md)。
+
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
 Mobile/Bootstrap 的 `claimed + connected` 也不等于应用栈 ready，两条状态链不能合并。详见

@@ -15,6 +15,7 @@ from eidolon_deploy.activation import (
     RollbackFailed,
     receipt_to_document,
 )
+from eidolon_deploy.bundle import BundleError, build_source_bundle
 from eidolon_deploy.linux import LinuxDeploymentError, LinuxDeploymentHost
 from eidolon_deploy.manifest import ReleaseDescriptorError, load_release_descriptor
 from eidolon_deploy.sealing import (
@@ -28,6 +29,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
     try:
+        if arguments.operation == "bundle":
+            revisions = ReleaseRevisions(
+                kernel=arguments.kernel_revision,
+                data=arguments.data_revision,
+                hub=arguments.hub_revision,
+                admin=arguments.admin_revision,
+                sdk=arguments.sdk_revision,
+            )
+            path = build_source_bundle(
+                release_id=arguments.release_id,
+                repositories={
+                    "eidolon_kernel": arguments.kernel_repo,
+                    "eidolon_data": arguments.data_repo,
+                    "eidolon_hub": arguments.hub_repo,
+                    "eidolon_admin": arguments.admin_repo,
+                    "eidolon_sdk": arguments.sdk_repo,
+                },
+                revisions=revisions,
+                output=arguments.output,
+            )
+            _print_json({"status": "bundled", "manifest": str(path)})
+            return 0
         if arguments.operation == "seal":
             path = seal_prepared_release(
                 release_id=arguments.release_id,
@@ -71,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 3
     except (
         LinuxDeploymentError,
+        BundleError,
         PreparationError,
         ReleaseDescriptorError,
         OSError,
@@ -89,6 +113,22 @@ def _parser() -> argparse.ArgumentParser:
         description="Offline activation tool for a prepared Eidolon target release.",
     )
     operations = parser.add_subparsers(dest="operation", required=True)
+    bundle = operations.add_parser(
+        "bundle", help="archive exact reviewed commits for target-native preparation"
+    )
+    bundle.add_argument("release_id")
+    bundle.add_argument("output", type=Path)
+    bundle.add_argument("--kernel-repo", type=Path, required=True)
+    bundle.add_argument("--data-repo", type=Path, required=True)
+    bundle.add_argument("--hub-repo", type=Path, required=True)
+    bundle.add_argument("--admin-repo", type=Path, required=True)
+    bundle.add_argument("--sdk-repo", type=Path, required=True)
+    bundle.add_argument("--kernel-revision", required=True)
+    bundle.add_argument("--data-revision", required=True)
+    bundle.add_argument("--hub-revision", required=True)
+    bundle.add_argument("--admin-revision", required=True)
+    bundle.add_argument("--sdk-revision", required=True)
+
     seal = operations.add_parser("seal", help="seal an already prepared native release")
     seal.add_argument("release_id")
     seal.add_argument("--kernel-revision", required=True)
