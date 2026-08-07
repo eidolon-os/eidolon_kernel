@@ -39,6 +39,15 @@ _PRE_MANAGER_UNITS = (
     "eidolon-bootstrapd.service",
 )
 _POST_MANAGER_UNITS = ("eidolon-local-api.service", "eidolon-admin.service")
+_READINESS_UNITS = {
+    "eidolond": _MANAGER_UNIT,
+    "data": "eidolon-data.service",
+    "data-workspace": "eidolon-data-workspace.service",
+    "hub": "eidolon-hub.service",
+    "kernel": "eidolon-kernel.service",
+    "admin": "eidolon-admin.service",
+    "local-api": "eidolon-local-api.service",
+}
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
     _MANAGER_UNIT,
@@ -372,8 +381,11 @@ class LinuxDeploymentHost:
                 self._checked_command("service start", _SYSTEMCTL, "start", unit)
 
     def wait_ready(self, release: ReleaseDescriptor) -> None:
+        self._wait_for_readiness(release.readiness_checks)
+
+    def _wait_for_readiness(self, checks: tuple[ReadinessCheck, ...]) -> None:
         deadline = time.monotonic() + self._readiness_timeout_seconds
-        pending = {check.check_id: check for check in release.readiness_checks}
+        pending = {check.check_id: check for check in checks}
         while pending:
             for check_id, check in tuple(pending.items()):
                 try:
@@ -462,8 +474,15 @@ class LinuxDeploymentHost:
             )
             self._atomic_symlink(Path(previous), current_link)
         self.reload_systemd()
-        self.start_release(release)
-        self.wait_ready(release)
+        restored_units = self._restored_units(metadata)
+        self._start_restored_release(restored_units)
+        self._wait_for_readiness(
+            tuple(
+                check
+                for check in release.readiness_checks
+                if _READINESS_UNITS[check.check_id] in restored_units
+            )
+        )
 
     def write_receipt(self, receipt: ActivationReceipt) -> None:
         if receipt.transaction_id is None:
@@ -614,6 +633,30 @@ class LinuxDeploymentHost:
 
         if self._root == Path("/"):
             os.chown(path, uid, gid)
+
+    @staticmethod
+    def _restored_units(metadata: Mapping[str, object]) -> frozenset[str]:
+        assets = metadata["system_assets"]
+        assert isinstance(assets, list)
+        return frozenset(
+            Path(state["destination"]).name
+            for state in assets
+            if state["existed"] and Path(state["destination"]).parent == Path("/etc/systemd/system")
+        )
+
+    def _start_restored_release(self, restored_units: frozenset[str]) -> None:
+        if "eidolon-bootstrapd.service" in restored_units:
+            self._checked_command(
+                "bootstrap start",
+                _SYSTEMCTL,
+                "start",
+                "eidolon-bootstrapd.service",
+            )
+        if _MANAGER_UNIT in restored_units:
+            self._checked_command("manager start", _SYSTEMCTL, "start", _MANAGER_UNIT)
+        for unit in _POST_MANAGER_UNITS:
+            if unit in restored_units:
+                self._checked_command("service start", _SYSTEMCTL, "start", unit)
 
     def _checked_command(self, operation: str, *command: str) -> CommandResult:
         try:

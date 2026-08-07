@@ -422,6 +422,42 @@ def test_snapshot_switch_and_restore_are_recoverable(tmp_path: Path) -> None:
         assert _host_path(root, destination).read_text() == content
 
 
+def test_first_install_rollback_restores_only_previous_units_and_readiness(
+    tmp_path: Path,
+) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    for destination in (
+        "/etc/systemd/system/eidolon-admin.service",
+        "/etc/systemd/system/eidolon-data-workspace.service",
+    ):
+        _host_path(root, destination).unlink()
+    previous = host.preflight(release)
+    snapshot = host.create_snapshot(release, previous)
+    host.install_assets(release)
+    host.switch_components(release)
+    observed_readiness: list[str] = []
+    host._readiness_probe = lambda check: observed_readiness.append(check.check_id) or True
+    runner.calls.clear()
+
+    host.restore(release, snapshot)
+
+    started = {call[-1] for call in runner.calls if call[:2] == ("/usr/bin/systemctl", "start")}
+    assert "eidolon-admin.service" not in started
+    assert "eidolon-data-workspace.service" not in started
+    assert "eidolon-bootstrapd.service" in started
+    assert "eidolond.service" in started
+    assert "eidolon-local-api.service" in started
+    assert "admin" not in observed_readiness
+    assert "data-workspace" not in observed_readiness
+    assert set(observed_readiness) == {
+        "eidolond",
+        "data",
+        "hub",
+        "kernel",
+        "local-api",
+    }
+
+
 def test_snapshot_v2_records_and_restores_asset_ownership(
     tmp_path: Path,
     monkeypatch,
