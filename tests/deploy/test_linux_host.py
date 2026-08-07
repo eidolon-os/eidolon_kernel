@@ -268,6 +268,46 @@ def test_snapshot_switch_and_restore_are_recoverable(tmp_path: Path) -> None:
         assert _host_path(root, destination).read_text() == content
 
 
+def test_snapshot_v2_records_and_restores_asset_ownership(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root, release, host, _ = prepared_release(tmp_path)
+    destination = _host_path(root, release.system_assets[0].destination)
+    expected = destination.stat()
+    previous = host.preflight(release)
+
+    snapshot = host.create_snapshot(release, previous)
+    document = json.loads(
+        (Path(snapshot.backup_path) / "snapshot.json").read_text(encoding="utf-8")
+    )
+    state = next(
+        item
+        for item in document["system_assets"]
+        if item["destination"] == str(release.system_assets[0].destination)
+    )
+    assert document["schema_version"] == 2
+    assert state["uid"] == expected.st_uid
+    assert state["gid"] == expected.st_gid
+
+    restored: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(
+        host,
+        "_restore_file_ownership",
+        lambda path, uid, gid: restored.append((path, uid, gid)),
+    )
+    host.install_assets(release)
+    host.restore(release, snapshot)
+
+    restored_state = next(
+        item
+        for item in restored
+        if item[0].parent == destination.parent
+        and item[0].name.startswith(f".{destination.name}.")
+    )
+    assert restored_state[1:] == (expected.st_uid, expected.st_gid)
+
+
 def test_command_failure_never_becomes_success(tmp_path: Path) -> None:
     _, release, host, runner = prepared_release(tmp_path)
     runner.fail_command = ("/usr/bin/systemd-analyze", "verify")
@@ -402,6 +442,24 @@ def test_restore_validates_backups_before_stopping_services(tmp_path: Path) -> N
     runner.calls.clear()
 
     with pytest.raises(LinuxDeploymentError, match="backup is missing"):
+        host.restore(release, snapshot)
+
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_restore_rejects_snapshot_without_ownership_before_stopping_services(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    previous = host.preflight(release)
+    snapshot = host.create_snapshot(release, previous)
+    metadata_path = Path(snapshot.backup_path) / "snapshot.json"
+    document = json.loads(metadata_path.read_text(encoding="utf-8"))
+    document["system_assets"][0].pop("uid")
+    metadata_path.write_text(json.dumps(document), encoding="utf-8")
+    runner.calls.clear()
+
+    with pytest.raises(LinuxDeploymentError, match="asset state is invalid"):
         host.restore(release, snapshot)
 
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)

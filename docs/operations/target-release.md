@@ -59,6 +59,10 @@ sudo /srv/eidolon/releases/<release_id>/eidolon_kernel/.venv/bin/eidolon-release
 /var/lib/eidolon/deployments/<release_id>-<transaction_id>/receipt.json
 ```
 
+当前 snapshot 内部格式为 V2：既有系统资产除备份内容/mode 外还记录原始数值 UID/GID，rollback 在
+原子替换前恢复 ownership。缺少这些字段的开发期 V1 snapshot 会在停服务前被拒绝；不要手工补字段、
+猜测用户组或跨版本复用 snapshot。
+
 不要删除旧 release 或 snapshot。随后复核 eidolond directory、Data/Kernel health、关键 SQLite
 `PRAGMA integrity_check`，再执行整机 reboot/recovery 验证。
 

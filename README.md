@@ -283,8 +283,9 @@ M2-D 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安
 激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止
 `eidolond` 与受影响 unit → 安装 allowlist 资产 → 原子切换 Kernel/Data symlink → daemon-reload →
 启动 `eidolond` → 等待 eidolond/Data/Kernel ready → 写回执。任一步失败都恢复 snapshot；显式
-rollback 可由之后的独立运维进程加载同一 snapshot。密钥只校验存在性和 `0600`，从不进入 release、
-snapshot 或回执。
+rollback 可由之后的独立运维进程加载同一 snapshot。snapshot V2 除内容与 mode 外显式记录既有系统
+资产的 UID/GID，并在原子替换前恢复 ownership；缺失 ownership 的旧 snapshot fail closed，不做开发期
+兼容。密钥只校验存在性和 `0600`，从不进入 release、snapshot 或回执。
 
 V1 descriptor 明确要求 `database_migrations=[]`。Kernel/Data SQLite 都不由发布工具读取、复制或
 迁移；出现首个真实 schema migration 前，必须先为对应 authority 定义可验证的 backup/forward/

@@ -34,6 +34,7 @@ _SYSTEMD_ANALYZE = "/usr/bin/systemd-analyze"
 _MANAGER_UNIT = "eidolond.service"
 _SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")
 _ACTIVATION_LOCK = Path("/run/lock/eidolon-release.lock")
+_SNAPSHOT_SCHEMA_VERSION = 2
 
 
 class LinuxDeploymentError(RuntimeError):
@@ -252,15 +253,26 @@ class LinuxDeploymentHost:
                     f"system asset destination is not a regular file: {asset.destination}"
                 )
             if existed:
+                destination_stat = destination.stat()
                 backup = backup_path / "assets" / asset.destination.relative_to("/")
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(destination, backup)
+                uid: int | None = destination_stat.st_uid
+                gid: int | None = destination_stat.st_gid
+            else:
+                uid = None
+                gid = None
             asset_states.append(
-                {"destination": str(asset.destination), "existed": existed}
+                {
+                    "destination": str(asset.destination),
+                    "existed": existed,
+                    "uid": uid,
+                    "gid": gid,
+                }
             )
 
         metadata = {
-            "schema_version": 1,
+            "schema_version": _SNAPSHOT_SCHEMA_VERSION,
             "release_id": release.release_id,
             "transaction_id": transaction_id,
             "previous_targets": dict(previous_targets),
@@ -354,6 +366,11 @@ class LinuxDeploymentHost:
                 )
                 try:
                     shutil.copy2(backup, temporary)
+                    self._restore_file_ownership(
+                        temporary,
+                        state["uid"],
+                        state["gid"],
+                    )
                     os.replace(temporary, destination)
                 finally:
                     temporary.unlink(missing_ok=True)
@@ -407,7 +424,7 @@ class LinuxDeploymentHost:
         transaction_id = document.get("transaction_id")
         previous_targets = document.get("previous_targets")
         if (
-            document.get("schema_version") != 1
+            document.get("schema_version") != _SNAPSHOT_SCHEMA_VERSION
             or document.get("release_id") != release.release_id
             or not isinstance(transaction_id, str)
             or not isinstance(previous_targets, dict)
@@ -479,7 +496,7 @@ class LinuxDeploymentHost:
         previous_targets = document.get("previous_targets")
         asset_states = document.get("system_assets")
         if (
-            document.get("schema_version") != 1
+            document.get("schema_version") != _SNAPSHOT_SCHEMA_VERSION
             or document.get("release_id") != release.release_id
             or document.get("transaction_id") != snapshot.transaction_id
             or previous_targets != dict(snapshot.previous_targets)
@@ -491,11 +508,24 @@ class LinuxDeploymentHost:
         expected_destinations = {str(item.destination) for item in release.system_assets}
         actual_destinations: set[str] = set()
         for state in asset_states:
+            existed = state.get("existed") if isinstance(state, dict) else None
+            uid = state.get("uid") if isinstance(state, dict) else None
+            gid = state.get("gid") if isinstance(state, dict) else None
             if (
                 not isinstance(state, dict)
-                or set(state) != {"destination", "existed"}
+                or set(state) != {"destination", "existed", "uid", "gid"}
                 or not isinstance(state.get("destination"), str)
-                or not isinstance(state.get("existed"), bool)
+                or not isinstance(existed, bool)
+                or (
+                    existed
+                    and (
+                        type(uid) is not int
+                        or uid < 0
+                        or type(gid) is not int
+                        or gid < 0
+                    )
+                )
+                or (not existed and (uid is not None or gid is not None))
             ):
                 raise LinuxDeploymentError("deployment snapshot asset state is invalid")
             actual_destinations.add(state["destination"])
@@ -517,6 +547,12 @@ class LinuxDeploymentHost:
                 Path(previous_targets[component.component_id]),
             )
         return document
+
+    def _restore_file_ownership(self, path: Path, uid: int, gid: int) -> None:
+        """Restore captured ownership on the real host before atomic replacement."""
+
+        if self._root == Path("/"):
+            os.chown(path, uid, gid)
 
     def _checked_command(self, operation: str, *command: str) -> CommandResult:
         try:

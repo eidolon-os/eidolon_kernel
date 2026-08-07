@@ -56,9 +56,11 @@ lock、Python version、installed distribution inventory、entrypoint、current 
 secret mode、`systemd-analyze verify`。
 
 通过后在 root-only `/var/lib/eidolon/deployments/` 创建 snapshot，保存旧 Kernel/Data link target 和
-allowlist 系统资产；secret 内容不备份。随后停止 eidolond/Data/Kernel、原子安装资产并切换两个 link，
-reload systemd，只启动 eidolond，由其既有 desired state 重新拉起 Data/Hub/Kernel。三个固定 readiness
-全部 ready 才写 `activated` receipt。
+allowlist 系统资产；secret 内容不备份。snapshot V2 对每个既有资产同时记录 UID/GID，restore 将备份
+复制到同目录临时文件、恢复 ownership 后再原子替换。V1 snapshot 没有足够信息恢复 `root:eidolon`
+等非默认 ownership，因此新版 loader 直接拒绝，不猜测用户名或按路径硬编码权限。随后停止
+eidolond/Data/Kernel、原子安装资产并切换两个 link，reload systemd，只启动 eidolond，由其既有
+desired state 重新拉起 Data/Hub/Kernel。三个固定 readiness 全部 ready 才写 `activated` receipt。
 
 从 quiesce 开始的任一异常都会恢复旧资产和旧 link，再由旧 eidolond reconcile；恢复成功写
 `rolled_back` receipt 并返回失败。恢复本身失败则返回独立 `RollbackFailed`，不伪称系统已恢复。
@@ -84,6 +86,7 @@ owner、backup 一致性点、forward compatibility、恢复验证和失败处�
 
 - V1 不是通用 installer、OTA server、artifact registry 或跨 Host orchestrator；
 - V1 没有签名、TPM trust root、A/B 分区或断电原子性证明；root-owned 本机边界是明确部署假设；
+- snapshot wire 已提升为 V2；开发验证期生成的 V1 snapshot 不兼容，也不能用于新版显式 rollback；
 - release source staging 仍属于产品镜像流水线；待出现第二类产品载体和稳定 artifact 分发事实后再抽象；
 - Raspberry Pi 上的 dry-run、成功激活、故障注入自动回滚、显式回滚和重启恢复必须在本实现形成 clean
   commit 后执行，revision 字段不得冒充未提交工作树。
