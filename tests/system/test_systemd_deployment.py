@@ -127,7 +127,17 @@ def test_product_kernel_profile_uses_local_authorities_and_dedicated_store() -> 
     assert settings.companion_authority.timeout_seconds == 3
 
 
-def test_dev_hub_readiness_uses_the_producer_health_route() -> None:
+def test_dev_manifest_publishes_all_control_plane_authorities() -> None:
     document = yaml.safe_load((ROOT / "config/system-services.yaml").read_text(encoding="utf-8"))
+    services = {item["service_id"]: item for item in document["services"]}
 
-    assert document["services"][0]["endpoints"][0]["health_url"] == ("http://127.0.0.1:8082/health")
+    assert services["data"]["host_targets"]["supervisord"] == "data:data-api"
+    assert services["data"]["endpoints"][0]["contract"] == (
+        "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+    )
+    assert services["hub"]["host_targets"]["supervisord"] == "hub:hub-api"
+    assert services["hub"]["endpoints"][0]["health_url"] == "http://127.0.0.1:8082/health"
+    assert services["kernel"]["host_targets"]["supervisord"] == "kernel:kernel-api"
+    assert services["kernel"]["endpoints"][0]["contract"] == (
+        "eidolon.kernel.device-mount.v1"
+    )

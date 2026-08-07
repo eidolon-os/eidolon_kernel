@@ -88,7 +88,7 @@ class ReleaseActivator:
             self._host.install_assets(release)
             self._host.switch_components(release)
             self._host.reload_systemd()
-            self._host.start_manager()
+            self._host.start_release(release)
             self._host.wait_ready(release)
         except Exception as activation_exc:
             try:

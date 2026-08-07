@@ -64,9 +64,11 @@ name = Deployment core does not depend on its Linux or CLI adapters
 type = forbidden
 source_modules =
     eidolon_deploy.activation
+    eidolon_deploy.bundle
     eidolon_deploy.fingerprints
     eidolon_deploy.manifest
     eidolon_deploy.ports
+    eidolon_deploy.prepare_target
     eidolon_deploy.sealing
 forbidden_modules =
     eidolon_deploy.cli

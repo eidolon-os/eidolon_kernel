@@ -64,7 +64,9 @@ Mobile/Bootstrap completion state is host onboarding state; Kernel/Hub readiness
 is a separate application-stack state exposed later through the authenticated
 product ingress.
 
-Prepared Kernel/Data target releases are sealed and activated by the independent
+Prepared Eidolon OS V2 target releases are sealed and activated by the independent
 root-operator boundary documented in [`docs/operations/target-release.md`](../../docs/operations/target-release.md).
-That mechanism installs only a fixed allowlist of these assets, never copies secrets,
-and leaves source transfer/native environment construction in the product-image pipeline.
+That transaction covers Data, Hub, Kernel, Admin, Bootstrap and Local API assets while
+preserving eidolond as the only Data/Hub/Kernel lifecycle authority. It installs only a
+fixed allowlist, never copies secrets or databases, and leaves source transfer, first-install
+provisioning and native environment construction in the product-image pipeline.

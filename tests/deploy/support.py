@@ -6,7 +6,7 @@ from pathlib import Path
 def release_document(release_id: str = "20260806-m2d-test") -> dict:
     release_root = f"/srv/eidolon/releases/{release_id}"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "release_id": release_id,
         "target": {
             "system": "linux",
@@ -37,6 +37,30 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "environment_sha256": "6" * 64,
                 "required_entrypoints": [".venv/bin/uvicorn"],
             },
+            {
+                "component_id": "eidolon_hub",
+                "revision": "d" * 40,
+                "release_path": f"{release_root}/eidolon_hub",
+                "current_link": "/srv/eidolon/current/eidolon_hub",
+                "source_tree_sha256": "7" * 64,
+                "lock_sha256": "8" * 64,
+                "environment_sha256": "9" * 64,
+                "required_entrypoints": [".venv/bin/uvicorn"],
+            },
+            {
+                "component_id": "eidolon_admin",
+                "revision": "e" * 40,
+                "release_path": f"{release_root}/eidolon_admin",
+                "current_link": "/srv/eidolon/current/eidolon_admin",
+                "source_tree_sha256": "a" * 64,
+                "lock_sha256": "b" * 64,
+                "environment_sha256": "c" * 64,
+                "required_entrypoints": [
+                    ".venv/bin/eidolon-admin",
+                    ".venv/bin/eidolon-bootstrapd",
+                    ".venv/bin/eidolon-local-api",
+                ],
+            },
         ],
         "support_sources": [
             {
@@ -48,43 +72,150 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
         ],
         "system_assets": [
             {
-                "source_component_id": "eidolon_kernel",
+                "source_component_id": component,
                 "source": source,
                 "destination": destination,
                 "sha256": character * 64,
                 "mode": "0644",
             }
-            for source, destination, character in (
-                ("deploy/systemd/eidolond.service", "/etc/systemd/system/eidolond.service", "3"),
-                ("deploy/systemd/eidolon-data.service", "/etc/systemd/system/eidolon-data.service", "4"),
-                ("deploy/systemd/eidolon-kernel.service", "/etc/systemd/system/eidolon-kernel.service", "5"),
-                ("config/eidolond.systemd.example.yaml", "/etc/eidolon/eidolond.yaml", "6"),
-                ("config/kernel.systemd.example.yaml", "/etc/eidolon/kernel.yaml", "7"),
-                ("config/system-services.systemd.example.yaml", "/etc/eidolon/system-services.systemd.example.yaml", "8"),
-                ("deploy/polkit/60-eidolon-system-manager.rules", "/etc/polkit-1/rules.d/60-eidolon-system-manager.rules", "9"),
+            for component, source, destination, character in (
+                (
+                    "eidolon_kernel",
+                    "deploy/systemd/eidolond.service",
+                    "/etc/systemd/system/eidolond.service",
+                    "1",
+                ),
+                (
+                    "eidolon_kernel",
+                    "deploy/systemd/eidolon-data.service",
+                    "/etc/systemd/system/eidolon-data.service",
+                    "2",
+                ),
+                (
+                    "eidolon_kernel",
+                    "deploy/systemd/eidolon-hub.service",
+                    "/etc/systemd/system/eidolon-hub.service",
+                    "3",
+                ),
+                (
+                    "eidolon_kernel",
+                    "deploy/systemd/eidolon-kernel.service",
+                    "/etc/systemd/system/eidolon-kernel.service",
+                    "4",
+                ),
+                (
+                    "eidolon_kernel",
+                    "config/eidolond.systemd.example.yaml",
+                    "/etc/eidolon/eidolond.yaml",
+                    "5",
+                ),
+                (
+                    "eidolon_kernel",
+                    "config/kernel.systemd.example.yaml",
+                    "/etc/eidolon/kernel.yaml",
+                    "6",
+                ),
+                ("eidolon_kernel", "config/hub.systemd.example.yaml", "/etc/eidolon/hub.yaml", "7"),
+                (
+                    "eidolon_kernel",
+                    "config/system-services.systemd.example.yaml",
+                    "/etc/eidolon/system-services.systemd.example.yaml",
+                    "8",
+                ),
+                (
+                    "eidolon_kernel",
+                    "deploy/polkit/60-eidolon-system-manager.rules",
+                    "/etc/polkit-1/rules.d/60-eidolon-system-manager.rules",
+                    "9",
+                ),
+                (
+                    "eidolon_admin",
+                    "deploy/systemd/eidolon-bootstrapd.service",
+                    "/etc/systemd/system/eidolon-bootstrapd.service",
+                    "a",
+                ),
+                (
+                    "eidolon_admin",
+                    "deploy/systemd/eidolon-local-api.service",
+                    "/etc/systemd/system/eidolon-local-api.service",
+                    "b",
+                ),
+                (
+                    "eidolon_admin",
+                    "deploy/systemd/eidolon-admin.service",
+                    "/etc/systemd/system/eidolon-admin.service",
+                    "c",
+                ),
+                (
+                    "eidolon_admin",
+                    "deploy/polkit/60-eidolon-bootstrap-network.rules",
+                    "/etc/polkit-1/rules.d/60-eidolon-bootstrap-network.rules",
+                    "d",
+                ),
+                (
+                    "eidolon_admin",
+                    "deploy/avahi/eidolon-local-api.service",
+                    "/etc/avahi/services/eidolon-local-api.service",
+                    "e",
+                ),
             )
         ],
         "required_secrets": [
             {"path": "/etc/eidolon/data.env", "mode": "0600"},
+            {"path": "/etc/eidolon/hub.env", "mode": "0600"},
             {"path": "/etc/eidolon/kernel.env", "mode": "0600"},
+            {"path": "/etc/eidolon/admin.env", "mode": "0600"},
+            {"path": "/etc/eidolon/bootstrap.env", "mode": "0600"},
+            {
+                "path": "/var/lib/eidolon-bootstrap/host_identity.ed25519",
+                "mode": "0600",
+            },
         ],
-        "affected_units": ["eidolon-data.service", "eidolon-kernel.service"],
+        "affected_units": [
+            "eidolon-admin.service",
+            "eidolon-local-api.service",
+            "eidolon-bootstrapd.service",
+            "eidolon-data.service",
+            "eidolon-hub.service",
+            "eidolon-kernel.service",
+        ],
         "readiness_checks": [
             {
                 "check_id": "eidolond",
                 "kind": "unix_http",
                 "url": "http://eidolond/health",
                 "socket": "/run/eidolon/system.sock",
-            },
-            {
-                "check_id": "kernel",
-                "kind": "http",
-                "url": "http://127.0.0.1:8083/health",
+                "expected_status": "ready",
             },
             {
                 "check_id": "data",
                 "kind": "http",
                 "url": "http://127.0.0.1:8084/health",
+                "expected_status": "ready",
+            },
+            {
+                "check_id": "hub",
+                "kind": "http",
+                "url": "http://127.0.0.1:8082/health",
+                "expected_status": "ok",
+            },
+            {
+                "check_id": "kernel",
+                "kind": "http",
+                "url": "http://127.0.0.1:8083/health",
+                "expected_status": "ready",
+            },
+            {
+                "check_id": "admin",
+                "kind": "http",
+                "url": "http://127.0.0.1:9000/healthz",
+                "expected_status": "ready",
+            },
+            {
+                "check_id": "local-api",
+                "kind": "https",
+                "url": "https://127.0.0.1:9002/healthz",
+                "expected_status": "ok",
             },
         ],
         "database_migrations": [],

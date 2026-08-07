@@ -10,6 +10,7 @@ import os
 import platform
 import shutil
 import socket
+import ssl
 import stat
 import subprocess
 import time
@@ -32,6 +33,21 @@ from eidolon_deploy.ports import DeploymentSnapshot
 _SYSTEMCTL = "/usr/bin/systemctl"
 _SYSTEMD_ANALYZE = "/usr/bin/systemd-analyze"
 _MANAGER_UNIT = "eidolond.service"
+_PRE_MANAGER_UNITS = (
+    "eidolon-admin.service",
+    "eidolon-local-api.service",
+    "eidolon-bootstrapd.service",
+)
+_POST_MANAGER_UNITS = ("eidolon-local-api.service", "eidolon-admin.service")
+_RELEASE_UNITS = (
+    "eidolon-bootstrapd.service",
+    _MANAGER_UNIT,
+    "eidolon-data.service",
+    "eidolon-hub.service",
+    "eidolon-kernel.service",
+    "eidolon-local-api.service",
+    "eidolon-admin.service",
+)
 _SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")
 _ACTIVATION_LOCK = Path("/run/lock/eidolon-release.lock")
 _SNAPSHOT_SCHEMA_VERSION = 2
@@ -205,15 +221,15 @@ class LinuxDeploymentHost:
         components = release.components_by_id
         service_sources: list[str] = []
         for asset in release.system_assets:
-            source = self._host_path(
-                components[asset.source_component_id].release_path
-            ) / asset.source
+            source = (
+                self._host_path(components[asset.source_component_id].release_path) / asset.source
+            )
             self._verify_file_digest(
                 source,
                 asset.sha256,
                 f"system asset fingerprint mismatch: {asset.destination}",
             )
-            if asset.destination.suffix == ".service":
+            if asset.destination.parent == Path("/etc/systemd/system"):
                 service_sources.append(str(source))
         for secret in release.required_secrets:
             path = self._host_path(secret.path)
@@ -238,9 +254,7 @@ class LinuxDeploymentHost:
     ) -> DeploymentSnapshot:
         self._assert_privileged()
         transaction_id = uuid.uuid4().hex
-        backup_path = self._host_path(_SNAPSHOT_ROOT) / (
-            f"{release.release_id}-{transaction_id}"
-        )
+        backup_path = self._host_path(_SNAPSHOT_ROOT) / (f"{release.release_id}-{transaction_id}")
         backup_path.mkdir(parents=True, mode=0o700)
         os.chmod(backup_path, 0o700)
 
@@ -288,17 +302,21 @@ class LinuxDeploymentHost:
 
     def quiesce(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
+        for unit in release.affected_units:
+            if unit in _PRE_MANAGER_UNITS:
+                self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
         self._checked_command("manager stop", _SYSTEMCTL, "stop", _MANAGER_UNIT)
         for unit in release.affected_units:
-            self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
+            if unit not in _PRE_MANAGER_UNITS:
+                self._checked_command("service stop", _SYSTEMCTL, "stop", unit)
 
     def install_assets(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
         components = release.components_by_id
         for asset in release.system_assets:
-            source = self._host_path(
-                components[asset.source_component_id].release_path
-            ) / asset.source
+            source = (
+                self._host_path(components[asset.source_component_id].release_path) / asset.source
+            )
             destination = self._host_path(asset.destination)
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
@@ -323,9 +341,13 @@ class LinuxDeploymentHost:
         self._assert_privileged()
         self._checked_command("systemd reload", _SYSTEMCTL, "daemon-reload")
 
-    def start_manager(self) -> None:
+    def start_release(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
+        self._checked_command("bootstrap start", _SYSTEMCTL, "start", "eidolon-bootstrapd.service")
         self._checked_command("manager start", _SYSTEMCTL, "start", _MANAGER_UNIT)
+        for unit in _POST_MANAGER_UNITS:
+            if unit in release.affected_units:
+                self._checked_command("service start", _SYSTEMCTL, "start", unit)
 
     def wait_ready(self, release: ReleaseDescriptor) -> None:
         deadline = time.monotonic() + self._readiness_timeout_seconds
@@ -341,10 +363,39 @@ class LinuxDeploymentHost:
             if not pending:
                 return
             if time.monotonic() >= deadline:
-                raise LinuxDeploymentError(
-                    "readiness timeout: " + ", ".join(sorted(pending))
-                )
+                raise LinuxDeploymentError("readiness timeout: " + ", ".join(sorted(pending)))
             time.sleep(self._readiness_interval_seconds)
+
+    def doctor(self, release: ReleaseDescriptor) -> Mapping[str, object]:
+        """Validate the active release without mutating host state."""
+
+        current_targets = dict(self.preflight(release))
+        for component in release.components:
+            current = self._validate_component_target(
+                component.component_id,
+                self._host_path(component.current_link),
+                Path(current_targets[component.component_id]),
+            )
+            expected = self._host_path(component.release_path).resolve()
+            if current != expected:
+                raise LinuxDeploymentError(
+                    f"component is not active release: {component.component_id}"
+                )
+        for unit in _RELEASE_UNITS:
+            self._checked_command(
+                "systemd active-state verification",
+                _SYSTEMCTL,
+                "is-active",
+                "--quiet",
+                unit,
+            )
+        self.wait_ready(release)
+        return {
+            "release_id": release.release_id,
+            "active_targets": current_targets,
+            "units": _RELEASE_UNITS,
+            "readiness_checks": tuple(check.check_id for check in release.readiness_checks),
+        }
 
     def restore(self, release: ReleaseDescriptor, snapshot: DeploymentSnapshot) -> None:
         self._assert_privileged()
@@ -361,9 +412,7 @@ class LinuxDeploymentHost:
                     raise LinuxDeploymentError(
                         f"system asset backup is missing: {destination_value}"
                     )
-                temporary = destination.with_name(
-                    f".{destination.name}.{uuid.uuid4().hex}.tmp"
-                )
+                temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
                 try:
                     shutil.copy2(backup, temporary)
                     self._restore_file_ownership(
@@ -391,7 +440,7 @@ class LinuxDeploymentHost:
             )
             self._atomic_symlink(Path(previous), current_link)
         self.reload_systemd()
-        self.start_manager()
+        self.start_release(release)
         self.wait_ready(release)
 
     def write_receipt(self, receipt: ActivationReceipt) -> None:
@@ -487,9 +536,7 @@ class LinuxDeploymentHost:
         if backup_path.parent != snapshot_root:
             raise LinuxDeploymentError("deployment snapshot is outside the fixed snapshot root")
         try:
-            document = json.loads(
-                (backup_path / "snapshot.json").read_text(encoding="utf-8")
-            )
+            document = json.loads((backup_path / "snapshot.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise LinuxDeploymentError("deployment snapshot metadata is unreadable") from exc
         expected_components = {item.component_id for item in release.components}
@@ -517,13 +564,7 @@ class LinuxDeploymentHost:
                 or not isinstance(state.get("destination"), str)
                 or not isinstance(existed, bool)
                 or (
-                    existed
-                    and (
-                        type(uid) is not int
-                        or uid < 0
-                        or type(gid) is not int
-                        or gid < 0
-                    )
+                    existed and (type(uid) is not int or uid < 0 or type(gid) is not int or gid < 0)
                 )
                 or (not existed and (uid is not None or gid is not None))
             ):
@@ -533,9 +574,7 @@ class LinuxDeploymentHost:
                 destination = Path(state["destination"])
                 backup = backup_path / "assets" / destination.relative_to("/")
                 if not backup.is_file():
-                    raise LinuxDeploymentError(
-                        f"system asset backup is missing: {destination}"
-                    )
+                    raise LinuxDeploymentError(f"system asset backup is missing: {destination}")
         if actual_destinations != expected_destinations or len(asset_states) != len(
             expected_destinations
         ):
@@ -594,6 +633,16 @@ class LinuxDeploymentHost:
         if check.kind == "unix_http":
             assert check.socket is not None
             connection: http.client.HTTPConnection = _UnixHTTPConnection(check.socket)
+        elif check.kind == "https":
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            connection = http.client.HTTPSConnection(
+                parsed.hostname,
+                parsed.port,
+                timeout=2,
+                context=context,
+            )
         else:
             connection = http.client.HTTPConnection(
                 parsed.hostname,
@@ -610,7 +659,7 @@ class LinuxDeploymentHost:
             if response.status != 200:
                 return False
             document = json.loads(payload)
-            return isinstance(document, dict) and document.get("status") == "ready"
+            return isinstance(document, dict) and document.get("status") == check.expected_status
         except (OSError, http.client.HTTPException, json.JSONDecodeError):
             return False
         finally:

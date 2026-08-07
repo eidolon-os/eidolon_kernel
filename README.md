@@ -262,8 +262,10 @@ EIDOLON_SYSTEM_SETTINGS_YAML=/etc/eidolon/eidolond.yaml uv run eidolond
 Host init 必须启动并拉起 `eidolond`；只有 `eidolond` 应拥有其他 Eidolon unit 的 desired state。
 `eidolond` 会自行预绑定 UDS 并把 listener fd 交给 uvicorn，避免 uvicorn 把 socket 改成 `0666`；
 macOS/dev 默认 `0600`，产品 profile 可用 `0660`，其 owner/group 由服务运行用户决定。当前
-macOS/dev 默认 manifest 仍只包含已接线的 Hub，避免与 Admin 当前 supervisord 配置形成双
-desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可冷启动并管理 Hub 与 Kernel。
+macOS/dev manifest 已发布 Data、Hub 与 Kernel；Admin 的显式 `os-control-plane` profile 只把
+supervisord 当作 Host executor，三个 authority program 均为 `autostart=false`，desired state 只由
+eidolond 管理，因此不会形成双 desired-state 入口。隔离 profile 使用独立凭证、数据库、socket 和
+supervisor state，不读取正式 Data 库，也不启动 Agent。
 树莓派 profile 已包含 Data、Hub 与 Kernel，匹配的非 root unit、受限 Polkit rule 和镜像安装说明位于
 [`deploy/systemd`](deploy/systemd)。只有 `eidolond.service` 由 systemd enable，Data/Hub/Kernel unit
 不带 `WantedBy`，由 `eidolond.sqlite3` 决定是否运行。2026-08-06 已在 Raspberry Pi 5 / Debian
@@ -275,24 +277,29 @@ Bootstrap/Admin 服务或 Hub 源码。
 
 ## Target Release 与回滚
 
-M2-D 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/构建阶段
-先在目标 `linux/aarch64` 上准备原生 Kernel、Data venv 及 Data 实际依赖的 SDK source；随后
-`eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是第三个
-系统服务；可切换 component 仍只有 Kernel/Data，Hub/Admin/Bootstrap 不在本事务中。
+统一 Release V2 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/
+构建阶段先在目标 `linux/aarch64` 上准备原生 Kernel、Data、Hub、Admin venv 及 SDK support source；
+随后 `eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是
+系统服务；四个 service component 与 Kernel/Admin 提供的产品系统资产在同一事务中切换。
 
-激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止
-`eidolond` 与受影响 unit → 安装 allowlist 资产 → 原子切换 Kernel/Data symlink → daemon-reload →
-启动 `eidolond` → 等待 eidolond/Data/Kernel ready → 写回执。任一步失败都恢复 snapshot；显式
+激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止外部入口、
+Bootstrap、`eidolond` 与 children → 安装 allowlist 资产 → 原子切换四个 symlink → daemon-reload →
+按 Bootstrap/eidolond/Local API/Admin 顺序启动 → 等待六个独立 readiness → 写回执。任一步失败都恢复 snapshot；显式
 rollback 可由之后的独立运维进程加载同一 snapshot。snapshot V2 除内容与 mode 外显式记录既有系统
 资产的 UID/GID，并在原子替换前恢复 ownership；缺失 ownership 的旧 snapshot fail closed，不做开发期
 兼容。密钥只校验存在性和 `0600`，从不进入 release、snapshot 或回执。
 
-V1 descriptor 明确要求 `database_migrations=[]`。Kernel/Data SQLite 都不由发布工具读取、复制或
+V2 descriptor 明确要求 `database_migrations=[]`。任何 authority SQLite 都不由发布工具读取、复制或
 迁移；出现首个真实 schema migration 前，必须先为对应 authority 定义可验证的 backup/forward/
 rollback 语义，不能把不可逆迁移塞进现有 symlink rollback。descriptor checksum 只证明本地完整性，
 不是签名或来源认证；首版依赖 root-owned staging/release/snapshot 目录与受控镜像流水线。
 命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
-[ADR-0012](docs/adr/0012-prepared-target-release-activation.md)。
+[ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
+
+已 provision Pi 的 source staging 由 commit-pinned bundle 和 standalone target preparer 完成；工作站
+driver 默认只传输、原生构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
+读取 working-tree 修改，也不接管 first-install identity/secret/Data baseline。详见
+[ADR-0014](docs/adr/0014-commit-pinned-pi-release-bundle.md)。
 
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
