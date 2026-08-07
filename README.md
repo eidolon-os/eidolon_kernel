@@ -262,8 +262,10 @@ EIDOLON_SYSTEM_SETTINGS_YAML=/etc/eidolon/eidolond.yaml uv run eidolond
 Host init 必须启动并拉起 `eidolond`；只有 `eidolond` 应拥有其他 Eidolon unit 的 desired state。
 `eidolond` 会自行预绑定 UDS 并把 listener fd 交给 uvicorn，避免 uvicorn 把 socket 改成 `0666`；
 macOS/dev 默认 `0600`，产品 profile 可用 `0660`，其 owner/group 由服务运行用户决定。当前
-macOS/dev 默认 manifest 仍只包含已接线的 Hub，避免与 Admin 当前 supervisord 配置形成双
-desired-state 入口；真实临时 supervisord E2E 已验证同一 adapter 可冷启动并管理 Hub 与 Kernel。
+macOS/dev manifest 已发布 Data、Hub 与 Kernel；Admin 的显式 `os-control-plane` profile 只把
+supervisord 当作 Host executor，三个 authority program 均为 `autostart=false`，desired state 只由
+eidolond 管理，因此不会形成双 desired-state 入口。隔离 profile 使用独立凭证、数据库、socket 和
+supervisor state，不读取正式 Data 库，也不启动 Agent。
 树莓派 profile 已包含 Data、Hub 与 Kernel，匹配的非 root unit、受限 Polkit rule 和镜像安装说明位于
 [`deploy/systemd`](deploy/systemd)。只有 `eidolond.service` 由 systemd enable，Data/Hub/Kernel unit
 不带 `WantedBy`，由 `eidolond.sqlite3` 决定是否运行。2026-08-06 已在 Raspberry Pi 5 / Debian

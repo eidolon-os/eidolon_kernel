@@ -1,5 +1,18 @@
 version: 1
 services:
+  - service_id: data
+    description: System Data and Companion identity authority
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      supervisord: data:data-api
+    endpoints:
+      - endpoint_id: companion-authority.http
+        protocol: http
+        address: http://127.0.0.1:8084
+        contract: https://eidolon.dev/data/contracts/v1/companion/identity.schema.json
+        health_url: http://127.0.0.1:8084/health
   - service_id: hub
     description: Device onboarding, registry and policy authority
     required: true
@@ -13,3 +26,17 @@ services:
         address: http://127.0.0.1:8082
         contract: eidolon.hub.device-directory.v1
         health_url: http://127.0.0.1:8082/health
+  - service_id: kernel
+    description: Sovereign namespace, Device Mount and authoritative state
+    required: true
+    enabled_by_default: true
+    # Hub/Data availability gates specific mutations, not Kernel startup.
+    dependencies: []
+    host_targets:
+      supervisord: kernel:kernel-api
+    endpoints:
+      - endpoint_id: device-mount.http
+        protocol: http
+        address: http://127.0.0.1:8083
+        contract: eidolon.kernel.device-mount.v1
+        health_url: http://127.0.0.1:8083/health
