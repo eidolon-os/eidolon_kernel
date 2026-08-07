@@ -59,6 +59,7 @@ def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
     asset_sources = (
         "deploy/systemd/eidolond.service",
         "deploy/systemd/eidolon-data.service",
+        "deploy/systemd/eidolon-data-workspace.service",
         "deploy/systemd/eidolon-hub.service",
         "deploy/systemd/eidolon-kernel.service",
         "config/eidolond.systemd.example.yaml",
@@ -117,6 +118,7 @@ def test_seals_fixed_target_release_from_prepared_native_tree(tmp_path: Path) ->
     assert {str(item.destination) for item in release.system_assets} == {
         "/etc/systemd/system/eidolond.service",
         "/etc/systemd/system/eidolon-data.service",
+        "/etc/systemd/system/eidolon-data-workspace.service",
         "/etc/systemd/system/eidolon-hub.service",
         "/etc/systemd/system/eidolon-kernel.service",
         "/etc/eidolon/eidolond.yaml",

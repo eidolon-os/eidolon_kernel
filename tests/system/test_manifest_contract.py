@@ -71,8 +71,16 @@ def test_all_system_schemas_are_valid() -> None:
 def test_repository_profiles_and_seed_manifest_are_self_consistent() -> None:
     root = Path(__file__).resolve().parents[2]
     for settings_name, driver, service_ids in (
-        ("eidolond.yaml", "supervisord", ["data", "hub", "kernel"]),
-        ("eidolond.systemd.example.yaml", "systemd", ["data", "hub", "kernel"]),
+        (
+            "eidolond.yaml",
+            "supervisord",
+            ["data", "data-workspace", "hub", "kernel"],
+        ),
+        (
+            "eidolond.systemd.example.yaml",
+            "systemd",
+            ["data", "data-workspace", "hub", "kernel"],
+        ),
     ):
         settings = load_settings(root / "config" / settings_name)
         catalog = YamlServiceManifest(settings.manifest.path).load()

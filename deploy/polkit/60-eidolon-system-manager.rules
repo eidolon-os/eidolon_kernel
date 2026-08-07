@@ -8,6 +8,7 @@ polkit.addRule(function(action, subject) {
 
     var allowedUnits = [
         "eidolon-data.service",
+        "eidolon-data-workspace.service",
         "eidolon-hub.service",
         "eidolon-kernel.service"
     ];

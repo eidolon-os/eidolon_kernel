@@ -43,6 +43,7 @@ _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
     _MANAGER_UNIT,
     "eidolon-data.service",
+    "eidolon-data-workspace.service",
     "eidolon-hub.service",
     "eidolon-kernel.service",
     "eidolon-local-api.service",

@@ -38,6 +38,10 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-data.service"),
     ),
+    Path("/etc/systemd/system/eidolon-data-workspace.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-data-workspace.service"),
+    ),
     Path("/etc/systemd/system/eidolon-hub.service"): (
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-hub.service"),
@@ -92,6 +96,7 @@ V2_REQUIRED_SECRETS = (
     Path("/etc/eidolon/hub.env"),
     Path("/etc/eidolon/kernel.env"),
     Path("/etc/eidolon/admin.env"),
+    Path("/etc/eidolon/local-api.env"),
     Path("/etc/eidolon/bootstrap.env"),
     Path("/var/lib/eidolon-bootstrap/host_identity.ed25519"),
 )
@@ -100,6 +105,7 @@ V2_AFFECTED_UNITS = (
     "eidolon-local-api.service",
     "eidolon-bootstrapd.service",
     "eidolon-data.service",
+    "eidolon-data-workspace.service",
     "eidolon-hub.service",
     "eidolon-kernel.service",
 )
@@ -111,6 +117,7 @@ V2_READINESS = {
         "ready",
     ),
     "data": ("http", "http://127.0.0.1:8084/health", None, "ready"),
+    "data-workspace": ("http", "http://127.0.0.1:8085/health", None, "ready"),
     "hub": ("http", "http://127.0.0.1:8082/health", None, "ok"),
     "kernel": ("http", "http://127.0.0.1:8083/health", None, "ready"),
     "admin": ("http", "http://127.0.0.1:9000/healthz", None, "ready"),

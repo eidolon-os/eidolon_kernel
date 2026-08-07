@@ -46,20 +46,20 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 15,
+      "maxItems": 15,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
       "items": {"$ref": "#/$defs/requiredSecret"}
     },
     "affected_units": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -67,6 +67,7 @@
           "eidolon-local-api.service",
           "eidolon-bootstrapd.service",
           "eidolon-data.service",
+          "eidolon-data-workspace.service",
           "eidolon-hub.service",
           "eidolon-kernel.service"
         ]
@@ -74,8 +75,8 @@
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {
@@ -158,6 +159,7 @@
             "/etc/eidolon/hub.env",
             "/etc/eidolon/kernel.env",
             "/etc/eidolon/admin.env",
+            "/etc/eidolon/local-api.env",
             "/etc/eidolon/bootstrap.env",
             "/var/lib/eidolon-bootstrap/host_identity.ed25519"
           ]

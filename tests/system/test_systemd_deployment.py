@@ -23,14 +23,17 @@ def _unit(name: str) -> configparser.ConfigParser:
 def test_only_eidolond_is_enabled_by_host_init() -> None:
     manager = _unit("eidolond.service")
     data = _unit("eidolon-data.service")
+    data_workspace = _unit("eidolon-data-workspace.service")
     hub = _unit("eidolon-hub.service")
     kernel = _unit("eidolon-kernel.service")
 
     assert manager["Install"]["WantedBy"] == "multi-user.target"
     assert "Install" not in data
+    assert "Install" not in data_workspace
     assert "Install" not in hub
     assert "Install" not in kernel
     assert data["Service"]["Restart"] == "on-failure"
+    assert data_workspace["Service"]["Restart"] == "on-failure"
     assert hub["Service"]["Restart"] == "on-failure"
     assert kernel["Service"]["Restart"] == "on-failure"
 
@@ -41,6 +44,11 @@ def test_system_services_run_unprivileged_with_fixed_release_commands() -> None:
             "/srv/eidolon/current/eidolon_data/.venv/bin/uvicorn "
             "eidolon_data.api.companion_authority:create_app "
             "--factory --host 127.0.0.1 --port 8084"
+        ),
+        "eidolon-data-workspace.service": (
+            "/srv/eidolon/current/eidolon_data/.venv/bin/uvicorn "
+            "eidolon_data.api.workspace_authority:create_app "
+            "--factory --host 127.0.0.1 --port 8085"
         ),
         "eidolond.service": "/srv/eidolon/current/eidolon_kernel/.venv/bin/eidolond",
         "eidolon-hub.service": (
@@ -70,13 +78,14 @@ def test_hub_hardening_allows_linux_interface_discovery() -> None:
 
 
 def test_data_unit_uses_dedicated_authority_store_and_secret_file() -> None:
-    service = _unit("eidolon-data.service")["Service"]
-
-    assert service["EnvironmentFile"] == "-/etc/eidolon/data.env"
-    assert (
-        "EIDOLON_DATA_SQLITE_PATH=/var/lib/eidolon/eidolon-system.sqlite3" in service["Environment"]
-    )
-    assert "EIDOLON_DATA_OBJECT_STORE_PATH=/var/lib/eidolon/objects" in service["Environment"]
+    for unit in ("eidolon-data.service", "eidolon-data-workspace.service"):
+        service = _unit(unit)["Service"]
+        assert service["EnvironmentFile"] == "-/etc/eidolon/data.env"
+        assert (
+            "EIDOLON_DATA_SQLITE_PATH=/var/lib/eidolon/eidolon-system.sqlite3"
+            in service["Environment"]
+        )
+        assert "EIDOLON_DATA_OBJECT_STORE_PATH=/var/lib/eidolon/objects" in service["Environment"]
 
 
 def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
@@ -88,6 +97,7 @@ def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
     assert "!subject.no_new_privileges" in policy
     assert '"eidolon-hub.service"' in policy
     assert '"eidolon-data.service"' in policy
+    assert '"eidolon-data-workspace.service"' in policy
     assert '"eidolon-kernel.service"' in policy
     assert 'var allowedVerbs = ["start", "stop", "restart"]' in policy
     assert "manage-unit-files" not in policy
@@ -110,6 +120,22 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             "address": "http://127.0.0.1:8084",
             "contract": ("https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"),
             "health_url": "http://127.0.0.1:8084/health",
+        }
+    ]
+    assert services["data-workspace"]["host_targets"]["systemd"] == (
+        "eidolon-data-workspace.service"
+    )
+    assert services["data-workspace"]["dependencies"] == ["data"]
+    assert services["data-workspace"]["endpoints"] == [
+        {
+            "endpoint_id": "workspace-authority.http",
+            "protocol": "http",
+            "address": "http://127.0.0.1:8085",
+            "contract": (
+                "https://eidolon.live/contracts/system-data/workspace/"
+                "onboarding-operation-v1.schema.json"
+            ),
+            "health_url": "http://127.0.0.1:8085/health",
         }
     ]
     assert services["hub"]["host_targets"]["systemd"] == "eidolon-hub.service"
@@ -135,9 +161,12 @@ def test_dev_manifest_publishes_all_control_plane_authorities() -> None:
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
     )
+    assert services["data-workspace"]["host_targets"]["supervisord"] == ("data:data-workspace-api")
+    assert services["data-workspace"]["dependencies"] == ["data"]
+    assert services["data-workspace"]["endpoints"][0]["contract"] == (
+        "https://eidolon.live/contracts/system-data/workspace/onboarding-operation-v1.schema.json"
+    )
     assert services["hub"]["host_targets"]["supervisord"] == "hub:hub-api"
     assert services["hub"]["endpoints"][0]["health_url"] == "http://127.0.0.1:8082/health"
     assert services["kernel"]["host_targets"]["supervisord"] == "kernel:kernel-api"
-    assert services["kernel"]["endpoints"][0]["contract"] == (
-        "eidolon.kernel.device-mount.v1"
-    )
+    assert services["kernel"]["endpoints"][0]["contract"] == ("eidolon.kernel.device-mount.v1")

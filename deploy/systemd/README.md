@@ -10,11 +10,13 @@ eidolon-bootstrapd (Admin-owned, always-on onboarding)
 eidolond (systemd starts this one unit)
         |
         +-- systemctl start/stop/restart eidolon-data.service
+        +-- systemctl start/stop/restart eidolon-data-workspace.service
         +-- systemctl start/stop/restart eidolon-hub.service
         +-- systemctl start/stop/restart eidolon-kernel.service
 ```
 
-Only `eidolond.service` has an `[Install]` target. Data, Hub and Kernel
+Only `eidolond.service` has an `[Install]` target. Data read authority, Data
+Workspace write authority, Hub and Kernel
 deliberately have no `WantedBy=` entry: systemd owns their PIDs, cgroups,
 signals and crash restart, while `eidolond.sqlite3` remains the sole
 desired-state authority. Enabling a child unit independently would create a
@@ -34,9 +36,14 @@ The image builder must:
 5. install a fresh Eidolon Data V2 database with the Data release's tracked
    Alembic baseline before enabling eidolond; runtime startup validates the
    schema and never creates or repairs it;
-6. create root-owned `data.env`, `hub.env` and `kernel.env` files with mode
+6. create root-owned `data.env`, `hub.env`, `kernel.env`, `admin.env`, and
+   `local-api.env` files with mode
    `0600` for service credentials; never place secrets in unit files or YAML.
-   Data requires `EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN`; Hub requires
+   Data requires `EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN` and the independently
+   scoped `EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN`; Admin receives the latter as
+   `EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN`. Local API and Admin share only
+   their loopback service credential through `local-api.env` and `admin.env`.
+   Hub requires
    `EIDOLON_HUB_MANAGEMENT_JWT_SECRET`,
    `EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN`, and
    `EIDOLON_HUB_CHANNEL_PROVIDER_TOKEN`; Kernel receives the same reader token
@@ -45,13 +52,13 @@ The image builder must:
 7. install Data, Hub and Kernel releases under `/srv/eidolon/current/` with the
    paths used by the units; Data's Python environment must contain its declared
    `api` extra and the reviewed `eidolon-sdk` build it depends on;
-8. run `systemd-analyze verify` on all four units, reload systemd, and enable
+8. run `systemd-analyze verify` on all five system-control units, reload systemd, and enable
    only `eidolond.service` (Bootstrap is installed and enabled by its own
    product-image boundary).
 
 The Polkit rule does not grant general systemd administration. It accepts only
 requests made by the `eidolon` process running inside `eidolond.service` with
-`NoNewPrivileges=yes`, for the exact Data/Hub/Kernel unit names and the three verbs
+`NoNewPrivileges=yes`, for the exact Data/Data Workspace/Hub/Kernel unit names and the three verbs
 implemented by the Host adapter. Unit-file enable/disable and daemon reload are
 not granted.
 

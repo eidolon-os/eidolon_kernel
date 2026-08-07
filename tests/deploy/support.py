@@ -93,6 +93,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
+                    "deploy/systemd/eidolon-data-workspace.service",
+                    "/etc/systemd/system/eidolon-data-workspace.service",
+                    "f",
+                ),
+                (
+                    "eidolon_kernel",
                     "deploy/systemd/eidolon-hub.service",
                     "/etc/systemd/system/eidolon-hub.service",
                     "3",
@@ -165,6 +171,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             {"path": "/etc/eidolon/hub.env", "mode": "0600"},
             {"path": "/etc/eidolon/kernel.env", "mode": "0600"},
             {"path": "/etc/eidolon/admin.env", "mode": "0600"},
+            {"path": "/etc/eidolon/local-api.env", "mode": "0600"},
             {"path": "/etc/eidolon/bootstrap.env", "mode": "0600"},
             {
                 "path": "/var/lib/eidolon-bootstrap/host_identity.ed25519",
@@ -176,6 +183,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             "eidolon-local-api.service",
             "eidolon-bootstrapd.service",
             "eidolon-data.service",
+            "eidolon-data-workspace.service",
             "eidolon-hub.service",
             "eidolon-kernel.service",
         ],
@@ -191,6 +199,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "check_id": "data",
                 "kind": "http",
                 "url": "http://127.0.0.1:8084/health",
+                "expected_status": "ready",
+            },
+            {
+                "check_id": "data-workspace",
+                "kind": "http",
+                "url": "http://127.0.0.1:8085/health",
                 "expected_status": "ready",
             },
             {
