@@ -1,0 +1,37 @@
+[Unit]
+Description=Eidolon Memory realm supervisor
+After=local-fs.target eidolon-nats.service eidolon-admin.service
+Wants=eidolon-nats.service eidolon-admin.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eidolon
+Group=eidolon
+UMask=0007
+EnvironmentFile=/etc/eidolon/memory.env
+Environment=HOME=/var/lib/eidolon-runtime
+Environment=EIDOLON_MEMORY_SETTINGS_YAML=/etc/eidolon/memory.yaml
+Environment=EIDOLON_MEMORY_LOG_DIR=/var/log/eidolon-memory
+Environment=EIDOLON_ADMIN_API_URL=http://127.0.0.1:9000
+Environment=PATH=/srv/eidolon/current/eidolon_memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/srv/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-supervisor
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=40s
+StateDirectory=eidolon-runtime
+StateDirectoryMode=0750
+LogsDirectory=eidolon-memory
+LogsDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

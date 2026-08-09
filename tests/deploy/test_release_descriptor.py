@@ -21,6 +21,9 @@ def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
         "eidolon_data",
         "eidolon_hub",
         "eidolon_admin",
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory",
     ]
     assert release.schema_version == 2
     assert release.components[0].release_path == Path(
@@ -123,7 +126,7 @@ def test_rejects_relative_entrypoint_and_duplicate_readiness_id(tmp_path: Path) 
     [
         (
             lambda value: value.update(
-                {"components": [dict(value["components"][0]) for _ in range(4)]}
+                {"components": [dict(value["components"][0]) for _ in range(7)]}
             ),
             "component set",
         ),

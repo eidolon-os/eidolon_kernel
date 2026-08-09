@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -22,6 +24,9 @@ _SOURCE_IDS = (
     "eidolon_data",
     "eidolon_hub",
     "eidolon_admin",
+    "eidolon_agent",
+    "eidolon_channel",
+    "eidolon_memory",
     "eidolon_sdk",
 )
 _REVISION_BY_SOURCE = {
@@ -29,12 +34,30 @@ _REVISION_BY_SOURCE = {
     "eidolon_data": "data",
     "eidolon_hub": "hub",
     "eidolon_admin": "admin",
+    "eidolon_agent": "agent",
+    "eidolon_channel": "channel",
+    "eidolon_memory": "memory",
     "eidolon_sdk": "sdk",
 }
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PREPARER_NAME = "prepare_target.py"
 _MANIFEST_NAME = "bundle.json"
+_LFS_POINTER = re.compile(
+    rb"\Aversion https://git-lfs.github.com/spec/v1\n"
+    rb"oid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n?\Z"
+)
+_CHANNEL_MODEL_PATHS = {
+    "eidolon/livekit/plugins/eot/data/model/firered_chat_turn_detector/chinese_best_model_q8.onnx",
+    "eidolon/livekit/plugins/eot/data/model/firered_chat_turn_detector/multilingual_best_model_q8.onnx",
+    "eidolon/livekit/plugins/vad/firered/resources/pvad.onnx",
+    "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/classifier.ckpt",
+    "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/embedding_model.ckpt",
+    "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/label_encoder.ckpt",
+    "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/mean_var_norm_emb.ckpt",
+    "eidolon/livekit/plugins/speaker_verification/resources/3dspeaker/"
+    "campplus_zh_16k_common/campplus_cn_common.bin",
+}
 
 
 class BundleError(RuntimeError):
@@ -69,7 +92,9 @@ def build_source_bundle(
     if _RELEASE_ID.fullmatch(release_id) is None:
         raise BundleError("release id is invalid")
     if set(repositories) != set(_SOURCE_IDS):
-        raise BundleError("repository set must be exactly Kernel/Data/Hub/Admin/SDK")
+        raise BundleError(
+            "repository set must be exactly Kernel/Data/Hub/Admin/Agent/Channel/Memory/SDK"
+        )
     output = output.resolve()
     if output.exists():
         raise BundleError("bundle output already exists")
@@ -107,6 +132,8 @@ def build_source_bundle(
                 f"--output={archive}",
                 revision,
             )
+            if source_id == "eidolon_channel":
+                _hydrate_channel_archive(git, repository, archive)
             _validate_source_archive(source_id, archive)
             records.append(
                 {
@@ -218,6 +245,8 @@ def _validate_source_archive(source_id: str, archive: Path) -> None:
     required = {"pyproject.toml"}
     if source_id != "eidolon_sdk":
         required.add("uv.lock")
+    if source_id == "eidolon_channel":
+        required.update(_CHANNEL_MODEL_PATHS)
     for _destination, (component_id, source) in V2_SYSTEM_ASSETS.items():
         if component_id == source_id:
             required.add(source.as_posix())
@@ -227,14 +256,105 @@ def _validate_source_archive(source_id: str, archive: Path) -> None:
     except (OSError, tarfile.TarError) as exc:
         raise BundleError(f"source archive is unreadable: {source_id}") from exc
     names: set[str] = set()
+    lfs_pointers: set[str] = set()
+    with tarfile.open(archive, "r:") as stream:
+        member_by_name = {
+            PurePosixPath(member.name).as_posix().removeprefix("./"): member for member in members
+        }
+        for path in _CHANNEL_MODEL_PATHS if source_id == "eidolon_channel" else ():
+            member = member_by_name.get(path)
+            if member is None or not member.isfile() or member.size > 1024:
+                continue
+            source = stream.extractfile(member)
+            if source is not None and _LFS_POINTER.fullmatch(source.read(1025)) is not None:
+                lfs_pointers.add(path)
     for member in members:
         name = PurePosixPath(member.name)
         if name.is_absolute() or ".." in name.parts or not (member.isfile() or member.isdir()):
             raise BundleError(f"source archive has unsafe member: {source_id}")
-        names.add(name.as_posix().removeprefix("./"))
+        normalized = name.as_posix().removeprefix("./")
+        names.add(normalized)
     missing = sorted(required - names)
     if missing:
         raise BundleError(f"source archive is incomplete: {source_id}: {', '.join(missing)}")
+    if lfs_pointers:
+        raise BundleError("Channel model artifact is missing or is an unhydrated LFS pointer")
+
+
+def _hydrate_channel_archive(git: str, repository: Path, archive: Path) -> None:
+    """Replace exact-commit LFS pointers without reading the Channel working tree."""
+
+    pointers: dict[str, bytes] = {}
+    with tarfile.open(archive, "r:") as source:
+        for member in source.getmembers():
+            normalized = PurePosixPath(member.name).as_posix().removeprefix("./")
+            if normalized not in _CHANNEL_MODEL_PATHS or not member.isfile() or member.size > 1024:
+                continue
+            stream = source.extractfile(member)
+            if stream is None:
+                continue
+            value = stream.read(1025)
+            if _LFS_POINTER.fullmatch(value) is not None:
+                pointers[normalized] = value
+    if not pointers:
+        return
+
+    with tempfile.TemporaryDirectory(prefix="eidolon-lfs-", dir=archive.parent) as raw:
+        stage = Path(raw)
+        hydrated: dict[str, Path] = {}
+        for index, (relative, pointer) in enumerate(sorted(pointers.items())):
+            destination = stage / f"model-{index}"
+            _smudge_lfs_pointer(git, repository, relative, pointer, destination)
+            hydrated[relative] = destination
+        rewritten = stage / "channel.tar"
+        with tarfile.open(archive, "r:") as source, tarfile.open(rewritten, "w:") as output:
+            for member in source.getmembers():
+                normalized = PurePosixPath(member.name).as_posix().removeprefix("./")
+                replacement = hydrated.get(normalized)
+                if replacement is not None:
+                    updated = copy.copy(member)
+                    updated.size = replacement.stat().st_size
+                    with replacement.open("rb") as stream:
+                        output.addfile(updated, stream)
+                elif member.isfile():
+                    stream = source.extractfile(member)
+                    if stream is None:
+                        raise BundleError("Channel source archive member cannot be read")
+                    output.addfile(member, stream)
+                else:
+                    output.addfile(member)
+        os.replace(rewritten, archive)
+
+
+def _smudge_lfs_pointer(
+    git: str,
+    repository: Path,
+    relative: str,
+    pointer: bytes,
+    destination: Path,
+) -> None:
+    match = _LFS_POINTER.fullmatch(pointer)
+    if match is None:
+        raise BundleError(f"Channel model has an invalid LFS pointer: {relative}")
+    expected_sha256 = match.group(1).decode("ascii")
+    expected_size = int(match.group(2))
+    try:
+        with destination.open("xb") as output:
+            result = subprocess.run(
+                (git, "-C", str(repository), "lfs", "smudge", "--", relative),
+                check=False,
+                input=pointer,
+                stdout=output,
+                stderr=subprocess.PIPE,
+                timeout=1800,
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BundleError(f"Channel LFS model hydration could not run: {relative}: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip() or "no diagnostic output"
+        raise BundleError(f"Channel LFS model hydration failed: {relative}: {detail}")
+    if destination.stat().st_size != expected_size or _file_sha256(destination) != expected_sha256:
+        raise BundleError(f"Channel LFS model hydration digest mismatch: {relative}")
 
 
 def _git_output(*command: str) -> str:

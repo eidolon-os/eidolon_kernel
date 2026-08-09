@@ -34,8 +34,8 @@
     },
     "components": {
       "type": "array",
-      "minItems": 4,
-      "maxItems": 4,
+      "minItems": 7,
+      "maxItems": 7,
       "items": {"$ref": "#/$defs/component"}
     },
     "support_sources": {
@@ -46,20 +46,20 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 15,
-      "maxItems": 15,
+      "minItems": 22,
+      "maxItems": 22,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 11,
+      "maxItems": 11,
       "items": {"$ref": "#/$defs/requiredSecret"}
     },
     "affected_units": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 13,
+      "maxItems": 13,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -69,14 +69,20 @@
           "eidolon-data.service",
           "eidolon-data-workspace.service",
           "eidolon-hub.service",
-          "eidolon-kernel.service"
+          "eidolon-kernel.service",
+          "eidolon-nats.service",
+          "eidolon-livekit.service",
+          "eidolon-memory-supervisor.service",
+          "eidolon-memory-discovery.service",
+          "eidolon-agent.service",
+          "eidolon-channel.service"
         ]
       }
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 12,
+      "maxItems": 12,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {
@@ -103,7 +109,15 @@
       ],
       "properties": {
         "component_id": {
-          "enum": ["eidolon_kernel", "eidolon_data", "eidolon_hub", "eidolon_admin"]
+          "enum": [
+            "eidolon_kernel",
+            "eidolon_data",
+            "eidolon_hub",
+            "eidolon_admin",
+            "eidolon_agent",
+            "eidolon_channel",
+            "eidolon_memory"
+          ]
         },
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "release_path": {"type": "string", "pattern": "^/srv/eidolon/releases/"},
@@ -161,7 +175,11 @@
             "/etc/eidolon/admin.env",
             "/etc/eidolon/local-api.env",
             "/etc/eidolon/bootstrap.env",
-            "/var/lib/eidolon-bootstrap/host_identity.ed25519"
+            "/var/lib/eidolon-bootstrap/host_identity.ed25519",
+            "/etc/eidolon/agent.env",
+            "/etc/eidolon/channel.env",
+            "/etc/eidolon/memory.env",
+            "/etc/eidolon/livekit.env"
           ]
         },
         "mode": {"const": "0600"}
@@ -176,10 +194,10 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$"
         },
-        "kind": {"enum": ["http", "https", "unix_http"]},
-        "url": {"type": "string", "pattern": "^https?://"},
+        "kind": {"enum": ["http", "https", "unix_http", "tcp", "systemd"]},
+        "url": {"type": "string", "pattern": "^(?:https?|tcp|systemd)://"},
         "socket": {"type": "string", "pattern": "^/run/eidolon/"},
-        "expected_status": {"enum": ["ready", "ok"]}
+        "expected_status": {"enum": ["ready", "ok", "http_2xx", "open", "active"]}
       }
     }
   }

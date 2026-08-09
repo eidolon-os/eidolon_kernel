@@ -120,7 +120,16 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             "address": "http://127.0.0.1:8084",
             "contract": ("https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"),
             "health_url": "http://127.0.0.1:8084/health",
-        }
+        },
+        {
+            "endpoint_id": "companion-runtime-authority.http",
+            "protocol": "http",
+            "address": "http://127.0.0.1:8084",
+            "contract": (
+                "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
+            ),
+            "health_url": "http://127.0.0.1:8084/health",
+        },
     ]
     assert services["data-workspace"]["host_targets"]["systemd"] == (
         "eidolon-data-workspace.service"
@@ -160,6 +169,9 @@ def test_dev_manifest_publishes_all_control_plane_authorities() -> None:
     assert services["data"]["host_targets"]["supervisord"] == "data:data-api"
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+    )
+    assert services["data"]["endpoints"][1]["contract"] == (
+        "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
     )
     assert services["data-workspace"]["host_targets"]["supervisord"] == ("data:data-workspace-api")
     assert services["data-workspace"]["dependencies"] == ["data"]

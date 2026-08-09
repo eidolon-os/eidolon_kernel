@@ -1,79 +1,40 @@
 # Raspberry Pi / Linux systemd deployment
 
-These files are product-image inputs, not a source downloader or generic installer. They encode the first
-single-host boot boundary:
+这些文件是正式 Pi product-image/release 输入，不是 macOS supervisord 配置。固定运行图是：
 
 ```text
-eidolon-bootstrapd (Admin-owned, always-on onboarding)
-        |
-        v
-eidolond (systemd starts this one unit)
-        |
-        +-- systemctl start/stop/restart eidolon-data.service
-        +-- systemctl start/stop/restart eidolon-data-workspace.service
-        +-- systemctl start/stop/restart eidolon-hub.service
-        +-- systemctl start/stop/restart eidolon-kernel.service
+eidolon-bootstrapd -> Local API / Admin
+
+eidolond (唯一 system-service desired-state authority)
+  ├─ NATS -> Memory Supervisor -> Memory Discovery -> Agent -> Channel
+  ├─ LiveKit -> Hub / Channel
+  ├─ Data -> Data Workspace / Agent / Channel
+  ├─ Hub
+  └─ Kernel -> Channel
 ```
 
-Only `eidolond.service` has an `[Install]` target. Data read authority, Data
-Workspace write authority, Hub and Kernel
-deliberately have no `WantedBy=` entry: systemd owns their PIDs, cgroups,
-signals and crash restart, while `eidolond.sqlite3` remains the sole
-desired-state authority. Enabling a child unit independently would create a
-second desired-state source.
+Systemd 拥有 PID、cgroup、signals 和 crash restart；`eidolond.sqlite3` 拥有 NATS、LiveKit、Data、
+Data Workspace、Hub、Kernel、Memory、Agent、Channel 是否应运行。子 unit 没有 `WantedBy=`，不得单独
+enable。Bootstrap、eidolond、Local API、Admin 是 first-install 直接 enable 的 4 个顶层 unit。
 
-The image builder must:
+Image/first-install 边界必须：
 
-1. create the non-login `eidolon` user and group;
-2. install these units under `/etc/systemd/system/`;
-3. install `../polkit/60-eidolon-system-manager.rules` under
-   `/etc/polkit-1/rules.d/`;
-4. install reviewed copies of the systemd example YAML files under
-   `/etc/eidolon/`; the unit-facing files are named `eidolond.yaml`,
-   `kernel.yaml`, and `hub.yaml`, while
-   `system-services.systemd.example.yaml` retains its name because
-   `eidolond.yaml` resolves that manifest relative to its own directory;
-5. install a fresh Eidolon Data V2 database with the Data release's tracked
-   Alembic baseline before enabling eidolond; runtime startup validates the
-   schema and never creates or repairs it;
-6. create root-owned `data.env`, `hub.env`, `kernel.env`, `admin.env`, and
-   `local-api.env` files with mode
-   `0600` for service credentials; never place secrets in unit files or YAML.
-   Data requires `EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN` and the independently
-   scoped `EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN`; Admin receives the latter as
-   `EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN`. Local API and Admin share only
-   their loopback service credential through `local-api.env` and `admin.env`.
-   Hub requires
-   `EIDOLON_HUB_MANAGEMENT_JWT_SECRET`,
-   `EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN`, and
-   `EIDOLON_HUB_CHANNEL_PROVIDER_TOKEN`; Kernel receives the same reader token
-   as `EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN` plus the independently scoped
-   `EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN`;
-7. install Data, Hub and Kernel releases under `/srv/eidolon/current/` with the
-   paths used by the units; Data's Python environment must contain its declared
-   `api` extra and the reviewed `eidolon-sdk` build it depends on;
-8. run `systemd-analyze verify` on all five system-control units, reload systemd, and enable
-   only `eidolond.service` (Bootstrap is installed and enabled by its own
-   product-image boundary).
+1. 创建非登录 `eidolon` 与 `eidolon-bootstrap` 身份及固定 state/log 目录。
+2. 安装并以 `systemd-analyze verify` 检查 14 个 product unit；安装固定 Polkit 与 Avahi 资产。
+3. 安装 `/etc/eidolon/eidolond.yaml`、Kernel/Hub/service manifest，以及 Agent、Channel、Memory 的
+   settings YAML；settings 是 `root:eidolon 0640`。
+4. 安装 11 个固定私密前置文件。env/Host identity 是 `0600`，不把值放进 unit、descriptor、snapshot
+   或 receipt。
+5. 从 Data 当前提交的 `0001_system_data_v2` 建立全新 baseline；绝不恢复旧迁移或旧
+   `eidolon.sqlite3`。
+6. 在 `/srv/eidolon/current/` 提供 7 个精确 release link；SDK 是构建输入，不是 runtime service。
+7. 由固定 foundation profile 提供 `/usr/local/bin/nats-server`、`livekit-server`，以及 BlueZ、
+   NetworkManager、Avahi、FFmpeg、uv、Node 和编译/运行库。
+8. 仅 enable Bootstrap、eidolond、Local API、Admin；其余服务由 eidolond reconciliation 拉起。
 
-The Polkit rule does not grant general systemd administration. It accepts only
-requests made by the `eidolon` process running inside `eidolond.service` with
-`NoNewPrivileges=yes`, for the exact Data/Data Workspace/Hub/Kernel unit names and the three verbs
-implemented by the Host adapter. Unit-file enable/disable and daemon reload are
-not granted.
+Polkit 不授予通用 systemd 管理。规则只接受 `eidolond.service` 内 `eidolon` 进程对固定 child unit 的
+start/stop/restart；不能 enable/disable 或 daemon-reload。部署工具不读取任何兄弟数据库。
 
-The Hub unit additionally allows `AF_NETLINK`: Linux interface discovery used
-by Hub mDNS needs netlink sockets. The remaining address-family restriction is
-kept, and Kernel/eidolond do not receive this allowance.
-
-Mobile, Local API and Web Admin do not connect to this socket directly. The
-Mobile/Bootstrap completion state is host onboarding state; Kernel/Hub readiness
-is a separate application-stack state exposed later through the authenticated
-product ingress.
-
-Prepared Eidolon OS V2 target releases are sealed and activated by the independent
-root-operator boundary documented in [`docs/operations/target-release.md`](../../docs/operations/target-release.md).
-That transaction covers Data, Hub, Kernel, Admin, Bootstrap and Local API assets while
-preserving eidolond as the only Data/Hub/Kernel lifecycle authority. It installs only a
-fixed allowlist, never copies secrets or databases, and leaves source transfer, first-install
-provisioning and native environment construction in the product-image pipeline.
+完整 release、readiness 与 rollback 语义见
+[`docs/operations/target-release.md`](../../docs/operations/target-release.md)。Mac 侧从新 Pi provision 到
+App host gate 的唯一入口在独立 `eidolon_ops`。真实 Pi 的完整 14-unit 验收仍需明确授权。

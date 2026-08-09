@@ -18,6 +18,9 @@ _COMPONENT_LINKS = {
     "eidolon_data": Path("/srv/eidolon/current/eidolon_data"),
     "eidolon_hub": Path("/srv/eidolon/current/eidolon_hub"),
     "eidolon_admin": Path("/srv/eidolon/current/eidolon_admin"),
+    "eidolon_agent": Path("/srv/eidolon/current/eidolon_agent"),
+    "eidolon_channel": Path("/srv/eidolon/current/eidolon_channel"),
+    "eidolon_memory": Path("/srv/eidolon/current/eidolon_memory"),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (Path(".venv/bin/eidolond"), Path(".venv/bin/uvicorn")),
@@ -27,6 +30,12 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-admin"),
         Path(".venv/bin/eidolon-bootstrapd"),
         Path(".venv/bin/eidolon-local-api"),
+    ),
+    "eidolon_agent": (Path(".venv/bin/eidolon-agent"),),
+    "eidolon_channel": (Path(".venv/bin/python"),),
+    "eidolon_memory": (
+        Path(".venv/bin/eidolon-memory-supervisor"),
+        Path(".venv/bin/eidolon-memory-discovery"),
     ),
 }
 V2_SYSTEM_ASSETS = {
@@ -90,6 +99,34 @@ V2_SYSTEM_ASSETS = {
         "eidolon_admin",
         Path("deploy/avahi/eidolon-local-api.service"),
     ),
+    Path("/etc/systemd/system/eidolon-nats.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-nats.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-livekit.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-livekit.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-memory-supervisor.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-memory-supervisor.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-memory-discovery.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-memory-discovery.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-agent.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-agent.service"),
+    ),
+    Path("/etc/systemd/system/eidolon-channel.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-channel.service"),
+    ),
+    Path("/usr/local/libexec/eidolon-livekit-launch"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-livekit-launch"),
+    ),
 }
 V2_REQUIRED_SECRETS = (
     Path("/etc/eidolon/data.env"),
@@ -99,6 +136,10 @@ V2_REQUIRED_SECRETS = (
     Path("/etc/eidolon/local-api.env"),
     Path("/etc/eidolon/bootstrap.env"),
     Path("/var/lib/eidolon-bootstrap/host_identity.ed25519"),
+    Path("/etc/eidolon/agent.env"),
+    Path("/etc/eidolon/channel.env"),
+    Path("/etc/eidolon/memory.env"),
+    Path("/etc/eidolon/livekit.env"),
 )
 V2_AFFECTED_UNITS = (
     "eidolon-admin.service",
@@ -108,6 +149,12 @@ V2_AFFECTED_UNITS = (
     "eidolon-data-workspace.service",
     "eidolon-hub.service",
     "eidolon-kernel.service",
+    "eidolon-nats.service",
+    "eidolon-livekit.service",
+    "eidolon-memory-supervisor.service",
+    "eidolon-memory-discovery.service",
+    "eidolon-agent.service",
+    "eidolon-channel.service",
 )
 V2_READINESS = {
     "eidolond": (
@@ -122,6 +169,21 @@ V2_READINESS = {
     "kernel": ("http", "http://127.0.0.1:8083/health", None, "ready"),
     "admin": ("http", "http://127.0.0.1:9000/healthz", None, "ready"),
     "local-api": ("https", "https://127.0.0.1:9002/healthz", None, "ok"),
+    "nats": ("http", "http://127.0.0.1:8222/healthz", None, "ok"),
+    "livekit": ("tcp", "tcp://127.0.0.1:7880", None, "open"),
+    "memory": (
+        "http",
+        "http://127.0.0.1:8020/api/discovery/agent-routing",
+        None,
+        "http_2xx",
+    ),
+    "agent": ("http", "http://127.0.0.1:8180/readyz", None, "ready"),
+    "channel": (
+        "systemd",
+        "systemd://eidolon-channel.service",
+        None,
+        "active",
+    ),
 }
 
 
@@ -235,7 +297,7 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
     component_ids = [item.component_id for item in components]
     if set(component_ids) != set(_COMPONENT_LINKS) or len(component_ids) != len(set(component_ids)):
         raise ReleaseDescriptorError(
-            "release descriptor component set must be unique Kernel/Data/Hub/Admin"
+            "release descriptor component set must be the unique reviewed full product set"
         )
     for component in components:
         expected_path = Path("/srv/eidolon/releases") / release_id / component.component_id
@@ -367,7 +429,26 @@ def _readiness_from_wire(value: dict) -> ReadinessCheck:
             raise ReleaseDescriptorError("HTTP readiness must use loopback without a socket")
         if parsed.scheme != kind:
             raise ReleaseDescriptorError("HTTP readiness scheme must match its kind")
-    elif socket != Path("/run/eidolon/system.sock") or parsed.hostname != "eidolond":
+    elif kind == "tcp":
+        if (
+            socket is not None
+            or parsed.scheme != "tcp"
+            or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+            or parsed.port is None
+        ):
+            raise ReleaseDescriptorError("TCP readiness must use one loopback port")
+    elif kind == "systemd":
+        if (
+            socket is not None
+            or parsed.scheme != "systemd"
+            or parsed.hostname != "eidolon-channel.service"
+        ):
+            raise ReleaseDescriptorError("systemd readiness must name the fixed Channel unit")
+    elif (
+        kind != "unix_http"
+        or socket != Path("/run/eidolon/system.sock")
+        or parsed.hostname != "eidolond"
+    ):
         raise ReleaseDescriptorError("Unix HTTP readiness must use the eidolond system socket")
     return ReadinessCheck(
         check_id=str(value["check_id"]),

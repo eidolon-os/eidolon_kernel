@@ -35,6 +35,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 data=arguments.data_revision,
                 hub=arguments.hub_revision,
                 admin=arguments.admin_revision,
+                agent=arguments.agent_revision,
+                channel=arguments.channel_revision,
+                memory=arguments.memory_revision,
                 sdk=arguments.sdk_revision,
             )
             path = build_source_bundle(
@@ -44,6 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "eidolon_data": arguments.data_repo,
                     "eidolon_hub": arguments.hub_repo,
                     "eidolon_admin": arguments.admin_repo,
+                    "eidolon_agent": arguments.agent_repo,
+                    "eidolon_channel": arguments.channel_repo,
+                    "eidolon_memory": arguments.memory_repo,
                     "eidolon_sdk": arguments.sdk_repo,
                 },
                 revisions=revisions,
@@ -59,6 +65,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     data=arguments.data_revision,
                     hub=arguments.hub_revision,
                     admin=arguments.admin_revision,
+                    agent=arguments.agent_revision,
+                    channel=arguments.channel_revision,
+                    memory=arguments.memory_revision,
                     sdk=arguments.sdk_revision,
                 ),
             )
@@ -122,11 +131,17 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--data-repo", type=Path, required=True)
     bundle.add_argument("--hub-repo", type=Path, required=True)
     bundle.add_argument("--admin-repo", type=Path, required=True)
+    bundle.add_argument("--agent-repo", type=Path, required=True)
+    bundle.add_argument("--channel-repo", type=Path, required=True)
+    bundle.add_argument("--memory-repo", type=Path, required=True)
     bundle.add_argument("--sdk-repo", type=Path, required=True)
     bundle.add_argument("--kernel-revision", required=True)
     bundle.add_argument("--data-revision", required=True)
     bundle.add_argument("--hub-revision", required=True)
     bundle.add_argument("--admin-revision", required=True)
+    bundle.add_argument("--agent-revision", required=True)
+    bundle.add_argument("--channel-revision", required=True)
+    bundle.add_argument("--memory-revision", required=True)
     bundle.add_argument("--sdk-revision", required=True)
 
     seal = operations.add_parser("seal", help="seal an already prepared native release")
@@ -135,6 +150,9 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--data-revision", required=True)
     seal.add_argument("--hub-revision", required=True)
     seal.add_argument("--admin-revision", required=True)
+    seal.add_argument("--agent-revision", required=True)
+    seal.add_argument("--channel-revision", required=True)
+    seal.add_argument("--memory-revision", required=True)
     seal.add_argument("--sdk-revision", required=True)
 
     activate = operations.add_parser("activate", help="preflight and activate a release")

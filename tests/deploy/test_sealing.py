@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from eidolon_deploy.manifest import load_release_descriptor
+from eidolon_deploy.manifest import (
+    V2_COMPONENT_ENTRYPOINTS,
+    V2_SYSTEM_ASSETS,
+    load_release_descriptor,
+)
 from eidolon_deploy.sealing import (
     EnvironmentFacts,
     PreparationError,
@@ -32,58 +36,45 @@ def _host_path(root: Path, value: str) -> Path:
 def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
     root = tmp_path / "root"
     release_root = _host_path(root, f"/srv/eidolon/releases/{release_id}")
-    kernel = release_root / "eidolon_kernel"
-    data = release_root / "eidolon_data"
-    hub = release_root / "eidolon_hub"
-    admin = release_root / "eidolon_admin"
-    sdk = release_root / "eidolon_sdk"
-    for source in (kernel, data, hub, admin, sdk):
+    sources = {
+        source_id: release_root / source_id
+        for source_id in (*V2_COMPONENT_ENTRYPOINTS, "eidolon_sdk")
+    }
+    for source in sources.values():
         source.mkdir(parents=True)
         (source / "pyproject.toml").write_text(f"[project]\nname='{source.name}'\n")
-    for component, entrypoints in (
-        (kernel, ("eidolond", "uvicorn")),
-        (data, ("uvicorn",)),
-        (hub, ("uvicorn",)),
-        (admin, ("eidolon-admin", "eidolon-bootstrapd", "eidolon-local-api")),
-    ):
+    for component_id, entrypoints in V2_COMPONENT_ENTRYPOINTS.items():
+        component = sources[component_id]
         (component / "uv.lock").write_text(f"lock:{component.name}\n")
         python = component / ".venv/bin/python"
         python.parent.mkdir(parents=True)
         python.write_text("#!/bin/sh\n")
         python.chmod(0o755)
-        for name in entrypoints:
-            executable = component / ".venv/bin" / name
+        for relative in entrypoints:
+            executable = component / relative
+            executable.parent.mkdir(parents=True, exist_ok=True)
             executable.write_text("#!/bin/sh\n")
             executable.chmod(0o755)
-
-    asset_sources = (
-        "deploy/systemd/eidolond.service",
-        "deploy/systemd/eidolon-data.service",
-        "deploy/systemd/eidolon-data-workspace.service",
-        "deploy/systemd/eidolon-hub.service",
-        "deploy/systemd/eidolon-kernel.service",
-        "config/eidolond.systemd.example.yaml",
-        "config/kernel.systemd.example.yaml",
-        "config/hub.systemd.example.yaml",
-        "config/system-services.systemd.example.yaml",
-        "deploy/polkit/60-eidolon-system-manager.rules",
-    )
-    for relative in asset_sources:
-        asset = kernel / relative
-        asset.parent.mkdir(parents=True, exist_ok=True)
-        asset.write_text(f"asset:{relative}\n")
-    admin_assets = (
-        "deploy/systemd/eidolon-bootstrapd.service",
-        "deploy/systemd/eidolon-local-api.service",
-        "deploy/systemd/eidolon-admin.service",
-        "deploy/polkit/60-eidolon-bootstrap-network.rules",
-        "deploy/avahi/eidolon-local-api.service",
-    )
-    for relative in admin_assets:
-        asset = admin / relative
+    for _destination, (source_id, relative) in V2_SYSTEM_ASSETS.items():
+        asset = sources[source_id] / relative
         asset.parent.mkdir(parents=True, exist_ok=True)
         asset.write_text(f"asset:{relative}\n")
     return root
+
+
+def _revisions(**overrides: str) -> ReleaseRevisions:
+    values = {
+        "kernel": "a" * 40,
+        "data": "b" * 40,
+        "hub": "d" * 40,
+        "admin": "e" * 40,
+        "agent": "f" * 40,
+        "channel": "1" * 40,
+        "memory": "2" * 40,
+        "sdk": "c" * 40,
+    }
+    values.update(overrides)
+    return ReleaseRevisions(**values)
 
 
 def test_seals_fixed_target_release_from_prepared_native_tree(tmp_path: Path) -> None:
@@ -93,13 +84,7 @@ def test_seals_fixed_target_release_from_prepared_native_tree(tmp_path: Path) ->
     path = seal_prepared_release(
         host_root=root,
         release_id=release_id,
-        revisions=ReleaseRevisions(
-            kernel="a" * 40,
-            data="b" * 40,
-            hub="d" * 40,
-            admin="e" * 40,
-            sdk="c" * 40,
-        ),
+        revisions=_revisions(),
         inspector=FakeInspector(),
         system="linux",
         machine="aarch64",
@@ -113,38 +98,19 @@ def test_seals_fixed_target_release_from_prepared_native_tree(tmp_path: Path) ->
         "eidolon_data",
         "eidolon_hub",
         "eidolon_admin",
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory",
     ]
     assert release.support_sources[0].source_id == "eidolon_sdk"
-    assert {str(item.destination) for item in release.system_assets} == {
-        "/etc/systemd/system/eidolond.service",
-        "/etc/systemd/system/eidolon-data.service",
-        "/etc/systemd/system/eidolon-data-workspace.service",
-        "/etc/systemd/system/eidolon-hub.service",
-        "/etc/systemd/system/eidolon-kernel.service",
-        "/etc/eidolon/eidolond.yaml",
-        "/etc/eidolon/kernel.yaml",
-        "/etc/eidolon/hub.yaml",
-        "/etc/eidolon/system-services.systemd.example.yaml",
-        "/etc/polkit-1/rules.d/60-eidolon-system-manager.rules",
-        "/etc/systemd/system/eidolon-bootstrapd.service",
-        "/etc/systemd/system/eidolon-local-api.service",
-        "/etc/systemd/system/eidolon-admin.service",
-        "/etc/polkit-1/rules.d/60-eidolon-bootstrap-network.rules",
-        "/etc/avahi/services/eidolon-local-api.service",
-    }
+    assert {item.destination for item in release.system_assets} == set(V2_SYSTEM_ASSETS)
     assert json.loads(path.read_text())["database_migrations"] == []
 
 
 def test_sealing_rejects_wrong_target_or_incomplete_preparation(tmp_path: Path) -> None:
     release_id = "20260806-m2d-invalid"
     root = _prepared_tree(tmp_path, release_id)
-    revisions = ReleaseRevisions(
-        kernel="a" * 40,
-        data="b" * 40,
-        hub="d" * 40,
-        admin="e" * 40,
-        sdk="c" * 40,
-    )
+    revisions = _revisions()
 
     with pytest.raises(PreparationError, match="target host"):
         seal_prepared_release(
@@ -172,13 +138,7 @@ def test_sealing_rejects_wrong_target_or_incomplete_preparation(tmp_path: Path) 
 
 def test_release_revisions_must_be_full_git_object_ids() -> None:
     with pytest.raises(PreparationError, match="revision"):
-        ReleaseRevisions(
-            kernel="main",
-            data="b" * 40,
-            hub="d" * 40,
-            admin="e" * 40,
-            sdk="c" * 40,
-        )
+        _revisions(kernel="main")
 
 
 def test_real_environment_inspector_uses_fixed_python_operations() -> None:
@@ -199,13 +159,7 @@ def test_environment_inspector_fails_closed_on_nonzero_process() -> None:
 
 
 def test_sealing_rejects_invalid_id_and_resealing(tmp_path: Path) -> None:
-    revisions = ReleaseRevisions(
-        kernel="a" * 40,
-        data="b" * 40,
-        hub="d" * 40,
-        admin="e" * 40,
-        sdk="c" * 40,
-    )
+    revisions = _revisions()
     with pytest.raises(PreparationError, match="release id"):
         seal_prepared_release(
             host_root=tmp_path,

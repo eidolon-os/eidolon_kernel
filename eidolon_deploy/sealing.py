@@ -42,12 +42,24 @@ class ReleaseRevisions:
     data: str
     hub: str
     admin: str
+    agent: str
+    channel: str
+    memory: str
     sdk: str
 
     def __post_init__(self) -> None:
         if any(
             _REVISION.fullmatch(value) is None
-            for value in (self.kernel, self.data, self.hub, self.admin, self.sdk)
+            for value in (
+                self.kernel,
+                self.data,
+                self.hub,
+                self.admin,
+                self.agent,
+                self.channel,
+                self.memory,
+                self.sdk,
+            )
         ):
             raise PreparationError("each release revision must be a full lowercase Git object id")
 
@@ -120,8 +132,11 @@ def seal_prepared_release(
     data = release_root / "eidolon_data"
     hub = release_root / "eidolon_hub"
     admin = release_root / "eidolon_admin"
+    agent = release_root / "eidolon_agent"
+    channel = release_root / "eidolon_channel"
+    memory = release_root / "eidolon_memory"
     sdk = release_root / "eidolon_sdk"
-    for source in (kernel, data, hub, admin, sdk):
+    for source in (kernel, data, hub, admin, agent, channel, memory, sdk):
         if not source.is_dir():
             raise PreparationError(f"release source directory is missing: {source.name}")
 
@@ -150,6 +165,24 @@ def seal_prepared_release(
             revisions.admin,
             admin,
             tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_admin"]),
+        ),
+        (
+            "eidolon_agent",
+            revisions.agent,
+            agent,
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_agent"]),
+        ),
+        (
+            "eidolon_channel",
+            revisions.channel,
+            channel,
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_channel"]),
+        ),
+        (
+            "eidolon_memory",
+            revisions.memory,
+            memory,
+            tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_memory"]),
         ),
     )
     components: list[dict[str, object]] = []

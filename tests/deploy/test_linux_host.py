@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -184,12 +185,15 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
         "eidolon_data",
         "eidolon_hub",
         "eidolon_admin",
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory",
     }
     assert previous["eidolon_kernel"].endswith("/old/eidolon_kernel")
     verify_call = next(
         call for call in runner.calls if call[:2] == ("/usr/bin/systemd-analyze", "verify")
     )
-    assert len(verify_call[2:]) == 8
+    assert len(verify_call[2:]) == 14
     assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
 
@@ -234,6 +238,12 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
         ("stop", "eidolon-data-workspace.service"),
         ("stop", "eidolon-hub.service"),
         ("stop", "eidolon-kernel.service"),
+        ("stop", "eidolon-nats.service"),
+        ("stop", "eidolon-livekit.service"),
+        ("stop", "eidolon-memory-supervisor.service"),
+        ("stop", "eidolon-memory-discovery.service"),
+        ("stop", "eidolon-agent.service"),
+        ("stop", "eidolon-channel.service"),
         ("start", "eidolon-bootstrapd.service"),
         ("start", "eidolond.service"),
         ("start", "eidolon-local-api.service"),
@@ -274,11 +284,14 @@ def test_doctor_requires_the_sealed_release_to_be_active(tmp_path: Path) -> None
         "eidolon_data",
         "eidolon_hub",
         "eidolon_admin",
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory",
     }
     active_checks = [
         call for call in runner.calls if call[:3] == ("/usr/bin/systemctl", "is-active", "--quiet")
     ]
-    assert len(active_checks) == 8
+    assert len(active_checks) == 14
 
 
 def test_preflight_fails_closed_on_source_or_secret_drift(tmp_path: Path) -> None:
@@ -455,6 +468,11 @@ def test_first_install_rollback_restores_only_previous_units_and_readiness(
         "hub",
         "kernel",
         "local-api",
+        "nats",
+        "livekit",
+        "memory",
+        "agent",
+        "channel",
     }
 
 
@@ -741,5 +759,120 @@ def test_https_readiness_uses_descriptor_status_over_loopback(monkeypatch) -> No
     from eidolon_deploy import linux
 
     monkeypatch.setattr(linux.http.client, "HTTPSConnection", Connection)
-    check = release_descriptor_from_document(release_document()).readiness_checks[-1]
+    check = next(
+        item
+        for item in release_descriptor_from_document(release_document()).readiness_checks
+        if item.check_id == "local-api"
+    )
+    assert LinuxDeploymentHost._probe_readiness(check)
+
+
+def test_tcp_and_systemd_readiness_are_bounded(monkeypatch) -> None:
+    from eidolon_deploy import linux
+
+    checks = release_descriptor_from_document(release_document()).readiness_checks
+    tcp = next(item for item in checks if item.check_id == "livekit")
+    systemd = next(item for item in checks if item.check_id == "channel")
+    calls: list[tuple[str, int]] = []
+
+    def connected(address, *, timeout):
+        calls.append(address)
+        assert timeout == 2
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(linux.socket, "create_connection", connected)
+    assert LinuxDeploymentHost._probe_readiness(tcp)
+    assert calls == [("127.0.0.1", 7880)]
+
+    monkeypatch.setattr(
+        linux.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("closed")),
+    )
+    assert not LinuxDeploymentHost._probe_readiness(tcp)
+
+    monkeypatch.setattr(
+        linux.subprocess,
+        "run",
+        lambda command, **_kwargs: SimpleNamespace(
+            returncode=0 if command[-1] == "eidolon-channel.service" else 1
+        ),
+    )
+    assert LinuxDeploymentHost._probe_readiness(systemd)
+    monkeypatch.setattr(
+        linux.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("missing systemctl")),
+    )
+    assert not LinuxDeploymentHost._probe_readiness(systemd)
+
+
+def test_http_2xx_readiness_does_not_require_json(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read() -> bytes:
+            return b"not-json"
+
+    class Connection:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        @staticmethod
+        def request(_method: str, _path: str) -> None:
+            pass
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    from eidolon_deploy import linux
+
+    monkeypatch.setattr(linux.http.client, "HTTPConnection", Connection)
+    check = next(
+        item
+        for item in release_descriptor_from_document(release_document()).readiness_checks
+        if item.check_id == "memory"
+    )
+    assert LinuxDeploymentHost._probe_readiness(check)
+
+
+def test_unix_http_readiness_preserves_query(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"status":"ready"}'
+
+    class Connection:
+        def __init__(self, socket_path) -> None:
+            assert socket_path == Path("/run/eidolon/system.sock")
+
+        @staticmethod
+        def request(method: str, path: str) -> None:
+            assert (method, path) == ("GET", "/health?detail=1")
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    from eidolon_deploy import linux
+
+    monkeypatch.setattr(linux, "_UnixHTTPConnection", Connection)
+    original = next(
+        item
+        for item in release_descriptor_from_document(release_document()).readiness_checks
+        if item.check_id == "eidolond"
+    )
+    check = replace(original, url="http://eidolond/health?detail=1")
     assert LinuxDeploymentHost._probe_readiness(check)

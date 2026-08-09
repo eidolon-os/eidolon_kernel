@@ -1,0 +1,33 @@
+[Unit]
+Description=Eidolon LiveKit voice Channel worker
+After=local-fs.target network-online.target eidolon-livekit.service eidolon-agent.service eidolon-data.service eidolon-kernel.service
+Wants=network-online.target eidolon-livekit.service eidolon-agent.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eidolon
+Group=eidolon
+UMask=0007
+EnvironmentFile=/etc/eidolon/channel.env
+Environment=HOME=/var/lib/eidolon-runtime
+Environment=EIDOLON_ENV=product
+Environment=EIDOLON_CHANNEL_SETTINGS_YAML=/etc/eidolon/channel.yaml
+ExecStart=/srv/eidolon/current/eidolon_channel/.venv/bin/python -m eidolon.livekit.agent.server
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+StateDirectory=eidolon-runtime
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

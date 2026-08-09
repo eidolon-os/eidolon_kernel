@@ -10,7 +10,13 @@ polkit.addRule(function(action, subject) {
         "eidolon-data.service",
         "eidolon-data-workspace.service",
         "eidolon-hub.service",
-        "eidolon-kernel.service"
+        "eidolon-kernel.service",
+        "eidolon-nats.service",
+        "eidolon-livekit.service",
+        "eidolon-memory-supervisor.service",
+        "eidolon-memory-discovery.service",
+        "eidolon-agent.service",
+        "eidolon-channel.service"
     ];
     var allowedVerbs = ["start", "stop", "restart"];
     var unit = action.lookup("unit");

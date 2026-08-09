@@ -47,6 +47,11 @@ _READINESS_UNITS = {
     "kernel": "eidolon-kernel.service",
     "admin": "eidolon-admin.service",
     "local-api": "eidolon-local-api.service",
+    "nats": "eidolon-nats.service",
+    "livekit": "eidolon-livekit.service",
+    "memory": "eidolon-memory-discovery.service",
+    "agent": "eidolon-agent.service",
+    "channel": "eidolon-channel.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
@@ -57,6 +62,12 @@ _RELEASE_UNITS = (
     "eidolon-kernel.service",
     "eidolon-local-api.service",
     "eidolon-admin.service",
+    "eidolon-nats.service",
+    "eidolon-livekit.service",
+    "eidolon-memory-supervisor.service",
+    "eidolon-memory-discovery.service",
+    "eidolon-agent.service",
+    "eidolon-channel.service",
 )
 _SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")
 _ACTIVATION_LOCK = Path("/run/lock/eidolon-release.lock")
@@ -758,6 +769,23 @@ class LinuxDeploymentHost:
     @staticmethod
     def _probe_readiness(check: ReadinessCheck) -> bool:
         parsed = urlsplit(check.url)
+        if check.kind == "tcp":
+            try:
+                with socket.create_connection((str(parsed.hostname), int(parsed.port)), timeout=2):
+                    return True
+            except OSError:
+                return False
+        if check.kind == "systemd":
+            try:
+                result = subprocess.run(
+                    (_SYSTEMCTL, "is-active", "--quiet", str(parsed.hostname)),
+                    check=False,
+                    capture_output=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
+            return result.returncode == 0
         if check.kind == "unix_http":
             assert check.socket is not None
             connection: http.client.HTTPConnection = _UnixHTTPConnection(check.socket)
@@ -786,6 +814,8 @@ class LinuxDeploymentHost:
             payload = response.read()
             if response.status != 200:
                 return False
+            if check.expected_status == "http_2xx":
+                return True
             document = json.loads(payload)
             return isinstance(document, dict) and document.get("status") == check.expected_status
         except (OSError, http.client.HTTPException, json.JSONDecodeError):

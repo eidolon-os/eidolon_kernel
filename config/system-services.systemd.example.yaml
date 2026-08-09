@@ -2,6 +2,52 @@
 # live under deploy/systemd; the image builder must install and verify them.
 version: 1
 services:
+  - service_id: nats
+    description: Agent and Memory asynchronous protocol broker with JetStream
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-nats.service
+    endpoints:
+      - endpoint_id: messaging.nats
+        protocol: nats
+        address: nats://127.0.0.1:4222
+        contract: eidolon.agent-memory.nats.v1
+        health_url: http://127.0.0.1:8222/healthz
+  - service_id: livekit
+    description: Local real-time media and room server
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-livekit.service
+    endpoints:
+      - endpoint_id: media.livekit
+        protocol: livekit
+        address: ws://127.0.0.1:7880
+        contract: livekit.protocol.v1
+  - service_id: memory-supervisor
+    description: Memory Realm process reconciliation owner
+    required: true
+    enabled_by_default: true
+    dependencies: [nats]
+    host_targets:
+      systemd: eidolon-memory-supervisor.service
+    endpoints: []
+  - service_id: memory-discovery
+    description: Owner-scoped Memory routing discovery
+    required: true
+    enabled_by_default: true
+    dependencies: [memory-supervisor]
+    host_targets:
+      systemd: eidolon-memory-discovery.service
+    endpoints:
+      - endpoint_id: memory-routing.http
+        protocol: http
+        address: http://127.0.0.1:8020
+        contract: eidolon.memory.agent-routing.v1
+        health_url: http://127.0.0.1:8020/api/discovery/agent-routing
   - service_id: data
     description: System Data and Companion identity authority
     required: true
@@ -14,6 +60,11 @@ services:
         protocol: http
         address: http://127.0.0.1:8084
         contract: https://eidolon.dev/data/contracts/v1/companion/identity.schema.json
+        health_url: http://127.0.0.1:8084/health
+      - endpoint_id: companion-runtime-authority.http
+        protocol: http
+        address: http://127.0.0.1:8084
+        contract: https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json
         health_url: http://127.0.0.1:8084/health
   - service_id: data-workspace
     description: System Data workspace onboarding write authority
@@ -32,7 +83,7 @@ services:
     description: Device onboarding, registry and policy authority
     required: true
     enabled_by_default: true
-    dependencies: []
+    dependencies: [livekit]
     host_targets:
       systemd: eidolon-hub.service
     endpoints:
@@ -56,3 +107,24 @@ services:
         address: http://127.0.0.1:8083
         contract: eidolon.kernel.device-mount.v1
         health_url: http://127.0.0.1:8083/health
+  - service_id: agent
+    description: Companion brain and Agent runtime
+    required: true
+    enabled_by_default: true
+    dependencies: [nats, memory-discovery, data]
+    host_targets:
+      systemd: eidolon-agent.service
+    endpoints:
+      - endpoint_id: companion-brain.grpc
+        protocol: grpc
+        address: 127.0.0.1:45051
+        contract: eidolon.agent.rpc.v1
+        health_url: http://127.0.0.1:8180/readyz
+  - service_id: channel
+    description: LiveKit voice interaction worker
+    required: true
+    enabled_by_default: true
+    dependencies: [livekit, agent, data, kernel]
+    host_targets:
+      systemd: eidolon-channel.service
+    endpoints: []

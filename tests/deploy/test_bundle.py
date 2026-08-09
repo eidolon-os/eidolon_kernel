@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import subprocess
 import tarfile
@@ -9,7 +10,14 @@ from pathlib import Path
 import pytest
 
 from eidolon_deploy import prepare_target
-from eidolon_deploy.bundle import BundleError, build_source_bundle, validate_source_bundle
+from eidolon_deploy.bundle import (
+    _CHANNEL_MODEL_PATHS,
+    BundleError,
+    _smudge_lfs_pointer,
+    _validate_source_archive,
+    build_source_bundle,
+    validate_source_bundle,
+)
 from eidolon_deploy.manifest import V2_SYSTEM_ASSETS
 from eidolon_deploy.prepare_target import (
     TargetPreparationError,
@@ -33,6 +41,9 @@ def _repositories(tmp_path: Path) -> tuple[dict[str, Path], ReleaseRevisions]:
         "eidolon_data": "data",
         "eidolon_hub": "hub",
         "eidolon_admin": "admin",
+        "eidolon_agent": "agent",
+        "eidolon_channel": "channel",
+        "eidolon_memory": "memory",
         "eidolon_sdk": "sdk",
     }
     for source_id, revision_name in revision_names.items():
@@ -52,6 +63,11 @@ def _repositories(tmp_path: Path) -> tuple[dict[str, Path], ReleaseRevisions]:
                 path = repository / source
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(f"asset:{source}\n", encoding="utf-8")
+        if source_id == "eidolon_channel":
+            for relative in _CHANNEL_MODEL_PATHS:
+                model = repository / relative
+                model.parent.mkdir(parents=True, exist_ok=True)
+                model.write_bytes(b"model" * 1024)
         _run("git", "-C", str(repository), "add", ".")
         _run("git", "-C", str(repository), "commit", "-qm", "fixture")
         revisions[revision_name] = _run("git", "-C", str(repository), "rev-parse", "HEAD")
@@ -103,6 +119,9 @@ def test_bundle_requires_exact_commit_and_complete_fixed_assets(tmp_path: Path) 
         data=revisions.data,
         hub=revisions.hub,
         admin=revisions.admin,
+        agent=revisions.agent,
+        channel=revisions.channel,
+        memory=revisions.memory,
         sdk=revisions.sdk,
     )
     with pytest.raises(BundleError, match="Git archive operation failed"):
@@ -112,6 +131,171 @@ def test_bundle_requires_exact_commit_and_complete_fixed_assets(tmp_path: Path) 
             revisions=bad_revisions,
             output=tmp_path / "missing-commit",
         )
+
+
+def test_bundle_rejects_unhydrated_channel_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories")
+    model = repositories["eidolon_channel"] / next(iter(_CHANNEL_MODEL_PATHS))
+    model.write_text(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:" + "0" * 64 + "\nsize 100000\n",
+        encoding="utf-8",
+    )
+    _run("git", "-C", str(repositories["eidolon_channel"]), "add", str(model))
+    _run(
+        "git",
+        "-C",
+        str(repositories["eidolon_channel"]),
+        "commit",
+        "-qm",
+        "replace model with pointer",
+    )
+    pointer_revisions = ReleaseRevisions(
+        kernel=revisions.kernel,
+        data=revisions.data,
+        hub=revisions.hub,
+        admin=revisions.admin,
+        agent=revisions.agent,
+        channel=_run("git", "-C", str(repositories["eidolon_channel"]), "rev-parse", "HEAD"),
+        memory=revisions.memory,
+        sdk=revisions.sdk,
+    )
+    monkeypatch.setattr(
+        "eidolon_deploy.bundle._smudge_lfs_pointer",
+        lambda *_args: (_ for _ in ()).throw(
+            BundleError("Channel model artifact is an unhydrated LFS pointer")
+        ),
+    )
+
+    with pytest.raises(BundleError, match="unhydrated LFS pointer"):
+        build_source_bundle(
+            release_id="20260807-lfs-pointer",
+            repositories=repositories,
+            revisions=pointer_revisions,
+            output=tmp_path / "pointer",
+        )
+
+
+def test_bundle_hydrates_exact_commit_lfs_models_without_working_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories")
+    repository = repositories["eidolon_channel"]
+    relative = next(iter(_CHANNEL_MODEL_PATHS))
+    model = repository / relative
+    hydrated = b"hydrated-model" * 1024
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{hashlib.sha256(hydrated).hexdigest()}\n"
+        f"size {len(hydrated)}\n"
+    )
+    model.write_text(pointer, encoding="utf-8")
+    _run("git", "-C", str(repository), "add", str(model))
+    _run("git", "-C", str(repository), "commit", "-qm", "store model pointer")
+    revision = _run("git", "-C", str(repository), "rev-parse", "HEAD")
+    model.write_bytes(b"uncommitted-working-tree-bytes")
+    hydrated_revisions = ReleaseRevisions(
+        kernel=revisions.kernel,
+        data=revisions.data,
+        hub=revisions.hub,
+        admin=revisions.admin,
+        agent=revisions.agent,
+        channel=revision,
+        memory=revisions.memory,
+        sdk=revisions.sdk,
+    )
+
+    def fake_smudge(_git, _repository, observed, pointer_bytes, destination):
+        assert observed == relative
+        assert pointer_bytes == pointer.encode()
+        destination.write_bytes(hydrated)
+
+    monkeypatch.setattr("eidolon_deploy.bundle._smudge_lfs_pointer", fake_smudge)
+    output = tmp_path / "hydrated"
+    build_source_bundle(
+        release_id="20260809-lfs-hydrated",
+        repositories=repositories,
+        revisions=hydrated_revisions,
+        output=output,
+    )
+
+    with tarfile.open(output / "sources/eidolon_channel.tar", "r:") as archive:
+        stream = archive.extractfile(relative)
+        assert stream is not None
+        assert stream.read() == hydrated
+
+
+def test_lfs_smudge_verifies_pointer_digest(monkeypatch, tmp_path: Path) -> None:
+    hydrated = b"exact-lfs-object"
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{hashlib.sha256(hydrated).hexdigest()}\n"
+        f"size {len(hydrated)}\n"
+    ).encode()
+
+    def fake_run(command, **kwargs):
+        assert command[-2:] == ("--", "model.onnx")
+        assert kwargs["input"].startswith(b"version https://git-lfs.github.com/spec/v1\n")
+        kwargs["stdout"].write(hydrated)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("eidolon_deploy.bundle.subprocess.run", fake_run)
+    destination = tmp_path / "hydrated"
+    _smudge_lfs_pointer("git", tmp_path, "model.onnx", pointer, destination)
+    assert destination.read_bytes() == hydrated
+
+    wrong_pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{hashlib.sha256(hydrated).hexdigest()}\n"
+        "size 999\n"
+    ).encode()
+    with pytest.raises(BundleError, match="digest mismatch"):
+        _smudge_lfs_pointer("git", tmp_path, "model.onnx", wrong_pointer, tmp_path / "wrong")
+
+
+def test_lfs_smudge_reports_invalid_pointer_process_failure_and_spawn_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    with pytest.raises(BundleError, match="invalid LFS pointer"):
+        _smudge_lfs_pointer("git", tmp_path, "model.onnx", b"invalid", tmp_path / "invalid")
+
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'0' * 64}\n"
+        "size 1\n"
+    ).encode()
+    monkeypatch.setattr(
+        "eidolon_deploy.bundle.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess((), 1, b"", b"missing object"),
+    )
+    with pytest.raises(BundleError, match="hydration failed.*missing object"):
+        _smudge_lfs_pointer("git", tmp_path, "model.onnx", pointer, tmp_path / "failed")
+
+    monkeypatch.setattr(
+        "eidolon_deploy.bundle.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("git-lfs missing")),
+    )
+    with pytest.raises(BundleError, match="could not run.*git-lfs missing"):
+        _smudge_lfs_pointer("git", tmp_path, "model.onnx", pointer, tmp_path / "spawn")
+
+
+def test_source_archive_validation_rejects_remaining_lfs_pointer(tmp_path: Path) -> None:
+    archive_path = tmp_path / "channel.tar"
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'0' * 64}\n"
+        "size 10\n"
+    ).encode()
+    with tarfile.open(archive_path, "w:") as archive:
+        for relative in {"pyproject.toml", "uv.lock", *_CHANNEL_MODEL_PATHS}:
+            payload = pointer if relative in _CHANNEL_MODEL_PATHS else b"fixture"
+            info = tarfile.TarInfo(relative)
+            info.size = len(payload)
+            archive.addfile(info, fileobj=io.BytesIO(payload))
+
+    with pytest.raises(BundleError, match="unhydrated LFS pointer"):
+        _validate_source_archive("eidolon_channel", archive_path)
 
 
 def test_bundle_rejects_invalid_identity_repository_set_and_existing_output(
@@ -153,6 +337,9 @@ def test_bundle_rejects_invalid_identity_repository_set_and_existing_output(
         data=revisions.data,
         hub=revisions.hub,
         admin=_run("git", "-C", str(repositories["eidolon_admin"]), "rev-parse", "HEAD"),
+        agent=revisions.agent,
+        channel=revisions.channel,
+        memory=revisions.memory,
         sdk=revisions.sdk,
     )
     with pytest.raises(BundleError, match="archive is incomplete"):
@@ -202,7 +389,7 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
     assert descriptor == release_root / "release.json"
     assert release_root.stat().st_mode & 0o777 == 0o755
     assert (release_root / "eidolon_admin/pyproject.toml").is_file()
-    assert len([call for call in calls if call[0] == "native environment preparation"]) == 4
+    assert len([call for call in calls if call[0] == "native environment preparation"]) == 7
     assert all(
         "--no-python-downloads" in call
         for call in calls

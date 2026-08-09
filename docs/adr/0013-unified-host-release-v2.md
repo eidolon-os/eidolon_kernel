@@ -3,6 +3,7 @@
 - 状态：Accepted；隔离实现与测试完成，真实 Raspberry Pi 激活待显式授权
 - 日期：2026-08-07
 - Supersedes：ADR-0012 的 release component 范围；保留其 preparation/activation 分离和数据库边界
+- Extended by：ADR-0015 的 Agent/Channel/Memory/NATS/LiveKit 完整产品运行图
 
 ## Context
 

@@ -28,6 +28,9 @@ _SOURCE_IDS = (
     "eidolon_data",
     "eidolon_hub",
     "eidolon_admin",
+    "eidolon_agent",
+    "eidolon_channel",
+    "eidolon_memory",
     "eidolon_sdk",
 )
 _REVISION_FLAGS = {
@@ -35,6 +38,9 @@ _REVISION_FLAGS = {
     "eidolon_data": "--data-revision",
     "eidolon_hub": "--hub-revision",
     "eidolon_admin": "--admin-revision",
+    "eidolon_agent": "--agent-revision",
+    "eidolon_channel": "--channel-revision",
+    "eidolon_memory": "--memory-revision",
     "eidolon_sdk": "--sdk-revision",
 }
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")

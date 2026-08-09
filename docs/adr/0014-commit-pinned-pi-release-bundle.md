@@ -2,6 +2,7 @@
 
 - 状态：Accepted；本地 bundle/prepare/driver 测试完成，真实 Pi 运行待显式授权
 - 日期：2026-08-07
+- Extended by：ADR-0015 的 8-source bundle、7 component 与 Channel 模型 hydration gate
 
 ## Context
 

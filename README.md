@@ -278,13 +278,16 @@ Bootstrap/Admin 服务或 Hub 源码。
 ## Target Release 与回滚
 
 统一 Release V2 把部署收敛为一个独立 root 运维事务，但不让 `eidolond` 安装或升级自己。产品镜像/
-构建阶段先在目标 `linux/aarch64` 上准备原生 Kernel、Data、Hub、Admin venv 及 SDK support source；
-随后 `eidolon-release seal` 生成严格的 `release.json` 与 SHA-256 sidecar。SDK 是固定构建输入，不是
-系统服务；四个 service component 与 Kernel/Admin 提供的产品系统资产在同一事务中切换。
+构建阶段先在目标 `linux/aarch64` 上准备原生 Kernel、Data、Hub、Admin、Agent、Channel、Memory
+venv 及 SDK support source；随后 `eidolon-release seal` 生成严格的 `release.json` 与 SHA-256
+sidecar。SDK 是固定构建输入，不是系统服务；7 个 service component 与 22 个 allowlist 产品系统
+资产在同一事务中切换。Channel bundle 额外拒绝未 hydration 的 Git LFS 模型指针。
 
 激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止外部入口、
-Bootstrap、`eidolond` 与 children → 安装 allowlist 资产 → 原子切换四个 symlink → daemon-reload →
-按 Bootstrap/eidolond/Local API/Admin 顺序启动 → 等待六个独立 readiness → 写回执。任一步失败都恢复 snapshot；显式
+Bootstrap、`eidolond` 与 children → 安装 allowlist 资产 → 原子切换 7 个 symlink → daemon-reload →
+按 Bootstrap/eidolond/Local API/Admin 顺序启动 → 等待 12 个独立 readiness → 写回执。`eidolond`
+继续管理 NATS、LiveKit、Data、Hub、Kernel、Memory、Agent、Channel 的 desired state。任一步失败都
+恢复 snapshot；显式
 rollback 可由之后的独立运维进程加载同一 snapshot。snapshot V2 除内容与 mode 外显式记录既有系统
 资产的 UID/GID，并在原子替换前恢复 ownership；缺失 ownership 的旧 snapshot fail closed，不做开发期
 兼容。密钥只校验存在性和 `0600`，从不进入 release、snapshot 或回执。
@@ -301,6 +304,9 @@ backup/forward/rollback 语义，不能把不可逆迁移塞进现有 symlink ro
 driver 默认只传输、原生构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
 读取 working-tree 修改，也不接管 first-install identity/secret/Data baseline。详见
 [ADR-0014](docs/adr/0014-commit-pinned-pi-release-bundle.md)。
+完整产品后端范围及不进入 Pi descriptor 的开发进程见
+[ADR-0015](docs/adr/0015-full-product-pi-runtime.md)。Mac 侧 first install、基础宿主机 provision 和日常
+运维入口位于独立 `eidolon_ops/eidolon-pi`，不扩大 Kernel runtime 或 Admin 的权威边界。
 
 Hub/Data 都是 Kernel 的软能力依赖：Hub 不 ready 只阻断新 Mount，Data 不 ready 只阻断 Attach；
 Kernel 仍启动并提供已有 Mount 热读，因此 system manifest 不伪造 hard dependency。
@@ -317,6 +323,7 @@ uv run pytest --cov=eidolon_kernel --cov=eidolon_system --cov=eidolon_deploy --c
 ```
 
 测试分为 unit、contract、component、functional、E2E 和 architecture。最新结果见
+[完整产品 Pi runtime 报告](docs/testing/reports/2026-08-07-full-product-pi-runtime.md)、
 [Data directory 与 Companion Attachment 报告](docs/testing/reports/2026-08-06-data-directory-companion-attachment.md)；
 M2-B 真机重启基线见
 [单 Host 启动与 Device Mount 进程 E2E 报告](docs/testing/reports/2026-08-06-single-host-boot-device-mount.md)。
