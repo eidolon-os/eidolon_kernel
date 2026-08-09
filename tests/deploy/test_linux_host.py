@@ -89,7 +89,7 @@ def prepared_release(tmp_path: Path):
 
         old_target = _host_path(
             root,
-            f"/srv/eidolon/releases/old/{component['component_id']}",
+            f"/opt/eidolon/releases/old/{component['component_id']}",
         )
         old_target.mkdir(parents=True)
         if component["component_id"] == "eidolon_admin":
@@ -433,6 +433,91 @@ def test_snapshot_switch_and_restore_are_recoverable(tmp_path: Path) -> None:
         )
     for destination, content in old_assets.items():
         assert _host_path(root, destination).read_text() == content
+
+
+def test_core_topology_expands_and_rollback_removes_new_components(tmp_path: Path) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    expansion_components = {"eidolon_agent", "eidolon_channel", "eidolon_memory"}
+    new_asset_destinations = {
+        "/etc/systemd/system/eidolon-nats.service",
+        "/etc/systemd/system/eidolon-livekit.service",
+        "/etc/systemd/system/eidolon-memory-supervisor.service",
+        "/etc/systemd/system/eidolon-memory-discovery.service",
+        "/etc/systemd/system/eidolon-agent.service",
+        "/etc/systemd/system/eidolon-channel.service",
+        "/usr/local/libexec/eidolon-livekit-launch",
+    }
+    for component in release.components:
+        if component.component_id in expansion_components:
+            _host_path(root, component.current_link).unlink()
+    for destination in new_asset_destinations:
+        _host_path(root, destination).unlink()
+
+    previous = host.preflight(release)
+
+    assert set(previous) == {
+        "eidolon_kernel",
+        "eidolon_data",
+        "eidolon_hub",
+        "eidolon_admin",
+    }
+    snapshot = host.create_snapshot(release, previous)
+    host.install_assets(release)
+    host.switch_components(release)
+    fresh_host = LinuxDeploymentHost(
+        root=root,
+        runner=runner,
+        system="linux",
+        machine="aarch64",
+        readiness_probe=lambda check: True,
+        require_root=False,
+    )
+    assert fresh_host.load_snapshot(release, Path(snapshot.backup_path)) == snapshot
+    observed_readiness: list[str] = []
+    host._readiness_probe = lambda check: observed_readiness.append(check.check_id) or True
+    runner.calls.clear()
+
+    host.restore(release, snapshot)
+
+    for component in release.components:
+        current = _host_path(root, component.current_link)
+        if component.component_id in expansion_components:
+            assert not current.exists()
+            assert not current.is_symlink()
+        else:
+            assert str(current.resolve()).endswith(f"/old/{component.component_id}")
+    for destination in new_asset_destinations:
+        assert not _host_path(root, destination).exists()
+    started = {call[-1] for call in runner.calls if call[:2] == ("/usr/bin/systemctl", "start")}
+    assert not started & {
+        "eidolon-nats.service",
+        "eidolon-livekit.service",
+        "eidolon-memory-supervisor.service",
+        "eidolon-memory-discovery.service",
+        "eidolon-agent.service",
+        "eidolon-channel.service",
+    }
+    assert not set(observed_readiness) & {"nats", "livekit", "memory", "agent", "channel"}
+
+
+def test_topology_expansion_never_allows_a_missing_core_component(tmp_path: Path) -> None:
+    root, release, host, _ = prepared_release(tmp_path)
+    kernel = release.components_by_id["eidolon_kernel"]
+    _host_path(root, kernel.current_link).unlink()
+
+    with pytest.raises(LinuxDeploymentError, match="current link is missing"):
+        host.preflight(release)
+
+
+def test_topology_expansion_rejects_a_partial_new_component_set(tmp_path: Path) -> None:
+    root, release, host, _ = prepared_release(tmp_path)
+    expansion_components = {"eidolon_agent", "eidolon_channel"}
+    for component in release.components:
+        if component.component_id in expansion_components:
+            _host_path(root, component.current_link).unlink()
+
+    with pytest.raises(LinuxDeploymentError, match="partial topology expansion"):
+        host.preflight(release)
 
 
 def test_first_install_rollback_restores_only_previous_units_and_readiness(
