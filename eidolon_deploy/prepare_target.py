@@ -46,7 +46,7 @@ _REVISION_FLAGS = {
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_RELEASES = Path("/srv/eidolon/releases")
+_RELEASES = Path("/opt/eidolon/releases")
 _LOCK = Path("/run/lock/eidolon-release-prepare.lock")
 
 

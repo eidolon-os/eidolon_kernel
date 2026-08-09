@@ -25,10 +25,10 @@ class FakeHost:
         return DeploymentSnapshot(
             transaction_id="tx-cli",
             previous_targets={
-                "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
-                "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
-                "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
-                "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
+                "eidolon_kernel": "/opt/eidolon/releases/old/eidolon_kernel",
+                "eidolon_data": "/opt/eidolon/releases/old/eidolon_data",
+                "eidolon_hub": "/opt/eidolon/releases/old/eidolon_hub",
+                "eidolon_admin": "/opt/eidolon/releases/old/eidolon_admin",
             },
             backup_path=str(path),
         )
@@ -69,10 +69,10 @@ def _receipt(status: ActivationStatus) -> ActivationReceipt:
         transaction_id=None if status is ActivationStatus.DRY_RUN else "tx-cli",
         previous_targets=MappingProxyType(
             {
-                "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
-                "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
-                "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
-                "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
+                "eidolon_kernel": "/opt/eidolon/releases/old/eidolon_kernel",
+                "eidolon_data": "/opt/eidolon/releases/old/eidolon_data",
+                "eidolon_hub": "/opt/eidolon/releases/old/eidolon_hub",
+                "eidolon_admin": "/opt/eidolon/releases/old/eidolon_admin",
             }
         ),
     )

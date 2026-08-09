@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def release_document(release_id: str = "20260806-m2d-test") -> dict:
-    release_root = f"/srv/eidolon/releases/{release_id}"
+    release_root = f"/opt/eidolon/releases/{release_id}"
     return {
         "schema_version": 2,
         "release_id": release_id,
@@ -18,7 +18,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_kernel",
                 "revision": "a" * 40,
                 "release_path": f"{release_root}/eidolon_kernel",
-                "current_link": "/srv/eidolon/current/eidolon_kernel",
+                "current_link": "/opt/eidolon/current/eidolon_kernel",
                 "source_tree_sha256": "1" * 64,
                 "lock_sha256": "2" * 64,
                 "environment_sha256": "3" * 64,
@@ -31,7 +31,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_data",
                 "revision": "b" * 40,
                 "release_path": f"{release_root}/eidolon_data",
-                "current_link": "/srv/eidolon/current/eidolon_data",
+                "current_link": "/opt/eidolon/current/eidolon_data",
                 "source_tree_sha256": "4" * 64,
                 "lock_sha256": "5" * 64,
                 "environment_sha256": "6" * 64,
@@ -41,7 +41,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_hub",
                 "revision": "d" * 40,
                 "release_path": f"{release_root}/eidolon_hub",
-                "current_link": "/srv/eidolon/current/eidolon_hub",
+                "current_link": "/opt/eidolon/current/eidolon_hub",
                 "source_tree_sha256": "7" * 64,
                 "lock_sha256": "8" * 64,
                 "environment_sha256": "9" * 64,
@@ -51,7 +51,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_admin",
                 "revision": "e" * 40,
                 "release_path": f"{release_root}/eidolon_admin",
-                "current_link": "/srv/eidolon/current/eidolon_admin",
+                "current_link": "/opt/eidolon/current/eidolon_admin",
                 "source_tree_sha256": "a" * 64,
                 "lock_sha256": "b" * 64,
                 "environment_sha256": "c" * 64,
@@ -65,7 +65,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_agent",
                 "revision": "f" * 40,
                 "release_path": f"{release_root}/eidolon_agent",
-                "current_link": "/srv/eidolon/current/eidolon_agent",
+                "current_link": "/opt/eidolon/current/eidolon_agent",
                 "source_tree_sha256": "d" * 64,
                 "lock_sha256": "e" * 64,
                 "environment_sha256": "f" * 64,
@@ -75,7 +75,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_channel",
                 "revision": "1" * 40,
                 "release_path": f"{release_root}/eidolon_channel",
-                "current_link": "/srv/eidolon/current/eidolon_channel",
+                "current_link": "/opt/eidolon/current/eidolon_channel",
                 "source_tree_sha256": "1" * 64,
                 "lock_sha256": "2" * 64,
                 "environment_sha256": "3" * 64,
@@ -85,7 +85,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "component_id": "eidolon_memory",
                 "revision": "2" * 40,
                 "release_path": f"{release_root}/eidolon_memory",
-                "current_link": "/srv/eidolon/current/eidolon_memory",
+                "current_link": "/opt/eidolon/current/eidolon_memory",
                 "source_tree_sha256": "4" * 64,
                 "lock_sha256": "5" * 64,
                 "environment_sha256": "6" * 64,

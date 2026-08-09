@@ -83,7 +83,7 @@ done
 
 ssh_options=(-o BatchMode=yes -o ConnectTimeout=10)
 remote_bundle="/var/tmp/eidolon-release-${release_id}"
-remote_release="/srv/eidolon/releases/${release_id}"
+remote_release="/opt/eidolon/releases/${release_id}"
 remote_cli="${remote_release}/eidolon_kernel/.venv/bin/eidolon-release"
 descriptor="${remote_release}/release.json"
 

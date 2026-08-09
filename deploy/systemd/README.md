@@ -27,7 +27,7 @@ Image/first-install 边界必须：
    或 receipt。
 5. 从 Data 当前提交的 `0001_system_data_v2` 建立全新 baseline；绝不恢复旧迁移或旧
    `eidolon.sqlite3`。
-6. 在 `/srv/eidolon/current/` 提供 7 个精确 release link；SDK 是构建输入，不是 runtime service。
+6. 在 `/opt/eidolon/current/` 提供 7 个精确 release link；SDK 是构建输入，不是 runtime service。
 7. 由固定 foundation profile 提供 `/usr/local/bin/nats-server`、`livekit-server`，以及 BlueZ、
    NetworkManager、Avahi、FFmpeg、uv、Node 和编译/运行库。
 8. 仅 enable Bootstrap、eidolond、Local API、Admin；其余服务由 eidolond reconciliation 拉起。

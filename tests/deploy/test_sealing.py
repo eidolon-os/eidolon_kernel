@@ -35,7 +35,7 @@ def _host_path(root: Path, value: str) -> Path:
 
 def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
     root = tmp_path / "root"
-    release_root = _host_path(root, f"/srv/eidolon/releases/{release_id}")
+    release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
     sources = {
         source_id: release_root / source_id
         for source_id in (*V2_COMPONENT_ENTRYPOINTS, "eidolon_sdk")
@@ -122,7 +122,7 @@ def test_sealing_rejects_wrong_target_or_incomplete_preparation(tmp_path: Path) 
             machine="arm64",
         )
 
-    (_host_path(root, f"/srv/eidolon/releases/{release_id}") / "eidolon_sdk").rename(
+    (_host_path(root, f"/opt/eidolon/releases/{release_id}") / "eidolon_sdk").rename(
         tmp_path / "missing-sdk"
     )
     with pytest.raises(PreparationError, match="source directory"):

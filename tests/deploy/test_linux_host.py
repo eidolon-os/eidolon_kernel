@@ -89,7 +89,7 @@ def prepared_release(tmp_path: Path):
 
         old_target = _host_path(
             root,
-            f"/srv/eidolon/releases/old/{component['component_id']}",
+            f"/opt/eidolon/releases/old/{component['component_id']}",
         )
         old_target.mkdir(parents=True)
         if component["component_id"] == "eidolon_admin":

@@ -27,7 +27,7 @@ def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
     ]
     assert release.schema_version == 2
     assert release.components[0].release_path == Path(
-        "/srv/eidolon/releases/20260806-m2d-test/eidolon_kernel"
+        "/opt/eidolon/releases/20260806-m2d-test/eidolon_kernel"
     )
     assert release.support_sources[0].source_id == "eidolon_sdk"
     assert release.readiness_checks[0].socket == Path("/run/eidolon/system.sock")
@@ -76,7 +76,7 @@ def test_rejects_missing_invalid_sidecar_and_invalid_json(tmp_path: Path) -> Non
         ),
         (
             lambda value: value["components"][0].update(
-                {"release_path": "/srv/eidolon/releases/other/eidolon_kernel"}
+                {"release_path": "/opt/eidolon/releases/other/eidolon_kernel"}
             ),
             "release path",
         ),
@@ -86,7 +86,7 @@ def test_rejects_missing_invalid_sidecar_and_invalid_json(tmp_path: Path) -> Non
         ),
         (
             lambda value: value["support_sources"][0].update(
-                {"release_path": "/srv/eidolon/releases/other/eidolon_sdk"}
+                {"release_path": "/opt/eidolon/releases/other/eidolon_sdk"}
             ),
             "support source",
         ),

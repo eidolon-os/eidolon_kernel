@@ -9,8 +9,9 @@ User=eidolon
 Group=eidolon
 UMask=0007
 EnvironmentFile=-/etc/eidolon/kernel.env
+EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_KERNEL_SETTINGS_YAML=/etc/eidolon/kernel.yaml
-ExecStart=/srv/eidolon/current/eidolon_kernel/.venv/bin/uvicorn eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 8083
+ExecStart=/opt/eidolon/current/eidolon_kernel/.venv/bin/uvicorn eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 8083
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM

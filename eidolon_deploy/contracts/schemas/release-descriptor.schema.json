@@ -120,7 +120,7 @@
           ]
         },
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "release_path": {"type": "string", "pattern": "^/srv/eidolon/releases/"},
+        "release_path": {"type": "string", "pattern": "^/opt/eidolon/releases/"},
         "current_link": {"type": "string", "minLength": 1, "maxLength": 200},
         "source_tree_sha256": {"$ref": "#/$defs/sha256"},
         "lock_sha256": {"$ref": "#/$defs/sha256"},
@@ -140,7 +140,7 @@
       "properties": {
         "source_id": {"const": "eidolon_sdk"},
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "release_path": {"type": "string", "pattern": "^/srv/eidolon/releases/"},
+        "release_path": {"type": "string", "pattern": "^/opt/eidolon/releases/"},
         "source_tree_sha256": {"$ref": "#/$defs/sha256"}
       }
     },

@@ -12,7 +12,7 @@ M2-B/M2-C 已在 Raspberry Pi 5 上证明 `systemd → eidolond → Data/Hub/Ker
 实际部署事实是：
 
 - systemd 只负责启动 `eidolond`；Data/Hub/Kernel desired state 仍属于 eidolond SQLite；
-- Kernel 与 Data 由 `/srv/eidolon/current/*` symlink 选择 release；
+- Kernel 与 Data 由当时的 `/srv/eidolon/current/*` symlink 选择 release；
 - Data 的 lock 使用相邻 `eidolon_sdk` source。SDK 因此是受控 release 输入，但不是 lifecycle service；
 - Kernel、Data、eidolond 各自持有 SQLite authority，当前 release 没有数据库 schema migration；
 - Hub/Admin/Bootstrap 已由其他边界部署，本阶段不能顺便接管；

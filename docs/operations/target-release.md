@@ -47,7 +47,7 @@ sudo python3 /path/to/bundle/prepare_target.py /path/to/bundle \
 
 Preparer 只依赖 Python 标准库。它在非阻塞 preparation lock 下重新校验所有字节，拒绝绝对路径、
 `..`、symlink/device 等 unsafe tar member，在
-`/srv/eidolon/releases/<release_id>/` 提取 8 棵 source，并用
+`/opt/eidolon/releases/<release_id>/` 提取 8 棵 source，并用
 `uv sync --frozen --no-dev --no-python-downloads` 为 7 个运行组件建立 Pi 原生环境。Data 明确安装
 `api` extra。任一步失败只删除本次新建的 release 目录；current link、secret 和数据库不变。
 
@@ -72,8 +72,8 @@ Ops 必须先用显式 `expand` 阶段安装新服务输入；普通 `install` �
 Dry-run 执行完整 sealed preflight，但不创建 snapshot、不停服务、不切换：
 
 ```bash
-sudo /srv/eidolon/releases/<id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
-  /srv/eidolon/releases/<id>/release.json --dry-run
+sudo /opt/eidolon/releases/<id>/eidolon_kernel/.venv/bin/eidolon-release deploy \
+  /opt/eidolon/releases/<id>/release.json --dry-run
 ```
 
 实际激活去掉 `--dry-run`。`eidolond` 仍是 10 个 system service 的唯一 desired-state authority；
@@ -91,11 +91,11 @@ Data V2 首次 baseline 属于 `eidolon-pi install`，不允许导入旧迁移�
 ## Doctor 与 rollback
 
 ```bash
-sudo /srv/eidolon/current/eidolon_kernel/.venv/bin/eidolon-release doctor \
-  /srv/eidolon/releases/<id>/release.json
+sudo /opt/eidolon/current/eidolon_kernel/.venv/bin/eidolon-release doctor \
+  /opt/eidolon/releases/<id>/release.json
 
-sudo /srv/eidolon/releases/<id>/eidolon_kernel/.venv/bin/eidolon-release rollback \
-  /srv/eidolon/releases/<id>/release.json \
+sudo /opt/eidolon/releases/<id>/eidolon_kernel/.venv/bin/eidolon-release rollback \
+  /opt/eidolon/releases/<id>/release.json \
   /var/lib/eidolon/deployments/<id>-<transaction_id>
 ```
 

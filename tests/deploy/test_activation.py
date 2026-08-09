@@ -35,10 +35,10 @@ class FakeDeploymentHost:
     def preflight(self, release) -> dict[str, str]:
         self._call("preflight")
         return {
-            "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
-            "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
-            "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
-            "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
+            "eidolon_kernel": "/opt/eidolon/releases/old/eidolon_kernel",
+            "eidolon_data": "/opt/eidolon/releases/old/eidolon_data",
+            "eidolon_hub": "/opt/eidolon/releases/old/eidolon_hub",
+            "eidolon_admin": "/opt/eidolon/releases/old/eidolon_admin",
         }
 
     def create_snapshot(self, release, previous_targets) -> DeploymentSnapshot:
@@ -147,10 +147,10 @@ def test_explicit_rollback_restores_snapshot_and_records_result() -> None:
     snapshot = DeploymentSnapshot(
         transaction_id="tx-previous",
         previous_targets={
-            "eidolon_kernel": "/srv/eidolon/releases/old/eidolon_kernel",
-            "eidolon_data": "/srv/eidolon/releases/old/eidolon_data",
-            "eidolon_hub": "/srv/eidolon/releases/old/eidolon_hub",
-            "eidolon_admin": "/srv/eidolon/releases/old/eidolon_admin",
+            "eidolon_kernel": "/opt/eidolon/releases/old/eidolon_kernel",
+            "eidolon_data": "/opt/eidolon/releases/old/eidolon_data",
+            "eidolon_hub": "/opt/eidolon/releases/old/eidolon_hub",
+            "eidolon_admin": "/opt/eidolon/releases/old/eidolon_admin",
         },
         backup_path="/var/lib/eidolon/deployments/tx-previous",
     )

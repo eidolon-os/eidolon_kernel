@@ -13,7 +13,9 @@ POLKIT = ROOT / "deploy/polkit/60-eidolon-system-manager.rules"
 
 
 def _unit(name: str) -> configparser.ConfigParser:
-    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    # systemd permits repeated directives such as EnvironmentFile; the stdlib
+    # parser is used only for scalar assertions in these tests.
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str
     with (SYSTEMD / name).open(encoding="utf-8") as stream:
         parser.read_file(stream)
@@ -41,22 +43,22 @@ def test_only_eidolond_is_enabled_by_host_init() -> None:
 def test_system_services_run_unprivileged_with_fixed_release_commands() -> None:
     expected_commands = {
         "eidolon-data.service": (
-            "/srv/eidolon/current/eidolon_data/.venv/bin/uvicorn "
+            "/opt/eidolon/current/eidolon_data/.venv/bin/uvicorn "
             "eidolon_data.api.companion_authority:create_app "
             "--factory --host 127.0.0.1 --port 8084"
         ),
         "eidolon-data-workspace.service": (
-            "/srv/eidolon/current/eidolon_data/.venv/bin/uvicorn "
+            "/opt/eidolon/current/eidolon_data/.venv/bin/uvicorn "
             "eidolon_data.api.workspace_authority:create_app "
             "--factory --host 127.0.0.1 --port 8085"
         ),
-        "eidolond.service": "/srv/eidolon/current/eidolon_kernel/.venv/bin/eidolond",
+        "eidolond.service": "/opt/eidolon/current/eidolon_kernel/.venv/bin/eidolond",
         "eidolon-hub.service": (
-            "/srv/eidolon/current/eidolon_hub/.venv/bin/uvicorn "
+            "/opt/eidolon/current/eidolon_hub/.venv/bin/uvicorn "
             "hub.main:app --host 127.0.0.1 --port 8082"
         ),
         "eidolon-kernel.service": (
-            "/srv/eidolon/current/eidolon_kernel/.venv/bin/uvicorn "
+            "/opt/eidolon/current/eidolon_kernel/.venv/bin/uvicorn "
             "eidolon_kernel.main:create_app --factory --host 127.0.0.1 --port 8083"
         ),
     }
@@ -80,7 +82,9 @@ def test_hub_hardening_allows_linux_interface_discovery() -> None:
 def test_data_unit_uses_dedicated_authority_store_and_secret_file() -> None:
     for unit in ("eidolon-data.service", "eidolon-data-workspace.service"):
         service = _unit(unit)["Service"]
-        assert service["EnvironmentFile"] == "-/etc/eidolon/data.env"
+        text = (SYSTEMD / unit).read_text(encoding="utf-8")
+        assert "EnvironmentFile=-/etc/eidolon/data.env" in text
+        assert "EnvironmentFile=/etc/eidolon/host.env" in text
         assert (
             "EIDOLON_DATA_SQLITE_PATH=/var/lib/eidolon/eidolon-system.sqlite3"
             in service["Environment"]

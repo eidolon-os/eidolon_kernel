@@ -29,7 +29,7 @@ from eidolon_deploy.manifest import (
 
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-_RELEASES = Path("/srv/eidolon/releases")
+_RELEASES = Path("/opt/eidolon/releases")
 
 
 class PreparationError(RuntimeError):
@@ -211,7 +211,7 @@ def seal_prepared_release(
                 "component_id": component_id,
                 "revision": revision,
                 "release_path": str(canonical_root / component_id),
-                "current_link": f"/srv/eidolon/current/{component_id}",
+                "current_link": f"/opt/eidolon/current/{component_id}",
                 "source_tree_sha256": source_tree_sha256(source),
                 "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
                 "environment_sha256": environment_sha256(environment.freeze_output),

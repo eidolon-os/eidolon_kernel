@@ -364,7 +364,7 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
 
     def fake_run(operation: str, *command: str) -> None:
         calls.append((operation, *command))
-        release_root = root / "srv/eidolon/releases/20260807-bundle-test"
+        release_root = root / "opt/eidolon/releases/20260807-bundle-test"
         if operation == "native environment preparation" and command[-1].endswith("eidolon_kernel"):
             sealer = release_root / "eidolon_kernel/.venv/bin/eidolon-release"
             sealer.parent.mkdir(parents=True, exist_ok=True)
@@ -385,7 +385,7 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
         require_root=False,
     )
 
-    release_root = root / "srv/eidolon/releases/20260807-bundle-test"
+    release_root = root / "opt/eidolon/releases/20260807-bundle-test"
     assert descriptor == release_root / "release.json"
     assert release_root.stat().st_mode & 0o777 == 0o755
     assert (release_root / "eidolon_admin/pyproject.toml").is_file()
@@ -426,7 +426,7 @@ def test_target_preparation_cleans_new_release_after_build_failure(
             require_root=False,
         )
 
-    assert not (root / "srv/eidolon/releases/20260807-bundle-test").exists()
+    assert not (root / "opt/eidolon/releases/20260807-bundle-test").exists()
 
 
 def test_target_preparation_rejects_wrong_target_and_tampered_preparer(
@@ -488,7 +488,7 @@ def test_target_preparation_rejects_unsafe_archive_even_with_updated_checksum(
             machine="aarch64",
             require_root=False,
         )
-    assert not (tmp_path / "host/srv/eidolon/releases/20260807-bundle-test").exists()
+    assert not (tmp_path / "host/opt/eidolon/releases/20260807-bundle-test").exists()
 
 
 def test_target_preparation_lock_rejects_concurrent_preparer(tmp_path: Path) -> None:

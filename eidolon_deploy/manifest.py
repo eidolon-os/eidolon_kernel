@@ -14,13 +14,13 @@ from urllib.parse import urlparse
 from jsonschema import Draft202012Validator, ValidationError
 
 _COMPONENT_LINKS = {
-    "eidolon_kernel": Path("/srv/eidolon/current/eidolon_kernel"),
-    "eidolon_data": Path("/srv/eidolon/current/eidolon_data"),
-    "eidolon_hub": Path("/srv/eidolon/current/eidolon_hub"),
-    "eidolon_admin": Path("/srv/eidolon/current/eidolon_admin"),
-    "eidolon_agent": Path("/srv/eidolon/current/eidolon_agent"),
-    "eidolon_channel": Path("/srv/eidolon/current/eidolon_channel"),
-    "eidolon_memory": Path("/srv/eidolon/current/eidolon_memory"),
+    "eidolon_kernel": Path("/opt/eidolon/current/eidolon_kernel"),
+    "eidolon_data": Path("/opt/eidolon/current/eidolon_data"),
+    "eidolon_hub": Path("/opt/eidolon/current/eidolon_hub"),
+    "eidolon_admin": Path("/opt/eidolon/current/eidolon_admin"),
+    "eidolon_agent": Path("/opt/eidolon/current/eidolon_agent"),
+    "eidolon_channel": Path("/opt/eidolon/current/eidolon_channel"),
+    "eidolon_memory": Path("/opt/eidolon/current/eidolon_memory"),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (Path(".venv/bin/eidolond"), Path(".venv/bin/uvicorn")),
@@ -300,7 +300,7 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
             "release descriptor component set must be the unique reviewed full product set"
         )
     for component in components:
-        expected_path = Path("/srv/eidolon/releases") / release_id / component.component_id
+        expected_path = Path("/opt/eidolon/releases") / release_id / component.component_id
         if component.release_path != expected_path:
             raise ReleaseDescriptorError(
                 f"component release path must be {expected_path}: {component.component_id}"
@@ -327,7 +327,7 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         )
         for item in document["support_sources"]
     )
-    expected_support_path = Path("/srv/eidolon/releases") / release_id / "eidolon_sdk"
+    expected_support_path = Path("/opt/eidolon/releases") / release_id / "eidolon_sdk"
     if (
         len(support_sources) != 1
         or support_sources[0].source_id != "eidolon_sdk"

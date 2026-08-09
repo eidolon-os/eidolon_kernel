@@ -10,15 +10,19 @@ User=eidolon
 Group=eidolon
 UMask=0007
 EnvironmentFile=/etc/eidolon/memory.env
-Environment=HOME=/var/lib/eidolon-runtime
+EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_MEMORY_SETTINGS_YAML=/etc/eidolon/memory.yaml
-ExecStart=/srv/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-discovery --host 127.0.0.1 --port 8020
+ExecStart=/opt/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-discovery --host 127.0.0.1 --port 8020
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM
 TimeoutStopSec=20s
-StateDirectory=eidolon-runtime
+StateDirectory=eidolon/memory
 StateDirectoryMode=0750
+RuntimeDirectory=eidolon/memory
+RuntimeDirectoryMode=0750
+LogsDirectory=eidolon/memory
+LogsDirectoryMode=0750
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
