@@ -84,6 +84,13 @@ _SQLITE_USER_VERSION_SCRIPT = (
     "connection.close()"
 )
 _SNAPSHOT_SCHEMA_VERSION = 2
+_TOPOLOGY_EXPANSION_COMPONENTS = frozenset(
+    {
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory",
+    }
+)
 
 
 class LinuxDeploymentError(RuntimeError):
@@ -240,6 +247,11 @@ class LinuxDeploymentHost:
 
             current_link = self._host_path(component.current_link)
             if not current_link.is_symlink():
+                if (
+                    component.component_id in _TOPOLOGY_EXPANSION_COMPONENTS
+                    and not current_link.exists()
+                ):
+                    continue
                 raise LinuxDeploymentError(
                     f"component current link is missing or not a symlink: {component.component_id}"
                 )
@@ -250,6 +262,9 @@ class LinuxDeploymentHost:
                 Path(previous_target),
             )
             previous_targets[component.component_id] = previous_target
+
+        if not self._valid_previous_targets(release, previous_targets):
+            raise LinuxDeploymentError("component current links are a partial topology expansion")
 
         components = release.components_by_id
         current_admin = self._validate_component_target(
@@ -415,6 +430,9 @@ class LinuxDeploymentHost:
         """Validate the active release without mutating host state."""
 
         current_targets = dict(self.preflight(release))
+        expected_components = {component.component_id for component in release.components}
+        if set(current_targets) != expected_components:
+            raise LinuxDeploymentError("active release is missing a component current link")
         for component in release.components:
             current = self._validate_component_target(
                 component.component_id,
@@ -473,11 +491,19 @@ class LinuxDeploymentHost:
 
         for component in release.components:
             previous = snapshot.previous_targets.get(component.component_id)
-            if not previous:
-                raise LinuxDeploymentError(
-                    f"snapshot has no previous component target: {component.component_id}"
-                )
             current_link = self._host_path(component.current_link)
+            if previous is None:
+                if component.component_id not in _TOPOLOGY_EXPANSION_COMPONENTS:
+                    raise LinuxDeploymentError(
+                        f"snapshot has no previous component target: {component.component_id}"
+                    )
+                self._validate_expansion_current(
+                    component.component_id,
+                    current_link,
+                    self._host_path(component.release_path),
+                )
+                current_link.unlink()
+                continue
             self._validate_component_target(
                 component.component_id,
                 current_link,
@@ -529,8 +555,7 @@ class LinuxDeploymentHost:
             or document.get("release_id") != release.release_id
             or not isinstance(transaction_id, str)
             or not isinstance(previous_targets, dict)
-            or set(previous_targets) != {item.component_id for item in release.components}
-            or not all(isinstance(value, str) for value in previous_targets.values())
+            or not self._valid_previous_targets(release, previous_targets)
         ):
             raise LinuxDeploymentError("deployment snapshot identity or shape is invalid")
         snapshot = DeploymentSnapshot(
@@ -567,7 +592,7 @@ class LinuxDeploymentHost:
     ) -> Path:
         resolved = target if target.is_absolute() else link.parent / target
         resolved = resolved.resolve(strict=False)
-        releases_root = self._host_path(Path("/srv/eidolon/releases")).resolve()
+        releases_root = (link.parent.parent / "releases").resolve()
         if resolved.name != component_id or resolved.parent.parent != releases_root:
             raise LinuxDeploymentError(
                 f"component current target is outside release namespace: {component_id}"
@@ -577,6 +602,26 @@ class LinuxDeploymentHost:
                 f"component current target directory is missing: {component_id}"
             )
         return resolved
+
+    def _validate_expansion_current(
+        self,
+        component_id: str,
+        current_link: Path,
+        release_path: Path,
+    ) -> None:
+        if not current_link.is_symlink():
+            raise LinuxDeploymentError(
+                f"new component current link is missing or unsafe: {component_id}"
+            )
+        current = self._validate_component_target(
+            component_id,
+            current_link,
+            Path(os.readlink(current_link)),
+        )
+        if current != release_path.resolve():
+            raise LinuxDeploymentError(
+                f"new component current target does not match failed release: {component_id}"
+            )
 
     def _read_snapshot_document(
         self,
@@ -591,7 +636,6 @@ class LinuxDeploymentHost:
             document = json.loads((backup_path / "snapshot.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise LinuxDeploymentError("deployment snapshot metadata is unreadable") from exc
-        expected_components = {item.component_id for item in release.components}
         previous_targets = document.get("previous_targets")
         asset_states = document.get("system_assets")
         if (
@@ -600,7 +644,7 @@ class LinuxDeploymentHost:
             or document.get("transaction_id") != snapshot.transaction_id
             or previous_targets != dict(snapshot.previous_targets)
             or not isinstance(previous_targets, dict)
-            or set(previous_targets) != expected_components
+            or not self._valid_previous_targets(release, previous_targets)
             or not isinstance(asset_states, list)
         ):
             raise LinuxDeploymentError("deployment snapshot identity or shape is invalid")
@@ -632,12 +676,35 @@ class LinuxDeploymentHost:
         ):
             raise LinuxDeploymentError("deployment snapshot asset set is invalid")
         for component in release.components:
+            previous = previous_targets.get(component.component_id)
+            if previous is None:
+                self._validate_expansion_current(
+                    component.component_id,
+                    self._host_path(component.current_link),
+                    self._host_path(component.release_path),
+                )
+                continue
             self._validate_component_target(
                 component.component_id,
                 self._host_path(component.current_link),
-                Path(previous_targets[component.component_id]),
+                Path(previous),
             )
         return document
+
+    @staticmethod
+    def _valid_previous_targets(
+        release: ReleaseDescriptor,
+        previous_targets: object,
+    ) -> bool:
+        if not isinstance(previous_targets, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in previous_targets.items()
+        ):
+            return False
+        expected = {component.component_id for component in release.components}
+        required = expected - _TOPOLOGY_EXPANSION_COMPONENTS
+        actual = set(previous_targets)
+        return actual == required or actual == expected
 
     def _restore_file_ownership(self, path: Path, uid: int, gid: int) -> None:
         """Restore captured ownership on the real host before atomic replacement."""

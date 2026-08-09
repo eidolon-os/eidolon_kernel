@@ -54,7 +54,7 @@ Preparer 只依赖 Python 标准库。它在非阻塞 preparation lock 下重新
 ## Activation 状态机
 
 ```text
-exclusive lock -> sealed preflight -> snapshot assets/7 links
+exclusive lock -> sealed preflight -> snapshot assets/existing links
   -> quiesce ingress + eidolond + children
   -> install 22 allowlist assets -> switch 7 links -> daemon-reload
   -> start Bootstrap -> eidolond -> Local API -> Admin
@@ -63,6 +63,11 @@ exclusive lock -> sealed preflight -> snapshot assets/7 links
        failure -> restore exact snapshot -> rolled_back
        restore failure -> rollback_failed and stop automation
 ```
+
+从已管理的 4-component core release 扩展时，preflight 只允许 Agent、Channel、Memory 三个新增 link
+不存在。Snapshot 因而保存 4 个旧 link；失败恢复会删除三个本次新增 link，并依据 asset snapshot 只恢复和
+启动原先存在的 unit。缺失 Kernel/Data/Hub/Admin link、混合 release target 或非 symlink 仍在停服务前拒绝。
+Ops 必须先用显式 `expand` 阶段安装新服务输入；普通 `install` 不收养已有 namespace。
 
 Dry-run 执行完整 sealed preflight，但不创建 snapshot、不停服务、不切换：
 
@@ -95,7 +100,8 @@ sudo /srv/eidolon/releases/<id>/eidolon_kernel/.venv/bin/eidolon-release rollbac
 ```
 
 Doctor 重新验证 descriptor、source/lock/venv/entrypoint fingerprint、22 个资产、11 个前置文件、
-7 个 active link、unit 与 12 个 readiness。Rollback 只恢复 snapshot 中的 allowlist 资产和 7 个 link，
+7 个 active link、unit 与 12 个 readiness。Rollback 只恢复 snapshot 中的 allowlist 资产和原有 link；
+拓扑扩展前不存在的新增 link 会被删除。Rollback
 不恢复 secret、Host identity 或数据库；因此它是代码/系统资产回滚，不是数据时间旅行。
 
 当前实现已通过本机隔离事务与故障注入；真实 Pi 的 native build、systemd/BlueZ/NetworkManager、重启、

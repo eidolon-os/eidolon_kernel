@@ -29,6 +29,11 @@ working tree；输出必须匹配 pointer 的 SHA-256 与 size，随后才写入
 网络失败、digest drift 或未 hydration pointer 都被 gate 拒绝。
 Readiness 类型扩展为 TCP、generic HTTP 2xx 和 systemd active，避免用假的 JSON 健康语义包装外部服务。
 
+已由旧 V2 core release 管理的 Host 允许一次受限拓扑扩展：只有 Agent、Channel、Memory 三个新增
+component 的 current link 可以在 preflight 时不存在；Kernel/Data/Hub/Admin 任一 link 缺失仍 fail closed。
+Snapshot 记录实际存在的旧 link，扩展失败时删除本次新增 link、恢复资产，并只启动旧快照中确实存在的
+unit/readiness。这个兼容口不能收养任意目录或绕过 secret/schema gate。
+
 ## Consequences
 
 - 一次成功 release receipt 覆盖手机 App 所需的正式后端拓扑，而非只覆盖核心控制面。
@@ -36,5 +41,7 @@ Readiness 类型扩展为 TCP、generic HTTP 2xx 和 systemd active，避免用�
   Host 的必要后端，若以后进入正式 Pi 镜像，必须先各自提供固定构建、unit、secret 与 readiness 契约。
 - First install 与 Debian/BlueZ/NetworkManager/NATS/LiveKit 基础 provision 继续由独立 `eidolon_ops`
   编排；Kernel release 事务不升级成通用包管理器。
+- Core-to-full 扩展所需的新 env/settings 由 Ops 在 activation 前以独立、可审计且不覆盖既有 core secret
+  的阶段注入；代码 rollback 不删除 secret，也不触碰 authority 数据。
 - 真实 Pi/手机尚未执行，因此 `app-ready` 只能证明 Host 侧门禁，不能替代 BLE、Host proof、TLS SPKI、
   Controller claim、Wi-Fi checkpoint 与 Workspace setup 的真实端到端验收。
