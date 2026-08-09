@@ -83,7 +83,7 @@ services:
     description: Device onboarding, registry and policy authority
     required: true
     enabled_by_default: true
-    dependencies: [livekit]
+    dependencies: [livekit, channel-provider]
     host_targets:
       systemd: eidolon-hub.service
     endpoints:
@@ -128,3 +128,16 @@ services:
     host_targets:
       systemd: eidolon-channel.service
     endpoints: []
+  - service_id: channel-provider
+    description: Hub-owned provisioning adapter for device LiveKit channels
+    required: true
+    enabled_by_default: true
+    dependencies: [livekit]
+    host_targets:
+      systemd: eidolon-channel-provider.service
+    endpoints:
+      - endpoint_id: device-channel-provider.http
+        protocol: http
+        address: http://127.0.0.1:8767
+        contract: application/vnd.eidolon.livekit-device+json;v=1
+        health_url: http://127.0.0.1:8767/health

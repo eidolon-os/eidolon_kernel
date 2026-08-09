@@ -82,6 +82,7 @@ def test_repository_profiles_and_seed_manifest_are_self_consistent() -> None:
             [
                 "agent",
                 "channel",
+                "channel-provider",
                 "data",
                 "data-workspace",
                 "hub",

@@ -1,6 +1,7 @@
 [Unit]
 Description=Eidolon Hub device admission authority
-After=local-fs.target network.target
+After=local-fs.target network.target eidolon-channel-provider.service
+Wants=eidolon-channel-provider.service
 StartLimitIntervalSec=0
 
 [Service]
