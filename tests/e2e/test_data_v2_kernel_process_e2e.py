@@ -22,6 +22,7 @@ DATA_ROOT = Path(
 DATA_PYTHON = DATA_ROOT / ".venv/bin/python"
 HUB_TOKEN = "kernel-e2e-hub-device-authority-token-0001"
 DATA_TOKEN = "kernel-e2e-data-authority-token-0001"
+ROSTER_TOKEN = "kernel-e2e-data-memory-runtime-roster-token-0001"
 OWNER_HEADERS = {"X-Eidolon-Owner": "owner-e2e"}
 
 pytestmark = pytest.mark.e2e
@@ -265,6 +266,7 @@ deployment:
                 **os.environ,
                 "EIDOLON_DATA_SQLITE_PATH": str(database),
                 "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN": DATA_TOKEN,
+                "EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN": ROSTER_TOKEN,
             },
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

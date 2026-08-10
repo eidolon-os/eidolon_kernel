@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from eidolon_deploy.contract import (
+    ACTIVATOR_RELATIVE_PATH,
+    ACTIVATOR_SOURCE_RELATIVE_PATH,
+)
 from eidolon_deploy.fingerprints import (
     INSTALLED_DISTRIBUTIONS_SCRIPT,
     environment_sha256,
@@ -274,10 +278,31 @@ def seal_prepared_release(
     if descriptor_path.exists() or checksum_path.exists():
         raise PreparationError("release descriptor is already sealed")
     payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    _publish_activator(release_root)
     _atomic_write(descriptor_path, payload)
     checksum = f"{hashlib.sha256(payload).hexdigest()}  {descriptor_path.name}\n".encode()
     _atomic_write(checksum_path, checksum)
     return descriptor_path
+
+
+def _publish_activator(release_root: Path) -> None:
+    """Expose the activator at a component-neutral path inside the release.
+
+    Operator tooling resolves the activator here, so which component ships it
+    stays an internal detail of this repository.
+    """
+
+    source = release_root / ACTIVATOR_SOURCE_RELATIVE_PATH
+    if not source.is_file() or not os.access(source, os.X_OK):
+        raise PreparationError(f"release activator is missing or not executable: {source}")
+    link = release_root / ACTIVATOR_RELATIVE_PATH
+    link.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    temporary = link.with_name(f".{link.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.symlink_to(source)
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _host_path(root: Path, value: Path) -> Path:

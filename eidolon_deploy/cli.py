@@ -16,6 +16,7 @@ from eidolon_deploy.activation import (
     receipt_to_document,
 )
 from eidolon_deploy.bundle import BundleError, build_source_bundle
+from eidolon_deploy.contract import contract_document
 from eidolon_deploy.linux import LinuxDeploymentError, LinuxDeploymentHost
 from eidolon_deploy.manifest import ReleaseDescriptorError, load_release_descriptor
 from eidolon_deploy.sealing import (
@@ -29,6 +30,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
     try:
+        if arguments.operation == "contract":
+            _print_json(contract_document())
+            return 0
         if arguments.operation == "bundle":
             revisions = ReleaseRevisions(
                 kernel=arguments.kernel_revision,
@@ -123,6 +127,10 @@ def _parser() -> argparse.ArgumentParser:
         description="Offline activation tool for a prepared Eidolon target release.",
     )
     operations = parser.add_subparsers(dest="operation", required=True)
+    operations.add_parser(
+        "contract",
+        help="report the release formats this activator speaks",
+    )
     bundle = operations.add_parser(
         "bundle", help="archive exact reviewed commits for target-native preparation"
     )

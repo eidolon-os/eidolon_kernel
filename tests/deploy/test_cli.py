@@ -220,3 +220,15 @@ def test_cli_reports_contract_failure_without_traceback(capsys, tmp_path: Path) 
     document = json.loads(capsys.readouterr().err)
     assert document["status"] == "failed"
     assert "missing.json" in document["error"]
+
+
+def test_contract_reports_the_formats_the_activator_speaks(capsys) -> None:
+    """Operator tooling verifies interoperability without inspecting the repository."""
+
+    assert cli.main(["contract"]) == 0
+
+    document = json.loads(capsys.readouterr().out)
+    assert document["tool"] == "eidolon-release"
+    assert document["activator_relative_path"] == ".release/bin/eidolon-release"
+    assert document["bundle_schema_version"] == 2
+    assert document["descriptor_schema_version"] == 2

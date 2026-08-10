@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from eidolon_deploy.contract import (
+    ACTIVATOR_RELATIVE_PATH,
+    ACTIVATOR_SOURCE_RELATIVE_PATH,
+)
 from eidolon_deploy.manifest import (
     V2_COMPONENT_ENTRYPOINTS,
     V2_SYSTEM_ASSETS,
@@ -50,7 +54,10 @@ def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
         python.parent.mkdir(parents=True)
         python.write_text("#!/bin/sh\n")
         python.chmod(0o755)
-        for relative in entrypoints:
+        extra = (
+            (Path(".venv/bin/eidolon-release"),) if component_id == "eidolon_kernel" else ()
+        )
+        for relative in (*entrypoints, *extra):
             executable = component / relative
             executable.parent.mkdir(parents=True, exist_ok=True)
             executable.write_text("#!/bin/sh\n")
@@ -185,6 +192,44 @@ def test_sealing_rejects_invalid_id_and_resealing(tmp_path: Path) -> None:
             host_root=root,
             release_id=release_id,
             revisions=revisions,
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+        )
+
+
+def test_sealing_publishes_a_component_neutral_activator(tmp_path: Path) -> None:
+    """Operator tooling resolves the activator without naming a component."""
+
+    release_id = "20260811-activator"
+    root = _prepared_tree(tmp_path, release_id)
+
+    seal_prepared_release(
+        host_root=root,
+        release_id=release_id,
+        revisions=_revisions(),
+        inspector=FakeInspector(),
+        system="linux",
+        machine="aarch64",
+    )
+
+    release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
+    published = release_root / ACTIVATOR_RELATIVE_PATH
+    assert published.is_symlink()
+    assert published.resolve() == (release_root / ACTIVATOR_SOURCE_RELATIVE_PATH).resolve()
+
+
+def test_sealing_refuses_a_release_without_its_activator(tmp_path: Path) -> None:
+    release_id = "20260811-no-activator"
+    root = _prepared_tree(tmp_path, release_id)
+    release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
+    (release_root / ACTIVATOR_SOURCE_RELATIVE_PATH).unlink()
+
+    with pytest.raises(PreparationError, match="activator"):
+        seal_prepared_release(
+            host_root=root,
+            release_id=release_id,
+            revisions=_revisions(),
             inspector=FakeInspector(),
             system="linux",
             machine="aarch64",
