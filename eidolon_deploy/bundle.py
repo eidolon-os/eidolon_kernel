@@ -46,7 +46,7 @@ _MANIFEST_NAME = "bundle.json"
 _DEPENDENCY_CACHE_NAME = "python-dependencies.tar.gz"
 _UV_VERSION = "0.11.15"
 _PYTHON_VERSION = "3.13"
-_PYTHON_PLATFORM = "aarch64-unknown-linux-gnu"
+_PYTHON_PLATFORM = "aarch64-manylinux_2_40"
 _BUILD_REQUIREMENTS = (
     "setuptools==80.9.0",
     "wheel==0.45.1",

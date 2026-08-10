@@ -20,12 +20,14 @@ branch；Data/Hub/SDK 的 HEAD 也可能继续推进。读取 working tree 或�
 工作站 bundle builder 强制接收 Kernel/Data/Hub/Admin/Agent/Channel/Memory/SDK 八个完整 commit ID，并对每个 repo 执行
 `git archive <exact commit>`。它不读取 working-tree 文件；archive 必须包含对应 lock 和 V2 固定系统
 资产。Bundle manifest 固定 source 顺序、target、archive path 和 SHA-256，并包含同样有摘要的 standalone
-target preparer。Builder 使用固定 uv 0.11.15 为 Python 3.13/aarch64 预取 frozen 依赖，把压缩、去重
+target preparer。Builder 使用固定 uv 0.11.15 为 Python 3.13/`aarch64-manylinux_2_40` 预取 frozen 依赖，把压缩、去重
 cache 及 SHA-256、公开 index URL 和 build-tool pins 一并纳入 manifest。
 
 Target preparer 只依赖 Python 标准库，在独立非阻塞 lock 下校验全部传输字节、拒绝绝对路径、`..`、
 越界 symlink、device 等不安全 member，先提取 source/cache，再在 canonical release path 用固定
-`uv sync --frozen --no-dev --no-editable --offline` 构建环境，最后调用新 Kernel 环境的 V2 sealer。受控错误只清理该调用新建的
+`uv sync --frozen --no-dev --no-editable --offline --python-platform aarch64-manylinux_2_40`
+构建环境，最后调用新 Kernel 环境的 V2 sealer。相同 selector 同时用于 Mac 预取与 Pi 安装，防止两端
+针对同一版本选择不同 manylinux wheel。受控错误只清理该调用新建的
 release 目录，不修改 current links 或任何 persistent authority。
 
 工作站 driver 使用 BatchMode SSH/SCP。默认止于 target prepare/seal 和 activation dry-run；真正切换

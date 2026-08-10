@@ -51,7 +51,7 @@ _LOCK = Path("/run/lock/eidolon-release-prepare.lock")
 _DEPENDENCY_CACHE_ROOT = Path("/var/cache/eidolon/release-dependencies")
 _UV_VERSION = "0.11.15"
 _PYTHON_VERSION = "3.13"
-_PYTHON_PLATFORM = "aarch64-unknown-linux-gnu"
+_PYTHON_PLATFORM = "aarch64-manylinux_2_40"
 _BUILD_REQUIREMENTS = (
     "setuptools==80.9.0",
     "wheel==0.45.1",
@@ -126,6 +126,8 @@ def prepare_target_release(
                     "--no-python-downloads",
                     "--no-editable",
                     "--offline",
+                    "--python-platform",
+                    _PYTHON_PLATFORM,
                     "--project",
                     str(release_root / source_id),
                 ]

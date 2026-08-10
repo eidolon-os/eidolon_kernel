@@ -423,6 +423,11 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
         for call in calls
         if call[0] == "native environment preparation"
     )
+    assert all(
+        call[call.index("--python-platform") + 1] == "aarch64-manylinux_2_40"
+        for call in calls
+        if call[0] == "native environment preparation"
+    )
     data_call = next(call for call in calls if call[-3].endswith("eidolon_data"))
     assert data_call[-2:] == ("--extra", "api")
     seal_call = calls[-1]
