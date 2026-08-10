@@ -146,6 +146,15 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             ),
             "health_url": "http://127.0.0.1:8084/health",
         },
+        {
+            "endpoint_id": "memory-runtime-roster.http",
+            "protocol": "http",
+            "address": "http://127.0.0.1:8084",
+            "contract": (
+                "https://eidolon.dev/data/contracts/v1/memory/runtime-roster.schema.json"
+            ),
+            "health_url": "http://127.0.0.1:8084/health",
+        },
     ]
     assert services["data-workspace"]["host_targets"]["systemd"] == (
         "eidolon-data-workspace.service"
