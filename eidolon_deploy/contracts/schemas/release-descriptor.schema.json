@@ -46,8 +46,8 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 22,
-      "maxItems": 22,
+      "minItems": 23,
+      "maxItems": 23,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
@@ -58,8 +58,8 @@
     },
     "affected_units": {
       "type": "array",
-      "minItems": 13,
-      "maxItems": 13,
+      "minItems": 14,
+      "maxItems": 14,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -75,14 +75,15 @@
           "eidolon-memory-supervisor.service",
           "eidolon-memory-discovery.service",
           "eidolon-agent.service",
+          "eidolon-channel-provider.service",
           "eidolon-channel.service"
         ]
       }
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 12,
-      "maxItems": 12,
+      "minItems": 13,
+      "maxItems": 13,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {

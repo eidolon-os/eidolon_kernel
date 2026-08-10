@@ -16,6 +16,7 @@ polkit.addRule(function(action, subject) {
         "eidolon-memory-supervisor.service",
         "eidolon-memory-discovery.service",
         "eidolon-agent.service",
+        "eidolon-channel-provider.service",
         "eidolon-channel.service"
     ];
     var allowedVerbs = ["start", "stop", "restart"];

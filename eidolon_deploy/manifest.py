@@ -32,7 +32,10 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-local-api"),
     ),
     "eidolon_agent": (Path(".venv/bin/eidolon-agent"),),
-    "eidolon_channel": (Path(".venv/bin/python"),),
+    "eidolon_channel": (
+        Path(".venv/bin/python"),
+        Path(".venv/bin/eidolon-channel-provider"),
+    ),
     "eidolon_memory": (
         Path(".venv/bin/eidolon-memory-supervisor"),
         Path(".venv/bin/eidolon-memory-discovery"),
@@ -123,6 +126,10 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-channel.service"),
     ),
+    Path("/etc/systemd/system/eidolon-channel-provider.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-channel-provider.service"),
+    ),
     Path("/usr/local/libexec/eidolon-livekit-launch"): (
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-livekit-launch"),
@@ -154,6 +161,7 @@ V2_AFFECTED_UNITS = (
     "eidolon-memory-supervisor.service",
     "eidolon-memory-discovery.service",
     "eidolon-agent.service",
+    "eidolon-channel-provider.service",
     "eidolon-channel.service",
 )
 V2_READINESS = {
@@ -178,6 +186,7 @@ V2_READINESS = {
         "http_2xx",
     ),
     "agent": ("http", "http://127.0.0.1:8180/readyz", None, "ready"),
+    "channel-provider": ("http", "http://127.0.0.1:8767/health", None, "ok"),
     "channel": (
         "systemd",
         "systemd://eidolon-channel.service",

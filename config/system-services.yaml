@@ -18,6 +18,11 @@ services:
         address: http://127.0.0.1:8084
         contract: https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json
         health_url: http://127.0.0.1:8084/health
+      - endpoint_id: memory-runtime-roster.http
+        protocol: http
+        address: http://127.0.0.1:8084
+        contract: https://eidolon.dev/data/contracts/v1/memory/runtime-roster.schema.json
+        health_url: http://127.0.0.1:8084/health
   - service_id: data-workspace
     description: System Data workspace onboarding write authority
     required: true

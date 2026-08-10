@@ -48,6 +48,15 @@ _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _RELEASES = Path("/opt/eidolon/releases")
 _LOCK = Path("/run/lock/eidolon-release-prepare.lock")
+_DEPENDENCY_CACHE_ROOT = Path("/var/cache/eidolon/release-dependencies")
+_UV_VERSION = "0.11.15"
+_PYTHON_VERSION = "3.13"
+_PYTHON_PLATFORM = "aarch64-manylinux_2_40"
+_BUILD_REQUIREMENTS = (
+    "setuptools==80.9.0",
+    "wheel==0.45.1",
+    "hatchling==1.27.0",
+)
 
 
 class TargetPreparationError(RuntimeError):
@@ -83,6 +92,7 @@ def prepare_target_release(
     releases = _host_path(root, _RELEASES)
     release_root = releases / release_id
     lock = _host_path(root, _LOCK)
+    dependency_cache = _host_path(root, _DEPENDENCY_CACHE_ROOT) / release_id
 
     with _exclusive_lock(lock):
         if release_root.exists():
@@ -92,6 +102,10 @@ def prepare_target_release(
         staging.mkdir(mode=0o700)
         installed = False
         try:
+            dependency_cache.mkdir(parents=True, mode=0o700)
+            _extract_dependency_cache(
+                bundle_root / document["python_dependencies"]["path"], dependency_cache
+            )
             for source in document["sources"]:
                 destination = staging / source["source_id"]
                 destination.mkdir()
@@ -102,11 +116,18 @@ def prepare_target_release(
 
             for source_id in _SOURCE_IDS[:-1]:
                 command = [
+                    "/usr/bin/env",
+                    f"UV_CACHE_DIR={dependency_cache}",
+                    "UV_OFFLINE=1",
                     str(uv),
                     "sync",
                     "--frozen",
                     "--no-dev",
                     "--no-python-downloads",
+                    "--no-editable",
+                    "--offline",
+                    "--python-platform",
+                    _PYTHON_PLATFORM,
                     "--project",
                     str(release_root / source_id),
                 ]
@@ -131,12 +152,24 @@ def prepare_target_release(
                 shutil.rmtree(release_root, ignore_errors=True)
             raise
         finally:
+            shutil.rmtree(dependency_cache, ignore_errors=True)
             shutil.rmtree(staging, ignore_errors=True)
 
 
 def _validate_bundle(root: Path) -> dict:
     if not root.is_dir() or root.is_symlink():
         raise TargetPreparationError("bundle directory is missing or unsafe")
+    expected_root = {
+        "bundle.json",
+        "prepare_target.py",
+        "python-dependencies.tar.gz",
+        "sources",
+    }
+    try:
+        if {item.name for item in root.iterdir()} != expected_root:
+            raise TargetPreparationError("bundle root contains unexpected entries")
+    except OSError as exc:
+        raise TargetPreparationError("bundle root is unreadable") from exc
     try:
         document = json.loads((root / "bundle.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -147,11 +180,12 @@ def _validate_bundle(root: Path) -> dict:
         "target",
         "sources",
         "preparer",
+        "python_dependencies",
     }:
         raise TargetPreparationError("bundle manifest shape is invalid")
     release_id = document.get("release_id")
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
         or document.get("target") != {"system": "linux", "machine": "aarch64"}
@@ -160,6 +194,14 @@ def _validate_bundle(root: Path) -> dict:
     sources = document.get("sources")
     if not isinstance(sources, list) or len(sources) != len(_SOURCE_IDS):
         raise TargetPreparationError("bundle source set is invalid")
+    source_root = root / "sources"
+    if (
+        not source_root.is_dir()
+        or source_root.is_symlink()
+        or {item.name for item in source_root.iterdir()}
+        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+    ):
+        raise TargetPreparationError("bundle sources directory contains unexpected entries")
     for index, source_id in enumerate(_SOURCE_IDS):
         value = sources[index]
         archive = f"sources/{source_id}.tar"
@@ -197,12 +239,46 @@ def _validate_bundle(root: Path) -> dict:
         or _file_sha256(preparer_path) != preparer["sha256"]
     ):
         raise TargetPreparationError("bundle target preparer checksum mismatch")
+    dependency_cache = document.get("python_dependencies")
+    if (
+        not isinstance(dependency_cache, dict)
+        or set(dependency_cache)
+        != {
+            "path",
+            "sha256",
+            "uv_version",
+            "python_version",
+            "platform",
+            "build_requirements",
+            "index_url",
+        }
+        or dependency_cache.get("path") != "python-dependencies.tar.gz"
+        or not isinstance(dependency_cache.get("sha256"), str)
+        or _SHA256.fullmatch(dependency_cache["sha256"]) is None
+        or dependency_cache.get("uv_version") != _UV_VERSION
+        or dependency_cache.get("python_version") != _PYTHON_VERSION
+        or dependency_cache.get("platform") != _PYTHON_PLATFORM
+        or dependency_cache.get("build_requirements") != list(_BUILD_REQUIREMENTS)
+        or not isinstance(dependency_cache.get("index_url"), str)
+        or not dependency_cache["index_url"].startswith("https://")
+    ):
+        raise TargetPreparationError("bundle Python dependency cache record is invalid")
+    expected_index = os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple")
+    if dependency_cache["index_url"] != expected_index:
+        raise TargetPreparationError("bundle Python dependency index does not match target input")
+    dependency_path = root / "python-dependencies.tar.gz"
+    if (
+        not dependency_path.is_file()
+        or dependency_path.is_symlink()
+        or _file_sha256(dependency_path) != dependency_cache["sha256"]
+    ):
+        raise TargetPreparationError("bundle Python dependency cache checksum mismatch")
     return document
 
 
 def _extract_archive(archive: Path, destination: Path) -> None:
     try:
-        with tarfile.open(archive, "r:") as stream:
+        with tarfile.open(archive, "r:*") as stream:
             for member in stream:
                 name = PurePosixPath(member.name)
                 if name.is_absolute() or ".." in name.parts:
@@ -222,6 +298,41 @@ def _extract_archive(archive: Path, destination: Path) -> None:
                     raise TargetPreparationError("source archive contains a non-file member")
     except (OSError, tarfile.TarError) as exc:
         raise TargetPreparationError("source archive extraction failed") from exc
+
+
+def _extract_dependency_cache(archive: Path, destination: Path) -> None:
+    try:
+        with tarfile.open(archive, "r:*") as stream:
+            members = stream.getmembers()
+            for member in members:
+                name = PurePosixPath(member.name)
+                if name.is_absolute() or ".." in name.parts:
+                    raise TargetPreparationError("dependency cache contains an unsafe path")
+                target = destination.joinpath(*name.parts)
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif member.isfile():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    source = stream.extractfile(member)
+                    if source is None:
+                        raise TargetPreparationError("dependency cache member is unreadable")
+                    with source, target.open("xb") as output:
+                        shutil.copyfileobj(source, output)
+                    os.chmod(target, member.mode & 0o777)
+                elif member.issym():
+                    link = PurePosixPath(member.linkname)
+                    if link.is_absolute():
+                        raise TargetPreparationError("dependency cache symlink is absolute")
+                    resolved = (target.parent / Path(*link.parts)).resolve(strict=False)
+                    root = destination.resolve()
+                    if root != resolved and root not in resolved.parents:
+                        raise TargetPreparationError("dependency cache symlink escapes its root")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.symlink_to(member.linkname)
+                else:
+                    raise TargetPreparationError("dependency cache contains an unsafe member")
+    except (OSError, tarfile.TarError) as exc:
+        raise TargetPreparationError("dependency cache extraction failed") from exc
 
 
 @contextmanager

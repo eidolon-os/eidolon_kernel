@@ -43,6 +43,15 @@ _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PREPARER_NAME = "prepare_target.py"
 _MANIFEST_NAME = "bundle.json"
+_DEPENDENCY_CACHE_NAME = "python-dependencies.tar.gz"
+_UV_VERSION = "0.11.15"
+_PYTHON_VERSION = "3.13"
+_PYTHON_PLATFORM = "aarch64-manylinux_2_40"
+_BUILD_REQUIREMENTS = (
+    "setuptools==80.9.0",
+    "wheel==0.45.1",
+    "hatchling==1.27.0",
+)
 _LFS_POINTER = re.compile(
     rb"\Aversion https://git-lfs.github.com/spec/v1\n"
     rb"oid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n?\Z"
@@ -77,6 +86,7 @@ class SourceBundle:
     release_id: str
     sources: tuple[BundleSource, ...]
     preparer_sha256: str
+    dependency_cache_sha256: str
 
 
 def build_source_bundle(
@@ -86,6 +96,7 @@ def build_source_bundle(
     revisions: ReleaseRevisions,
     output: Path,
     git: str = "git",
+    uv: str = "uv",
 ) -> Path:
     """Archive exact Git commits without reading working-tree content."""
 
@@ -144,12 +155,29 @@ def build_source_bundle(
                 }
             )
 
+        dependency_cache = temporary / _DEPENDENCY_CACHE_NAME
+        _build_dependency_cache(
+            uv=uv,
+            source_dir=source_dir,
+            destination=dependency_cache,
+            workspace=temporary,
+        )
+        dependency_record = {
+            "path": _DEPENDENCY_CACHE_NAME,
+            "sha256": _file_sha256(dependency_cache),
+            "uv_version": _UV_VERSION,
+            "python_version": _PYTHON_VERSION,
+            "platform": _PYTHON_PLATFORM,
+            "build_requirements": list(_BUILD_REQUIREMENTS),
+            "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
+        }
+
         preparer_source = Path(__file__).with_name(_PREPARER_NAME)
         preparer_destination = temporary / _PREPARER_NAME
         shutil.copyfile(preparer_source, preparer_destination)
         os.chmod(preparer_destination, 0o755)
         document = {
-            "schema_version": 1,
+            "schema_version": 2,
             "release_id": release_id,
             "target": {"system": "linux", "machine": "aarch64"},
             "sources": records,
@@ -157,6 +185,7 @@ def build_source_bundle(
                 "path": _PREPARER_NAME,
                 "sha256": _file_sha256(preparer_destination),
             },
+            "python_dependencies": dependency_record,
         }
         _atomic_write_json(temporary / _MANIFEST_NAME, document)
         validate_source_bundle(temporary)
@@ -171,6 +200,17 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     """Validate the fixed bundle shape and every transferred byte digest."""
 
     root = path.resolve()
+    expected_root = {
+        _MANIFEST_NAME,
+        _PREPARER_NAME,
+        _DEPENDENCY_CACHE_NAME,
+        "sources",
+    }
+    try:
+        if {item.name for item in root.iterdir()} != expected_root:
+            raise BundleError("bundle root contains unexpected entries")
+    except OSError as exc:
+        raise BundleError("bundle root is unreadable") from exc
     try:
         document = json.loads((root / _MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -181,11 +221,12 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         "target",
         "sources",
         "preparer",
+        "python_dependencies",
     }:
         raise BundleError("bundle manifest shape is invalid")
     release_id = document.get("release_id")
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
         or document.get("target") != {"system": "linux", "machine": "aarch64"}
@@ -194,6 +235,14 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     wire_sources = document.get("sources")
     if not isinstance(wire_sources, list) or len(wire_sources) != len(_SOURCE_IDS):
         raise BundleError("bundle source set is invalid")
+    source_root = root / "sources"
+    if (
+        not source_root.is_dir()
+        or source_root.is_symlink()
+        or {item.name for item in source_root.iterdir()}
+        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+    ):
+        raise BundleError("bundle sources directory contains unexpected entries")
     sources: list[BundleSource] = []
     for index, source_id in enumerate(_SOURCE_IDS):
         value = wire_sources[index]
@@ -234,11 +283,155 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         or _file_sha256(preparer_path) != preparer["sha256"]
     ):
         raise BundleError("bundle target preparer checksum mismatch")
+    dependency_cache = document.get("python_dependencies")
+    if (
+        not isinstance(dependency_cache, dict)
+        or set(dependency_cache)
+        != {
+            "path",
+            "sha256",
+            "uv_version",
+            "python_version",
+            "platform",
+            "build_requirements",
+            "index_url",
+        }
+        or dependency_cache.get("path") != _DEPENDENCY_CACHE_NAME
+        or not isinstance(dependency_cache.get("sha256"), str)
+        or _SHA256.fullmatch(dependency_cache["sha256"]) is None
+        or dependency_cache.get("uv_version") != _UV_VERSION
+        or dependency_cache.get("python_version") != _PYTHON_VERSION
+        or dependency_cache.get("platform") != _PYTHON_PLATFORM
+        or dependency_cache.get("build_requirements") != list(_BUILD_REQUIREMENTS)
+        or not isinstance(dependency_cache.get("index_url"), str)
+        or not dependency_cache["index_url"].startswith("https://")
+    ):
+        raise BundleError("bundle Python dependency cache record is invalid")
+    dependency_path = root / _DEPENDENCY_CACHE_NAME
+    if (
+        not dependency_path.is_file()
+        or dependency_path.is_symlink()
+        or _file_sha256(dependency_path) != dependency_cache["sha256"]
+    ):
+        raise BundleError("bundle Python dependency cache checksum mismatch")
     return SourceBundle(
         release_id=release_id,
         sources=tuple(sources),
         preparer_sha256=preparer["sha256"],
+        dependency_cache_sha256=dependency_cache["sha256"],
     )
+
+
+def _build_dependency_cache(
+    *, uv: str, source_dir: Path, destination: Path, workspace: Path
+) -> None:
+    version = _dependency_run((uv, "--version")).stdout.strip()
+    if version != f"uv {_UV_VERSION}" and not version.startswith(f"uv {_UV_VERSION} "):
+        raise BundleError(f"dependency cache requires uv {_UV_VERSION}, got {version}")
+    cache = workspace / ".python-dependency-cache"
+    projects = workspace / ".python-projects"
+    environments = workspace / ".python-environments"
+    cache.mkdir()
+    projects.mkdir()
+    environments.mkdir()
+    seed = environments / "build-requirements"
+    common_environment = os.environ.copy()
+    common_environment["UV_CACHE_DIR"] = str(cache)
+    _dependency_run(
+        (uv, "venv", "--python", _PYTHON_VERSION, "--no-python-downloads", str(seed)),
+        env=common_environment,
+    )
+    _dependency_run(
+        (
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(seed / "bin/python"),
+            "--python-platform",
+            _PYTHON_PLATFORM,
+            "--no-python-downloads",
+            *_BUILD_REQUIREMENTS,
+        ),
+        env=common_environment,
+    )
+    shutil.rmtree(seed)
+    for source_id in _SOURCE_IDS[:-1]:
+        project = projects / source_id
+        project.mkdir()
+        with tarfile.open(source_dir / f"{source_id}.tar", "r:") as archive:
+            archive.extractall(project, filter="data")
+        project_environment = environments / source_id
+        environment = common_environment.copy()
+        environment["UV_PROJECT_ENVIRONMENT"] = str(project_environment)
+        command = [
+            uv,
+            "sync",
+            "--project",
+            str(projects / source_id),
+            "--frozen",
+            "--no-dev",
+            "--no-python-downloads",
+            "--no-install-project",
+            "--no-install-local",
+            "--python-platform",
+            _PYTHON_PLATFORM,
+        ]
+        if source_id == "eidolon_data":
+            command.extend(("--extra", "api"))
+        _dependency_run(tuple(command), env=environment)
+        shutil.rmtree(project_environment)
+        shutil.rmtree(project)
+    _archive_dependency_cache(cache, destination)
+    shutil.rmtree(cache)
+    shutil.rmtree(projects)
+    shutil.rmtree(environments)
+
+
+def _archive_dependency_cache(cache: Path, destination: Path) -> None:
+    included_roots = {"archive-v0", "wheels-v6", "sdists-v9"}
+    with tarfile.open(destination, "w:gz", dereference=False) as archive:
+        for path in sorted(cache.rglob("*")):
+            relative = path.relative_to(cache)
+            if (
+                relative.parts[0] not in included_roots
+                and not relative.parts[0].startswith("simple-v")
+            ):
+                continue
+            info = archive.gettarinfo(str(path), arcname=relative.as_posix())
+            if info.issym():
+                target = path.resolve(strict=True)
+                if cache != target and cache not in target.parents:
+                    raise BundleError("uv dependency cache symlink escapes its root")
+                info.linkname = os.path.relpath(target, path.parent)
+                archive.addfile(info)
+            elif info.isfile():
+                with path.open("rb") as stream:
+                    archive.addfile(info, stream)
+            elif info.isdir():
+                archive.addfile(info)
+            else:
+                raise BundleError("uv dependency cache contains an unsafe entry")
+
+
+def _dependency_run(
+    command: tuple[str, ...], *, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BundleError(f"ARM64 dependency preparation could not run: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+        raise BundleError(f"ARM64 dependency preparation failed: {detail}")
+    return result
 
 
 def _validate_source_archive(source_id: str, archive: Path) -> None:

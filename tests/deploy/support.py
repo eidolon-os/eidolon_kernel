@@ -79,7 +79,10 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "source_tree_sha256": "1" * 64,
                 "lock_sha256": "2" * 64,
                 "environment_sha256": "3" * 64,
-                "required_entrypoints": [".venv/bin/python"],
+                "required_entrypoints": [
+                    ".venv/bin/python",
+                    ".venv/bin/eidolon-channel-provider",
+                ],
             },
             {
                 "component_id": "eidolon_memory",
@@ -235,6 +238,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
+                    "deploy/systemd/eidolon-channel-provider.service",
+                    "/etc/systemd/system/eidolon-channel-provider.service",
+                    "8",
+                ),
+                (
+                    "eidolon_kernel",
                     "deploy/systemd/eidolon-livekit-launch",
                     "/usr/local/libexec/eidolon-livekit-launch",
                     "7",
@@ -270,6 +279,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             "eidolon-memory-supervisor.service",
             "eidolon-memory-discovery.service",
             "eidolon-agent.service",
+            "eidolon-channel-provider.service",
             "eidolon-channel.service",
         ],
         "readiness_checks": [
@@ -345,6 +355,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "kind": "systemd",
                 "url": "systemd://eidolon-channel.service",
                 "expected_status": "active",
+            },
+            {
+                "check_id": "channel-provider",
+                "kind": "http",
+                "url": "http://127.0.0.1:8767/health",
+                "expected_status": "ok",
             },
         ],
         "database_migrations": [],

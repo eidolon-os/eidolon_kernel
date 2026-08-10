@@ -46,7 +46,7 @@ logging:
   level: info
   json: true
 """
-path = "/run/eidolon-livekit/livekit.yaml"
+path = "/run/eidolon/livekit/livekit.yaml"
 descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
     stream.write(config)

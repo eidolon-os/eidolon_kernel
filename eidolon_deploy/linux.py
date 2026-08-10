@@ -51,6 +51,7 @@ _READINESS_UNITS = {
     "livekit": "eidolon-livekit.service",
     "memory": "eidolon-memory-discovery.service",
     "agent": "eidolon-agent.service",
+    "channel-provider": "eidolon-channel-provider.service",
     "channel": "eidolon-channel.service",
 }
 _RELEASE_UNITS = (
@@ -67,6 +68,7 @@ _RELEASE_UNITS = (
     "eidolon-memory-supervisor.service",
     "eidolon-memory-discovery.service",
     "eidolon-agent.service",
+    "eidolon-channel-provider.service",
     "eidolon-channel.service",
 )
 _SNAPSHOT_ROOT = Path("/var/lib/eidolon/deployments")

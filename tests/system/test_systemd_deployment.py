@@ -92,6 +92,18 @@ def test_data_unit_uses_dedicated_authority_store_and_secret_file() -> None:
         assert "EIDOLON_DATA_OBJECT_STORE_PATH=/var/lib/eidolon/objects" in service["Environment"]
 
 
+def test_livekit_and_memory_runtime_inputs_match_systemd_directories() -> None:
+    livekit = _unit("eidolon-livekit.service")["Service"]
+    launcher = (SYSTEMD / "eidolon-livekit-launch").read_text(encoding="utf-8")
+    assert livekit["RuntimeDirectory"] == "eidolon/livekit"
+    assert 'path = "/run/eidolon/livekit/livekit.yaml"' in launcher
+
+    for unit in ("eidolon-memory-supervisor.service", "eidolon-memory-discovery.service"):
+        text = (SYSTEMD / unit).read_text(encoding="utf-8")
+        assert "EnvironmentFile=/etc/eidolon/memory.env" in text
+        assert "Environment=EIDOLON_MEMORY_DOTENV_MODE=environment" in text
+
+
 def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
     policy = POLKIT.read_text(encoding="utf-8")
 
@@ -131,6 +143,15 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             "address": "http://127.0.0.1:8084",
             "contract": (
                 "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
+            ),
+            "health_url": "http://127.0.0.1:8084/health",
+        },
+        {
+            "endpoint_id": "memory-runtime-roster.http",
+            "protocol": "http",
+            "address": "http://127.0.0.1:8084",
+            "contract": (
+                "https://eidolon.dev/data/contracts/v1/memory/runtime-roster.schema.json"
             ),
             "health_url": "http://127.0.0.1:8084/health",
         },
