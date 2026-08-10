@@ -101,7 +101,7 @@ def test_livekit_and_memory_runtime_inputs_match_systemd_directories() -> None:
     for unit in ("eidolon-memory-supervisor.service", "eidolon-memory-discovery.service"):
         text = (SYSTEMD / unit).read_text(encoding="utf-8")
         assert "EnvironmentFile=/etc/eidolon/memory.env" in text
-        assert "Environment=EIDOLON_MEMORY_ENV_FILE=/etc/eidolon/memory.env" in text
+        assert "Environment=EIDOLON_MEMORY_DOTENV_MODE=environment" in text
 
 
 def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:

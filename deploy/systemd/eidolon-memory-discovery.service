@@ -11,7 +11,7 @@ Group=eidolon
 UMask=0007
 EnvironmentFile=/etc/eidolon/memory.env
 EnvironmentFile=/etc/eidolon/host.env
-Environment=EIDOLON_MEMORY_ENV_FILE=/etc/eidolon/memory.env
+Environment=EIDOLON_MEMORY_DOTENV_MODE=environment
 Environment=EIDOLON_MEMORY_SETTINGS_YAML=/etc/eidolon/memory.yaml
 ExecStart=/opt/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-discovery --host 127.0.0.1 --port 8020
 Restart=on-failure
