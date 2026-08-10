@@ -142,7 +142,8 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             "protocol": "http",
             "address": "http://127.0.0.1:8084",
             "contract": (
-                "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
+                "https://eidolon.dev/data/contracts/v1/companion/"
+                "runtime-snapshot.schema.json"
             ),
             "health_url": "http://127.0.0.1:8084/health",
         },
@@ -151,7 +152,8 @@ def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
             "protocol": "http",
             "address": "http://127.0.0.1:8084",
             "contract": (
-                "https://eidolon.dev/data/contracts/v1/memory/runtime-roster.schema.json"
+                "https://eidolon.dev/data/contracts/v1/memory/"
+                "runtime-roster.schema.json"
             ),
             "health_url": "http://127.0.0.1:8084/health",
         },
