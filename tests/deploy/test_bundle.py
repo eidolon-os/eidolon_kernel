@@ -127,6 +127,14 @@ def test_bundle_archives_exact_commits_and_rejects_byte_drift(tmp_path: Path) ->
         validate_source_bundle(output)
 
 
+def test_bundle_rejects_unmanifested_transfer_bytes(tmp_path: Path) -> None:
+    output, _ = _build_bundle(tmp_path)
+    (output / ".python-dependency-cache").mkdir()
+
+    with pytest.raises(BundleError, match="unexpected entries"):
+        validate_source_bundle(output)
+
+
 def test_bundle_requires_exact_commit_and_complete_fixed_assets(tmp_path: Path) -> None:
     repositories, revisions = _repositories(tmp_path / "repositories")
     bad_revisions = ReleaseRevisions(

@@ -200,6 +200,17 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     """Validate the fixed bundle shape and every transferred byte digest."""
 
     root = path.resolve()
+    expected_root = {
+        _MANIFEST_NAME,
+        _PREPARER_NAME,
+        _DEPENDENCY_CACHE_NAME,
+        "sources",
+    }
+    try:
+        if {item.name for item in root.iterdir()} != expected_root:
+            raise BundleError("bundle root contains unexpected entries")
+    except OSError as exc:
+        raise BundleError("bundle root is unreadable") from exc
     try:
         document = json.loads((root / _MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -224,6 +235,14 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     wire_sources = document.get("sources")
     if not isinstance(wire_sources, list) or len(wire_sources) != len(_SOURCE_IDS):
         raise BundleError("bundle source set is invalid")
+    source_root = root / "sources"
+    if (
+        not source_root.is_dir()
+        or source_root.is_symlink()
+        or {item.name for item in source_root.iterdir()}
+        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+    ):
+        raise BundleError("bundle sources directory contains unexpected entries")
     sources: list[BundleSource] = []
     for index, source_id in enumerate(_SOURCE_IDS):
         value = wire_sources[index]
@@ -364,6 +383,9 @@ def _build_dependency_cache(
         shutil.rmtree(project_environment)
         shutil.rmtree(project)
     _archive_dependency_cache(cache, destination)
+    shutil.rmtree(cache)
+    shutil.rmtree(projects)
+    shutil.rmtree(environments)
 
 
 def _archive_dependency_cache(cache: Path, destination: Path) -> None:

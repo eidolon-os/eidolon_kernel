@@ -157,6 +157,17 @@ def prepare_target_release(
 def _validate_bundle(root: Path) -> dict:
     if not root.is_dir() or root.is_symlink():
         raise TargetPreparationError("bundle directory is missing or unsafe")
+    expected_root = {
+        "bundle.json",
+        "prepare_target.py",
+        "python-dependencies.tar.gz",
+        "sources",
+    }
+    try:
+        if {item.name for item in root.iterdir()} != expected_root:
+            raise TargetPreparationError("bundle root contains unexpected entries")
+    except OSError as exc:
+        raise TargetPreparationError("bundle root is unreadable") from exc
     try:
         document = json.loads((root / "bundle.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -181,6 +192,14 @@ def _validate_bundle(root: Path) -> dict:
     sources = document.get("sources")
     if not isinstance(sources, list) or len(sources) != len(_SOURCE_IDS):
         raise TargetPreparationError("bundle source set is invalid")
+    source_root = root / "sources"
+    if (
+        not source_root.is_dir()
+        or source_root.is_symlink()
+        or {item.name for item in source_root.iterdir()}
+        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+    ):
+        raise TargetPreparationError("bundle sources directory contains unexpected entries")
     for index, source_id in enumerate(_SOURCE_IDS):
         value = sources[index]
         archive = f"sources/{source_id}.tar"
