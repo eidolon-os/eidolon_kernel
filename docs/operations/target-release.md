@@ -32,11 +32,13 @@ working tree；LFS object 缺失、下载失败、digest 不符或导出后仍�
   --agent-repo /path/to/eidolon_agent --agent-revision <40hex> \
   --channel-repo /path/to/eidolon_channel --channel-revision <40hex> \
   --memory-repo /path/to/eidolon_memory --memory-revision <40hex> \
-  --sdk-repo /path/to/eidolon_sdk --sdk-revision <40hex>
+  --sdk-repo /path/to/eidolon_sdk --sdk-revision <40hex> \
+  --uv /path/to/pinned/uv-0.11.15
 ```
 
-Bundle 固定 source 顺序、目标 `linux/aarch64`、archive 路径和 SHA-256。摘要只检测传输/磁盘损坏，
-不是发布签名或来源认证。
+Bundle 固定 source 顺序、目标 `linux/aarch64`、archive 路径和 SHA-256。Mac 用同一批 frozen lock
+预取 Python 3.13/aarch64 依赖，并把压缩 uv cache、公开 index URL、固定 uv/build-tool 版本及整包摘要
+写入 manifest。摘要只检测传输/磁盘损坏，不是发布签名或来源认证。
 
 ## Target-native prepare 与 seal
 
@@ -46,10 +48,11 @@ sudo python3 /path/to/bundle/prepare_target.py /path/to/bundle \
 ```
 
 Preparer 只依赖 Python 标准库。它在非阻塞 preparation lock 下重新校验所有字节，拒绝绝对路径、
-`..`、symlink/device 等 unsafe tar member，在
+`..`、越界 symlink/device 等 unsafe tar member，在
 `/opt/eidolon/releases/<release_id>/` 提取 8 棵 source，并用
-`uv sync --frozen --no-dev --no-python-downloads` 为 7 个运行组件建立 Pi 原生环境。Data 明确安装
-`api` extra。任一步失败只删除本次新建的 release 目录；current link、secret 和数据库不变。
+`uv sync --frozen --no-dev --no-editable --offline` 从已校验 cache 为 7 个运行组件建立 Pi 原生环境。
+Data 明确安装 `api` extra。Pi prepare 阶段不访问 Python index；任一步失败删除本次新建的 release 与
+临时 cache，current link、secret 和数据库不变。
 
 ## Activation 状态机
 

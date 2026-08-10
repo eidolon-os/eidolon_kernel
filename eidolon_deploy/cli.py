@@ -54,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 },
                 revisions=revisions,
                 output=arguments.output,
+                uv=arguments.uv,
             )
             _print_json({"status": "bundled", "manifest": str(path)})
             return 0
@@ -143,6 +144,7 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--channel-revision", required=True)
     bundle.add_argument("--memory-revision", required=True)
     bundle.add_argument("--sdk-revision", required=True)
+    bundle.add_argument("--uv", default="uv", help="exact uv 0.11.15 executable")
 
     seal = operations.add_parser("seal", help="seal an already prepared native release")
     seal.add_argument("release_id")

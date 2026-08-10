@@ -300,8 +300,9 @@ backup/forward/rollback 语义，不能把不可逆迁移塞进现有 symlink ro
 命令、目录、故障处置见 [Target release runbook](docs/operations/target-release.md)，架构选择见
 [ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
 
-已 provision Pi 的 source staging 由 commit-pinned bundle 和 standalone target preparer 完成；工作站
-driver 默认只传输、原生构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
+已 provision Pi 的 source staging 由 commit-pinned bundle 和 standalone target preparer 完成；Mac
+按 frozen lock 预取并哈希 Linux/aarch64 依赖，Pi 只做离线环境构建。工作站 driver 默认只传输、原生
+构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
 读取 working-tree 修改，也不接管 first-install identity/secret/Data baseline。详见
 [ADR-0014](docs/adr/0014-commit-pinned-pi-release-bundle.md)。
 完整产品后端范围及不进入 Pi descriptor 的开发进程见

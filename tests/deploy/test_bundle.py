@@ -27,6 +27,21 @@ from eidolon_deploy.prepare_target import (
 from eidolon_deploy.sealing import ReleaseRevisions
 
 
+@pytest.fixture(autouse=True)
+def isolated_dependency_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_build(*, uv, source_dir, destination, workspace) -> None:
+        assert uv
+        assert source_dir.is_dir()
+        assert workspace.is_dir()
+        with tarfile.open(destination, "w:") as archive:
+            directory = tarfile.TarInfo("archive-v0")
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0o755
+            archive.addfile(directory)
+
+    monkeypatch.setattr("eidolon_deploy.bundle._build_dependency_cache", fake_build)
+
+
 def _run(*command: str) -> str:
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     return result.stdout.strip()
@@ -392,6 +407,11 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
     assert len([call for call in calls if call[0] == "native environment preparation"]) == 7
     assert all(
         "--no-python-downloads" in call
+        for call in calls
+        if call[0] == "native environment preparation"
+    )
+    assert all(
+        "--offline" in call and any(value == "UV_OFFLINE=1" for value in call)
         for call in calls
         if call[0] == "native environment preparation"
     )
