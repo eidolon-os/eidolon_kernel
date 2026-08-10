@@ -26,9 +26,15 @@ SNAPSHOT_SCHEMA_VERSION = 2
 #: through this path so that moving it between components stays invisible.
 ACTIVATOR_RELATIVE_PATH = PurePosixPath(".release/bin/eidolon-release")
 
-#: Where the activator physically lives today.  Only sealing consumes this; it
-#: is the one place allowed to know which component ships the tool.
+#: Interpreter able to import :mod:`eidolon_deploy`, published beside the
+#: activator so an operator agent can run against the release without knowing
+#: which component provides the environment.
+INTERPRETER_RELATIVE_PATH = PurePosixPath(".release/bin/python")
+
+#: Where the published entries physically live today.  Only sealing consumes
+#: these; it is the one place allowed to know which component ships the tool.
 ACTIVATOR_SOURCE_RELATIVE_PATH = PurePosixPath("eidolon_kernel/.venv/bin/eidolon-release")
+INTERPRETER_SOURCE_RELATIVE_PATH = PurePosixPath("eidolon_kernel/.venv/bin/python")
 
 
 def contract_document() -> dict[str, object]:
@@ -41,4 +47,5 @@ def contract_document() -> dict[str, object]:
         "descriptor_schema_version": DESCRIPTOR_SCHEMA_VERSION,
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
         "activator_relative_path": str(ACTIVATOR_RELATIVE_PATH),
+        "interpreter_relative_path": str(INTERPRETER_RELATIVE_PATH),
     }

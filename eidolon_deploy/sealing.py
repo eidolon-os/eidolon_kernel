@@ -16,6 +16,8 @@ from typing import Protocol
 from eidolon_deploy.contract import (
     ACTIVATOR_RELATIVE_PATH,
     ACTIVATOR_SOURCE_RELATIVE_PATH,
+    INTERPRETER_RELATIVE_PATH,
+    INTERPRETER_SOURCE_RELATIVE_PATH,
 )
 from eidolon_deploy.fingerprints import (
     INSTALLED_DISTRIBUTIONS_SCRIPT,
@@ -286,23 +288,28 @@ def seal_prepared_release(
 
 
 def _publish_activator(release_root: Path) -> None:
-    """Expose the activator at a component-neutral path inside the release.
+    """Expose the operator entries at component-neutral paths in the release.
 
-    Operator tooling resolves the activator here, so which component ships it
-    stays an internal detail of this repository.
+    Operator tooling resolves the activator and its interpreter here, so which
+    component ships them stays an internal detail of this repository.
     """
 
-    source = release_root / ACTIVATOR_SOURCE_RELATIVE_PATH
-    if not source.is_file() or not os.access(source, os.X_OK):
-        raise PreparationError(f"release activator is missing or not executable: {source}")
-    link = release_root / ACTIVATOR_RELATIVE_PATH
-    link.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    temporary = link.with_name(f".{link.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.symlink_to(source)
-        os.replace(temporary, link)
-    finally:
-        temporary.unlink(missing_ok=True)
+    published = (
+        (ACTIVATOR_SOURCE_RELATIVE_PATH, ACTIVATOR_RELATIVE_PATH),
+        (INTERPRETER_SOURCE_RELATIVE_PATH, INTERPRETER_RELATIVE_PATH),
+    )
+    for source_relative, link_relative in published:
+        source = release_root / source_relative
+        if not source.is_file() or not os.access(source, os.X_OK):
+            raise PreparationError(f"release operator entry is missing: {source}")
+        link = release_root / link_relative
+        link.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        temporary = link.with_name(f".{link.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.symlink_to(source)
+            os.replace(temporary, link)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def _host_path(root: Path, value: Path) -> Path:

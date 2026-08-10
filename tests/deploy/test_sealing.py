@@ -9,6 +9,8 @@ import pytest
 from eidolon_deploy.contract import (
     ACTIVATOR_RELATIVE_PATH,
     ACTIVATOR_SOURCE_RELATIVE_PATH,
+    INTERPRETER_RELATIVE_PATH,
+    INTERPRETER_SOURCE_RELATIVE_PATH,
 )
 from eidolon_deploy.manifest import (
     V2_COMPONENT_ENTRYPOINTS,
@@ -214,9 +216,13 @@ def test_sealing_publishes_a_component_neutral_activator(tmp_path: Path) -> None
     )
 
     release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
-    published = release_root / ACTIVATOR_RELATIVE_PATH
-    assert published.is_symlink()
-    assert published.resolve() == (release_root / ACTIVATOR_SOURCE_RELATIVE_PATH).resolve()
+    for link_relative, source_relative in (
+        (ACTIVATOR_RELATIVE_PATH, ACTIVATOR_SOURCE_RELATIVE_PATH),
+        (INTERPRETER_RELATIVE_PATH, INTERPRETER_SOURCE_RELATIVE_PATH),
+    ):
+        published = release_root / link_relative
+        assert published.is_symlink()
+        assert published.resolve() == (release_root / source_relative).resolve()
 
 
 def test_sealing_refuses_a_release_without_its_activator(tmp_path: Path) -> None:
@@ -225,7 +231,7 @@ def test_sealing_refuses_a_release_without_its_activator(tmp_path: Path) -> None
     release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
     (release_root / ACTIVATOR_SOURCE_RELATIVE_PATH).unlink()
 
-    with pytest.raises(PreparationError, match="activator"):
+    with pytest.raises(PreparationError, match="operator entry"):
         seal_prepared_release(
             host_root=root,
             release_id=release_id,
