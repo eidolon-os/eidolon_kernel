@@ -374,6 +374,13 @@ def _build_dependency_cache(
             "--no-python-downloads",
             "--no-install-project",
             "--no-install-local",
+            # Both halves of the target ABI must be pinned. With only the
+            # platform pinned, uv resolves against whatever interpreter the
+            # workstation happens to offer, and the cache silently fills with
+            # wheels the target cannot use while the manifest still claims
+            # this Python version.
+            "--python",
+            _PYTHON_VERSION,
             "--python-platform",
             _PYTHON_PLATFORM,
         ]

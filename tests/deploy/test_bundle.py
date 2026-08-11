@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from eidolon_deploy import prepare_target
+from eidolon_deploy import bundle, prepare_target
 from eidolon_deploy.bundle import (
     _CHANNEL_MODEL_PATHS,
     BundleError,
@@ -25,6 +25,8 @@ from eidolon_deploy.prepare_target import (
     prepare_target_release,
 )
 from eidolon_deploy.sealing import ReleaseRevisions
+
+_REAL_BUILD_DEPENDENCY_CACHE = bundle._build_dependency_cache
 
 
 @pytest.fixture(autouse=True)
@@ -553,3 +555,58 @@ def test_standalone_preparer_cli_reports_success_and_failure(
     monkeypatch.setattr(prepare_target, "prepare_target_release", fail)
     assert prepare_target.main([str(tmp_path / "bundle")]) == 1
     assert json.loads(capsys.readouterr().err)["status"] == "failed"
+
+
+def test_dependency_prefetch_pins_both_halves_of_the_target_abi(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Pinning only the platform lets the workstation's Python decide the ABI.
+
+    uv then caches wheels the target cannot use, while the bundle manifest goes
+    on claiming the Python version the release was built for.
+    """
+
+    from eidolon_deploy import bundle as bundle_module
+
+    # The autouse fixture replaces the whole prefetch; this test is about the
+    # commands it builds, so put the real one back.
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(command, *, env=None):
+        command = tuple(command)
+        calls.append(command)
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, f"uv {bundle_module._UV_VERSION}", "")
+        if command[1] == "venv":
+            seed = Path(command[-1])
+            (seed / "bin").mkdir(parents=True, exist_ok=True)
+            (seed / "bin/python").write_text("#!/bin/sh\n")
+        if env and "UV_PROJECT_ENVIRONMENT" in env:
+            Path(env["UV_PROJECT_ENVIRONMENT"]).mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(bundle_module, "_dependency_run", fake_run)
+
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    for source_id in bundle_module._SOURCE_IDS[:-1]:
+        with tarfile.open(source_dir / f"{source_id}.tar", "w") as archive:
+            member = tarfile.TarInfo("pyproject.toml")
+            payload = b"[project]\nname='x'\nversion='0'\n"
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _REAL_BUILD_DEPENDENCY_CACHE(
+        uv="uv",
+        source_dir=source_dir,
+        destination=tmp_path / "python-dependencies.tar.gz",
+        workspace=workspace,
+    )
+
+    syncs = [call for call in calls if "sync" in call]
+    assert len(syncs) == len(bundle_module._SOURCE_IDS) - 1
+    for call in syncs:
+        assert call[call.index("--python") + 1] == bundle_module._PYTHON_VERSION
+        assert call[call.index("--python-platform") + 1] == bundle_module._PYTHON_PLATFORM
