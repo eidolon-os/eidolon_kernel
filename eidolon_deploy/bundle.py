@@ -331,7 +331,8 @@ def _build_dependency_cache(
     cache = workspace / ".python-dependency-cache"
     projects = workspace / ".python-projects"
     environments = workspace / ".python-environments"
-    cache.mkdir()
+    cache_seed = _dependency_cache_seed()
+    _open_dependency_cache(cache, cache_seed)
     projects.mkdir()
     environments.mkdir()
     seed = environments / "build-requirements"
@@ -390,9 +391,74 @@ def _build_dependency_cache(
         shutil.rmtree(project_environment)
         shutil.rmtree(project)
     _archive_dependency_cache(cache, destination)
+    if cache_seed is not None:
+        _keep_dependency_cache(cache, cache_seed)
     shutil.rmtree(cache)
     shutil.rmtree(projects)
     shutil.rmtree(environments)
+
+
+#: Where the operator keeps the dependencies it has already fetched. Purely a
+#: transport hint: what a bundle contains is fixed by each source's lockfile,
+#: which pins exact versions and hashes that uv verifies on use, so seeding
+#: from local bytes cannot change the result — only how long it takes to get
+#: there. Unset it, or pass --refresh, to prove a build from an empty disk.
+DEPENDENCY_CACHE_SEED_ENV = "EIDOLON_RELEASE_UV_CACHE_SEED"
+
+
+def _dependency_cache_seed() -> Path | None:
+    value = os.environ.get(DEPENDENCY_CACHE_SEED_ENV, "").strip()
+    if not value:
+        return None
+    seed = Path(value)
+    if not seed.is_absolute():
+        raise BundleError(f"{DEPENDENCY_CACHE_SEED_ENV} must be an absolute path")
+    return seed
+
+
+def _open_dependency_cache(cache: Path, seed: Path | None) -> None:
+    """Begin from what this machine already has, rather than from empty disk."""
+
+    if seed is None or not seed.is_dir():
+        cache.mkdir()
+        return
+    _clone_tree(seed, cache)
+
+
+def _keep_dependency_cache(cache: Path, seed: Path) -> None:
+    """Hand this build's downloads to the next one, without a gap in between."""
+
+    superseded = seed.with_name(f".{seed.name}.superseded")
+    shutil.rmtree(superseded, ignore_errors=True)
+    if seed.exists():
+        seed.rename(superseded)
+    try:
+        _clone_tree(cache, seed)
+    except Exception:
+        if superseded.exists() and not seed.exists():
+            superseded.rename(seed)
+        raise
+    shutil.rmtree(superseded, ignore_errors=True)
+
+
+def _clone_tree(source: Path, destination: Path) -> None:
+    """Copy a cache without paying for its bytes where the filesystem allows.
+
+    ``cp -c`` asks APFS for copy-on-write clones, so a 2 GB cache costs
+    metadata rather than 2 GB and a minute. Anywhere that refuses, the plain
+    copy still produces the same tree.
+    """
+
+    cloned = subprocess.run(
+        ("/bin/cp", "-Rc", str(source), str(destination)),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if cloned.returncode == 0:
+        return
+    shutil.rmtree(destination, ignore_errors=True)
+    shutil.copytree(source, destination, symlinks=True)
 
 
 def _archive_dependency_cache(cache: Path, destination: Path) -> None:

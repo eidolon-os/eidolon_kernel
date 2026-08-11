@@ -610,3 +610,109 @@ def test_dependency_prefetch_pins_both_halves_of_the_target_abi(
     for call in syncs:
         assert call[call.index("--python") + 1] == bundle_module._PYTHON_VERSION
         assert call[call.index("--python-platform") + 1] == bundle_module._PYTHON_PLATFORM
+
+
+def _prefetch_harness(tmp_path: Path, monkeypatch):
+    """The real prefetch, with uv replaced by something that records calls."""
+
+    from eidolon_deploy import bundle as bundle_module
+
+    def fake_run(command, *, env=None):
+        command = tuple(command)
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, f"uv {bundle_module._UV_VERSION}", "")
+        if command[1] == "venv":
+            seed = Path(command[-1])
+            (seed / "bin").mkdir(parents=True, exist_ok=True)
+            (seed / "bin/python").write_text("#!/bin/sh\n")
+        if env and "UV_CACHE_DIR" in env:
+            # uv fills its cache as it resolves; stand in for that so the
+            # archive and the seed have something to carry.
+            fetched = Path(env["UV_CACHE_DIR"]) / "archive-v0" / "fetched"
+            fetched.parent.mkdir(parents=True, exist_ok=True)
+            fetched.write_text("wheel", encoding="utf-8")
+        if env and "UV_PROJECT_ENVIRONMENT" in env:
+            Path(env["UV_PROJECT_ENVIRONMENT"]).mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(bundle_module, "_dependency_run", fake_run)
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    for source_id in bundle_module._SOURCE_IDS[:-1]:
+        with tarfile.open(source_dir / f"{source_id}.tar", "w") as archive:
+            member = tarfile.TarInfo("pyproject.toml")
+            payload = b"[project]\nname='x'\nversion='0'\n"
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    return source_dir
+
+
+def _prefetch(tmp_path: Path, source_dir: Path, name: str) -> Path:
+    workspace = tmp_path / name
+    workspace.mkdir()
+    destination = tmp_path / f"{name}.tar.gz"
+    _REAL_BUILD_DEPENDENCY_CACHE(
+        uv="uv", source_dir=source_dir, destination=destination, workspace=workspace
+    )
+    return destination
+
+
+def test_a_build_starts_from_what_this_machine_already_fetched(tmp_path, monkeypatch) -> None:
+    """Every build used to begin on empty disk and re-download the whole set.
+
+    On a 1 MB/s link that is 600 MB and half an hour, which is how the bundle
+    step started blowing its own timeout.
+    """
+
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    seed = tmp_path / "seed"
+    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, str(seed))
+
+    _prefetch(tmp_path, source_dir, "first")
+
+    assert (seed / "archive-v0" / "fetched").is_file()
+
+    # A second build inherits it rather than reaching for the network again.
+    (seed / "archive-v0" / "from-the-first-build").write_text("wheel", encoding="utf-8")
+    _prefetch(tmp_path, source_dir, "second")
+
+    assert (seed / "archive-v0" / "from-the-first-build").is_file()
+
+
+def test_a_seed_cannot_change_what_the_bundle_carries(tmp_path, monkeypatch) -> None:
+    """The safety argument for seeding at all.
+
+    A bundle's contents are fixed by each source's lockfile, so where the bytes
+    were fetched from must not show up in the result.
+    """
+
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    cold = _prefetch(tmp_path, source_dir, "cold")
+
+    seed = tmp_path / "seed"
+    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, str(seed))
+    _prefetch(tmp_path, source_dir, "warming")
+    warm = _prefetch(tmp_path, source_dir, "warm")
+
+    def members(path: Path) -> set[str]:
+        with tarfile.open(path, "r:gz") as archive:
+            return {member.name for member in archive.getmembers()}
+
+    assert members(warm) == members(cold)
+
+
+def test_a_relative_seed_is_refused(tmp_path, monkeypatch) -> None:
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, "relative/seed")
+
+    with pytest.raises(BundleError, match="absolute path"):
+        _prefetch(tmp_path, source_dir, "refused")
+
+
+def test_no_seed_still_builds_from_empty_disk(tmp_path, monkeypatch) -> None:
+    """The escape hatch: prove a release without trusting any local state."""
+
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    monkeypatch.delenv(bundle.DEPENDENCY_CACHE_SEED_ENV, raising=False)
+
+    assert _prefetch(tmp_path, source_dir, "clean").is_file()
