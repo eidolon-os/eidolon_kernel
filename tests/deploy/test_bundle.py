@@ -661,58 +661,78 @@ def test_a_build_starts_from_what_this_machine_already_fetched(tmp_path, monkeyp
     """Every build used to begin on empty disk and re-download the whole set.
 
     On a 1 MB/s link that is 600 MB and half an hour, which is how the bundle
-    step started blowing its own timeout.
+    step started blowing the 1800s ceiling it runs under.
     """
 
     source_dir = _prefetch_harness(tmp_path, monkeypatch)
-    seed = tmp_path / "seed"
-    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, str(seed))
+    kept = tmp_path / "uv-cache"
+    monkeypatch.setenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, str(kept))
 
     _prefetch(tmp_path, source_dir, "first")
 
-    assert (seed / "archive-v0" / "fetched").is_file()
+    assert (kept / "archive-v0" / "fetched").is_file()
 
-    # A second build inherits it rather than reaching for the network again.
-    (seed / "archive-v0" / "from-the-first-build").write_text("wheel", encoding="utf-8")
+    # The second build finds it still there rather than reaching for the index.
+    (kept / "archive-v0" / "from-the-first-build").write_text("wheel", encoding="utf-8")
     _prefetch(tmp_path, source_dir, "second")
 
-    assert (seed / "archive-v0" / "from-the-first-build").is_file()
+    assert (kept / "archive-v0" / "from-the-first-build").is_file()
 
 
-def test_a_seed_cannot_change_what_the_bundle_carries(tmp_path, monkeypatch) -> None:
-    """The safety argument for seeding at all.
+def test_the_kept_cache_stays_where_uv_built_it(tmp_path, monkeypatch) -> None:
+    """uv writes wheels-v6 as absolute symlinks into archive-v0.
 
-    A bundle's contents are fixed by each source's lockfile, so where the bytes
-    were fetched from must not show up in the result.
+    A cache is therefore bound to its path: the first attempt at this cloned
+    one between builds, and all 252 pointers in it went dangling the moment
+    the directory they were built in was removed.
     """
 
     source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    kept = tmp_path / "uv-cache"
+    monkeypatch.setenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, str(kept))
+    workspace_before = set(tmp_path.iterdir())
+
+    _prefetch(tmp_path, source_dir, "first")
+
+    # The build workspace is disposable; the cache must not live inside it.
+    assert kept.is_dir()
+    assert kept not in workspace_before
+    assert not (tmp_path / "first" / ".python-dependency-cache").exists()
+
+
+def test_a_kept_cache_cannot_change_what_a_release_installs(tmp_path, monkeypatch) -> None:
+    """The safety argument for keeping one at all.
+
+    A release's contents are fixed by each source's lockfile, so the packaged
+    cache may hold more than a cold build's, but never less and never other.
+    """
+
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    monkeypatch.delenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, raising=False)
     cold = _prefetch(tmp_path, source_dir, "cold")
 
-    seed = tmp_path / "seed"
-    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, str(seed))
-    _prefetch(tmp_path, source_dir, "warming")
+    monkeypatch.setenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, str(tmp_path / "uv-cache"))
     warm = _prefetch(tmp_path, source_dir, "warm")
 
     def members(path: Path) -> set[str]:
         with tarfile.open(path, "r:gz") as archive:
             return {member.name for member in archive.getmembers()}
 
-    assert members(warm) == members(cold)
+    assert members(cold) <= members(warm)
 
 
-def test_a_relative_seed_is_refused(tmp_path, monkeypatch) -> None:
+def test_a_relative_cache_is_refused(tmp_path, monkeypatch) -> None:
     source_dir = _prefetch_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv(bundle.DEPENDENCY_CACHE_SEED_ENV, "relative/seed")
+    monkeypatch.setenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, "relative/cache")
 
     with pytest.raises(BundleError, match="absolute path"):
         _prefetch(tmp_path, source_dir, "refused")
 
 
-def test_no_seed_still_builds_from_empty_disk(tmp_path, monkeypatch) -> None:
+def test_without_a_kept_cache_a_build_starts_from_empty_disk(tmp_path, monkeypatch) -> None:
     """The escape hatch: prove a release without trusting any local state."""
 
     source_dir = _prefetch_harness(tmp_path, monkeypatch)
-    monkeypatch.delenv(bundle.DEPENDENCY_CACHE_SEED_ENV, raising=False)
+    monkeypatch.delenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, raising=False)
 
     assert _prefetch(tmp_path, source_dir, "clean").is_file()
