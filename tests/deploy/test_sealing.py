@@ -256,3 +256,31 @@ def test_sealing_refuses_a_release_without_its_activator(tmp_path: Path) -> None
             system="linux",
             machine="aarch64",
         )
+
+
+def test_package_digest_is_reproducible_from_a_tree_without_this_package(
+    tmp_path: Path,
+) -> None:
+    """The algorithm is normative: a consumer recomputes it from Git objects.
+
+    This vector is shared with eidolon_ops, which recomputes the same digest
+    from the pinned Kernel revision to prove the activator it runs is the one
+    that will ship. If either side drifts, one of the two tests fails.
+    """
+
+    from eidolon_deploy.contract import package_digest
+
+    root = tmp_path / "pkg"
+    (root / "contracts/schemas").mkdir(parents=True)
+    (root / "bundle.py").write_text("bundle\n", encoding="utf-8")
+    (root / "cli.py").write_text("cli\n", encoding="utf-8")
+    (root / "contracts/schemas/x.schema.json").write_text("{}\n", encoding="utf-8")
+    # Neither compiled output nor unrelated files may move the digest.
+    (root / "__pycache__").mkdir()
+    (root / "__pycache__/cli.cpython-313.pyc").write_bytes(b"\x00compiled")
+    (root / "README.md").write_text("ignored\n", encoding="utf-8")
+
+    # Shared with eidolon_ops, which recomputes this from `git ls-tree` blob ids.
+    assert package_digest(root) == (
+        "280d4ab1ee9356bb66788af6769817df8d4069d88310e47999ff0d899c004883"
+    )

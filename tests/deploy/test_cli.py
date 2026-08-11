@@ -231,5 +231,6 @@ def test_contract_reports_the_formats_the_activator_speaks(capsys) -> None:
     assert document["tool"] == "eidolon-release"
     assert document["activator_relative_path"] == ".release/bin/eidolon-release"
     assert document["interpreter_relative_path"] == ".release/bin/python"
+    assert len(document["package_digest"]) == 64
     assert document["bundle_schema_version"] == 2
     assert document["descriptor_schema_version"] == 2
