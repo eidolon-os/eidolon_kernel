@@ -292,22 +292,30 @@ def _publish_activator(release_root: Path) -> None:
 
     Operator tooling resolves the activator and its interpreter here, so which
     component ships them stays an internal detail of this repository.
+
+    These are exec wrappers rather than symlinks: CPython looks for pyvenv.cfg
+    beside the path it was invoked through, so a symlinked interpreter resolves
+    to the system Python and loses the release's site-packages entirely.
     """
 
     published = (
         (ACTIVATOR_SOURCE_RELATIVE_PATH, ACTIVATOR_RELATIVE_PATH),
         (INTERPRETER_SOURCE_RELATIVE_PATH, INTERPRETER_RELATIVE_PATH),
     )
-    for source_relative, link_relative in published:
+    for source_relative, entry_relative in published:
         source = release_root / source_relative
         if not source.is_file() or not os.access(source, os.X_OK):
             raise PreparationError(f"release operator entry is missing: {source}")
-        link = release_root / link_relative
-        link.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        temporary = link.with_name(f".{link.name}.{uuid.uuid4().hex}.tmp")
+        entry = release_root / entry_relative
+        entry.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        temporary = entry.with_name(f".{entry.name}.{uuid.uuid4().hex}.tmp")
         try:
-            temporary.symlink_to(source)
-            os.replace(temporary, link)
+            temporary.write_text(
+                f'#!/bin/sh\nexec "{source}" "$@"\n',
+                encoding="utf-8",
+            )
+            os.chmod(temporary, 0o755)
+            os.replace(temporary, entry)
         finally:
             temporary.unlink(missing_ok=True)
 

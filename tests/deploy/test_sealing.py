@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -216,13 +218,27 @@ def test_sealing_publishes_a_component_neutral_activator(tmp_path: Path) -> None
     )
 
     release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
-    for link_relative, source_relative in (
+    for entry_relative, source_relative in (
         (ACTIVATOR_RELATIVE_PATH, ACTIVATOR_SOURCE_RELATIVE_PATH),
         (INTERPRETER_RELATIVE_PATH, INTERPRETER_SOURCE_RELATIVE_PATH),
     ):
-        published = release_root / link_relative
-        assert published.is_symlink()
-        assert published.resolve() == (release_root / source_relative).resolve()
+        published = release_root / entry_relative
+        source = release_root / source_relative
+        # Not a symlink: CPython finds pyvenv.cfg beside the invoked path, so a
+        # symlinked interpreter silently becomes the system Python.
+        assert not published.is_symlink()
+        assert os.access(published, os.X_OK)
+        assert str(source) in published.read_text(encoding="utf-8")
+
+    interpreter = release_root / INTERPRETER_RELATIVE_PATH
+    source = release_root / INTERPRETER_SOURCE_RELATIVE_PATH
+    source.write_text('#!/bin/sh\necho "$@" from-release-venv\n', encoding="utf-8")
+    source.chmod(0o755)
+    result = subprocess.run(
+        [str(interpreter), "-c", "marker"], capture_output=True, text=True, check=True
+    )
+    assert "from-release-venv" in result.stdout
+    assert "-c marker" in result.stdout
 
 
 def test_sealing_refuses_a_release_without_its_activator(tmp_path: Path) -> None:
