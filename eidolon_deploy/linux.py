@@ -147,7 +147,14 @@ class LinuxDeploymentHost:
         system: str | None = None,
         machine: str | None = None,
         readiness_probe: Callable[[ReadinessCheck], bool] | None = None,
-        readiness_timeout_seconds: float = 30.0,
+        # Long enough for the slowest component this activator has to wait for,
+        # on the slowest hardware it activates. The Channel worker alone spends
+        # sixteen seconds loading models on a Pi 5 and about a hundred from stop
+        # to serving; thirty made that unreachable, so a healthy release failed
+        # its own gate and the rollback failed the same way. The loop exits as
+        # soon as every check passes, so a generous ceiling costs nothing when
+        # the host is fast.
+        readiness_timeout_seconds: float = 300.0,
         readiness_interval_seconds: float = 0.25,
         require_root: bool = True,
     ) -> None:
