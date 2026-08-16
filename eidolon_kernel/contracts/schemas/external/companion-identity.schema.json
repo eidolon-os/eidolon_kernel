@@ -2,14 +2,38 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eidolon.dev/kernel/consumed-contracts/data/companion-identity-v1.schema.json",
   "title": "Consumed Companion Identity V1",
-  "description": "Kernel-owned consumed contract for Eidolon Data V2 GET /api/companion-authority/v1/companions/{companion_id}; verified against Data baseline 2a33894 on 2026-08-06.",
+  "description": "Kernel-owned consumed contract for Eidolon Data V2 GET /api/companion-authority/v1/companions/{companion_id}; verified against Data baseline 2a33894 on 2026-08-06, extended for display_name on 2026-08-16. Stays closed on purpose: an unknown field arriving here is Data sending Kernel something nobody decided it should see, and that must fail rather than pass through. The cost is that each addition at the producer is admitted here deliberately, which is the review being defended.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["operation", "companion_id", "owner_id", "lifecycle_state"],
+  "required": [
+    "operation",
+    "companion_id",
+    "owner_id",
+    "lifecycle_state"
+  ],
   "properties": {
-    "operation": {"const": "companion.identity"},
-    "companion_id": {"type": "string", "minLength": 1, "maxLength": 64},
-    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
-    "lifecycle_state": {"enum": ["active", "inactive"]}
+    "operation": {
+      "const": "companion.identity"
+    },
+    "companion_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "owner_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "lifecycle_state": {
+      "enum": [
+        "active",
+        "inactive"
+      ]
+    },
+    "display_name": {
+      "type": "string",
+      "maxLength": 128
+    }
   }
 }

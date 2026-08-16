@@ -113,9 +113,20 @@ class HubDeviceDirectoryEntryWire(ContractModel):
 
 
 class CompanionIdentityWire(ContractModel):
+    """The Companion identity Kernel consumes, closed to anything unnamed.
+
+    Closed on purpose, like the schema beside it: a field arriving here that
+    nobody admitted is Data handing Kernel something no one decided it should
+    see. Each addition is let in deliberately — that review is the point, not
+    an obstacle to it.
+    """
+
     operation: Literal["companion.identity"]
     companion_id: str = Field(min_length=1, max_length=64)
     owner_id: str = Field(min_length=1, max_length=64)
+    #: What the Owner calls this Companion. Kernel does not use it; it is
+    #: admitted so Data may answer one document to every consumer.
+    display_name: str = Field(default="", max_length=128)
     lifecycle_state: Literal["active", "inactive"]
 
 
