@@ -33,7 +33,12 @@ ProtectControlGroups=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 RestrictSUIDSGID=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK because this service now joins the rooms it hands out, to hear a
+# device ask to be served. Gathering ICE candidates means enumerating local
+# interfaces, and that is a netlink socket: without it the signalling connects,
+# no host candidate is ever found, and the peer connection times out with
+# nothing to say why. LiveKit and Hub carry it for the same reason.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
