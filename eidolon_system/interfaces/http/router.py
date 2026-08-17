@@ -8,6 +8,7 @@ from jsonschema import ValidationError
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.contracts.bindings import (
     AuditPageWire,
+    HostVitalsWire,
     EndpointWire,
     MutationRequestWire,
     MutationResultWire,
@@ -16,11 +17,13 @@ from eidolon_system.contracts.bindings import (
 )
 from eidolon_system.contracts.mappers import (
     audit_to_wire,
+    vitals_to_wire,
     endpoint_to_wire,
     mutation_to_wire,
     status_to_wire,
 )
 from eidolon_system.contracts.registry import SystemContractRegistry
+from eidolon_system.ports.runtime import HostVitalsReader
 from eidolon_system.domain.errors import (
     Conflict,
     HostOperationFailed,
@@ -49,9 +52,25 @@ def _raise_http(exc: Exception) -> None:
 
 
 def create_system_router(
-    *, manager: ServiceManager, contracts: SystemContractRegistry
+    *,
+    manager: ServiceManager,
+    contracts: SystemContractRegistry,
+    vitals: HostVitalsReader,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/system/v1", tags=["system-services"])
+
+    @router.get("/vitals", response_model=HostVitalsWire)
+    async def host_vitals() -> HostVitalsWire:
+        """How the machine itself is doing, read fresh on each request.
+
+        No verdict is passed here. What counts as too little disk on a Host
+        that holds one person's memories is a product judgement, and this
+        daemon can only read /proc — so it reports readings and names the ones
+        it could not take, and the layer facing the person decides what any of
+        it means.
+        """
+
+        return vitals_to_wire(vitals.read())
 
     @router.get("/services", response_model=ServicePageWire)
     async def list_services() -> ServicePageWire:

@@ -19,6 +19,8 @@ from eidolon_system.adapters.runtime import SystemClock
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.config import SystemSettings, load_settings, selected_host_driver
 from eidolon_system.contracts.registry import SystemContractRegistry
+from eidolon_system.adapters.host.vitals import LinuxHostVitals
+from eidolon_system.ports.runtime import HostVitalsReader
 from eidolon_system.interfaces.http.router import create_system_router
 from eidolon_system.ports.runtime import SystemStateStore
 
@@ -34,6 +36,8 @@ def create_http_app(
     *,
     manager: ServiceManager,
     contracts: SystemContractRegistry | None = None,
+    # Injected so a test of the HTTP surface needs a fake, not a Linux box.
+    vitals: HostVitalsReader | None = None,
     startup=None,
     shutdown=None,
 ) -> FastAPI:
@@ -50,7 +54,9 @@ def create_http_app(
     app = FastAPI(title="Eidolon System Manager", version="1.0.0", lifespan=lifespan)
     app.include_router(
         create_system_router(
-            manager=manager, contracts=contracts or SystemContractRegistry()
+            manager=manager,
+            contracts=contracts or SystemContractRegistry(),
+            vitals=vitals or LinuxHostVitals(),
         )
     )
 

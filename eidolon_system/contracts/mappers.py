@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from eidolon_system.contracts.bindings import (
+    HostVitalsWire,
+    MeasurementWire,
     AuditEventWire,
     DesiredStateWire,
     EndpointWire,
@@ -12,6 +14,7 @@ from eidolon_system.contracts.bindings import (
     ServiceStatusWire,
 )
 from eidolon_system.domain.model import (
+    HostVitals,
     DesiredServiceState,
     ServiceDefinition,
     ServiceEndpoint,
@@ -89,4 +92,20 @@ def audit_to_wire(event: SystemAuditEvent) -> AuditEventWire:
         request_id=event.request_id,
         fingerprint=event.fingerprint,
         occurred_at=event.occurred_at,
+    )
+
+
+def vitals_to_wire(vitals: HostVitals) -> HostVitalsWire:
+    return HostVitalsWire(
+        observed_at=vitals.observed_at,
+        measurements=tuple(
+            MeasurementWire(
+                name=measurement.name,
+                value=measurement.value,
+                unit=measurement.unit,
+                capacity=measurement.capacity,
+                unavailable_reason=measurement.unavailable_reason,
+            )
+            for measurement in vitals.measurements
+        ),
     )

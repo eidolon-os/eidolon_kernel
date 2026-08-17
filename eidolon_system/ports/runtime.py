@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from eidolon_system.domain.model import (
+    HostVitals,
     DesiredServiceState,
     HostServiceState,
     ServiceDefinition,
@@ -87,3 +88,15 @@ class SystemStateStore(Protocol):
     ) -> tuple[SystemAuditEvent, ...]: ...
 
     def close(self) -> None: ...
+
+
+class HostVitalsReader(Protocol):
+    """Reads how the machine itself is doing.
+
+    A port because the readings come from the platform — procfs and sysfs on
+    Linux, and nothing like them elsewhere — and because a router that reached
+    for the platform directly would make every test of that router need a
+    particular machine to run on.
+    """
+
+    def read(self) -> HostVitals: ...

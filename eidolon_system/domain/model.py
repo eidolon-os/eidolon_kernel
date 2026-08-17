@@ -162,6 +162,58 @@ class DesiredServiceState:
 
 
 @dataclass(frozen=True, slots=True)
+class Measurement:
+    """One reading, or the honest absence of one.
+
+    Every field here is optional on purpose. A Host reports what it can
+    measure on the hardware and kernel it happens to be running on, and says
+    nothing about the rest — a missing thermal zone is not zero degrees, and a
+    filesystem that could not be stat'ed is not a full disk. Absence travels
+    all the way to the screen, where it is drawn as absence.
+    """
+
+    name: str
+    #: What was read. ``None`` means this Host cannot say.
+    value: float | None = None
+    unit: str = ""
+    #: The ceiling this reading is measured against, when there is one — total
+    #: bytes for a filesystem, core count for load. Ratios are computed where
+    #: someone reads them, not stored here as a second version of the truth.
+    capacity: float | None = None
+    #: Why the value is missing, for someone diagnosing it. Never shown as a
+    #: measurement.
+    unavailable_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("measurement name is required")
+        if self.value is None and not self.unavailable_reason:
+            raise ValueError(
+                f"measurement {self.name!r} has no value and no reason for it"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class HostVitals:
+    """How the machine itself is doing, as it can observe from inside.
+
+    Not a verdict. Nothing here decides "healthy" or "degraded": what counts
+    as too little disk on a Host that holds one person's memories is a product
+    judgement, and it belongs where the product is, not in the daemon that can
+    only read /proc.
+    """
+
+    observed_at: datetime
+    measurements: tuple[Measurement, ...] = ()
+
+    def named(self, name: str) -> Measurement | None:
+        for measurement in self.measurements:
+            if measurement.name == name:
+                return measurement
+        return None
+
+
+@dataclass(frozen=True, slots=True)
 class HostServiceState:
     active: bool
     state: str

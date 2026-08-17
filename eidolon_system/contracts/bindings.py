@@ -87,6 +87,27 @@ class ServicePageWire(ContractModel):
         return tuple(value) if isinstance(value, list) else value
 
 
+class MeasurementWire(ContractModel):
+    name: str = Field(min_length=1, max_length=64)
+    #: Null when this Host cannot say. A consumer that treats null as zero is
+    #: reporting a healthy disk on a machine that could not read its disk.
+    value: float | None = None
+    unit: str = ""
+    capacity: float | None = None
+    unavailable_reason: str | None = Field(default=None, max_length=256)
+
+
+class HostVitalsWire(ContractModel):
+    operation: Literal["system.host-vitals"] = "system.host-vitals"
+    observed_at: datetime
+    measurements: tuple[MeasurementWire, ...] = ()
+
+    @field_validator("measurements", mode="before")
+    @classmethod
+    def _arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
+
+
 class MutationRequestWire(ContractModel):
     operation: Literal[
         "system.service.enable", "system.service.disable", "system.service.restart"
