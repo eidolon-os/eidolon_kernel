@@ -1,0 +1,94 @@
+# How Kernel is operated, stated by Kernel.
+#
+# This repository holds two things Ops deploys: eidolond, the system manager
+# that decides what runs on a Host, and the Kernel service itself. It also
+# still holds the systemd unit files for every other component — see the note
+# under [[units]] — which is why this contract is the one that has to be read
+# alongside all the others rather than on its own.
+#
+# The schema is eidolon_ops's contracts/component-ops/v1.schema.json;
+# tests/test_operations_contract.py checks these claims against this
+# repository's own configuration.
+
+schema_version = 1
+component_id = "eidolon_kernel"
+contract_version = "1"
+
+# The .service files for Hub, Data, Memory, Agent and Channel live in this
+# repository's deploy/systemd, though none of those components is Kernel's.
+# Those units belong to their own components' contracts; only the two units
+# below are Kernel's own. Where the files sit is a separate problem from who
+# owns what they say.
+
+[[units]]
+id = "eidolond"
+kind = "service"
+exec = ".venv/bin/eidolond"
+user = "eidolon"
+serves = ["eidolond"]
+requires = ["eidolon-bootstrapd"]
+after = ["local-fs.target"]
+
+[[units]]
+id = "eidolon-kernel"
+kind = "service"
+exec = ".venv/bin/uvicorn"
+user = "eidolon"
+serves = ["kernel"]
+after = ["local-fs.target", "eidolond"]
+
+[ports.eidolond]
+default = 8090
+bind = "loopback"
+purpose = "system manager; also answers on /run/eidolon/system.sock"
+
+[ports.kernel]
+default = 8083
+bind = "loopback"
+purpose = "kernel service"
+
+[[inputs]]
+name = "kernel_env"
+install_path = "/etc/eidolon/kernel.env"
+kind = "secret"
+source = "operator"
+owner = "root"
+group = "root"
+mode = "0600"
+required_by = ["eidolon-kernel"]
+
+[[state.authority]]
+path = "/var/lib/eidolon/eidolond.sqlite3"
+owner = "eidolon"
+group = "eidolon"
+backup = "sqlite-online"
+# Which services this Host is meant to be running. Installed units are a
+# mechanism; this file is the intent, and losing it means a Host that comes
+# back up running whatever happens to be enabled rather than what was asked.
+
+[[state.authority]]
+path = "/var/lib/eidolon/eidolon-kernel.sqlite3"
+owner = "eidolon"
+group = "eidolon"
+backup = "sqlite-online"
+
+[[state.authority]]
+path = "/var/lib/eidolon/deployments"
+owner = "eidolon"
+group = "eidolon"
+backup = "none"
+uncovered_reason = """\
+deployment evidence is an append-only record of what was installed and when; \
+restoring it into a Host whose deployments differ would produce a history that \
+contradicts the filesystem it describes\
+"""
+
+[state]
+runtime = ["/run/eidolon"]
+
+[reset]
+factory = [
+  "/var/lib/eidolon/eidolond.sqlite3",
+  "/var/lib/eidolon/eidolon-kernel.sqlite3",
+  "/var/lib/eidolon/deployments",
+]
