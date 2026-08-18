@@ -338,3 +338,13 @@ M2-B 真机重启基线见
 - 产品镜像必须实际创建专用 `eidolon` user/group，并验证 `/run/eidolon/system.sock` 的 owner/group；`uds_mode=0660` 只限定权限位，不替代宿主机账号与 unit 配置。
 - 只有出现跨 Host 服务迁移、能力句柄或通用调用代理等实际需求，才另行评估 Binder-like IPC runtime；“已经用了多种协议”本身不是引入依据。
 - 只有 HTTP/JSON 的测量结果无法满足控制面 SLA 时，才评估 gRPC；媒体热路径永远不经 Device Mount API。
+
+## License
+
+Copyright © 2026 Li Jinsong.
+
+本项目允许依据 [PolyForm Noncommercial License 1.0.0](LICENSE) 进行许可范围内的
+非商业使用。商业使用需要另行取得书面授权，请联系
+[lijinsong@aimanthor.com](mailto:lijinsong@aimanthor.com)。
+
+许可范围、第三方例外和必要声明见 [LICENSING.md](LICENSING.md) 与 [NOTICE](NOTICE)。
