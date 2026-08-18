@@ -40,6 +40,15 @@ turn:
 rtc:
   use_external_ip: false
   node_ip: {json.dumps(node_ip())}
+  ips:
+    excludes:
+      # An IPv4 link-local address is reachable only from the same physical
+      # link, and a device reaches this Host over the LAN. Offering one as an
+      # ICE candidate spends every device's connection attempt on an address it
+      # cannot route to. This Host grows one whenever a maintenance cable is
+      # plugged in, so the exclusion is stated as a rule rather than left to
+      # whichever interfaces happen to be up.
+      - 169.254.0.0/16
   port_range_start: 50000
   port_range_end: 60000
 logging:

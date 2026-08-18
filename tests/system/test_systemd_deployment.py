@@ -104,6 +104,26 @@ def test_livekit_and_memory_runtime_inputs_match_systemd_directories() -> None:
         assert "Environment=EIDOLON_MEMORY_DOTENV_MODE=environment" in text
 
 
+def test_livekit_does_not_offer_devices_an_address_off_their_link() -> None:
+    """A device dials the Host over the LAN, so link-local is never an answer.
+
+    This Host grows a 169.254 address whenever a maintenance cable is plugged
+    in. LiveKit gathers candidates from every interface that is up, so without
+    this the address reaches devices that cannot route to it and each of them
+    spends part of its connection attempt finding that out.
+    """
+
+    launcher = (SYSTEMD / "eidolon-livekit-launch").read_text(encoding="utf-8")
+    rtc = launcher.split("rtc:", 1)[1].split("logging:", 1)[0]
+
+    assert "ips:" in rtc
+    assert "excludes:" in rtc
+    assert "169.254.0.0/16" in rtc
+    # Both filters configured means only `includes` applies, which would put
+    # every other address behind an allowlist nobody is maintaining.
+    assert "includes:" not in rtc
+
+
 def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
     policy = POLKIT.read_text(encoding="utf-8")
 
