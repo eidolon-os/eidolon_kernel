@@ -78,9 +78,13 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("config/kernel.systemd.example.yaml"),
     ),
-    Path("/etc/eidolon/system-services.systemd.example.yaml"): (
+    # One manifest for every host driver. It used to be a systemd-only copy
+    # beside a supervisord-only one that had drifted to a different service set;
+    # `host_targets` names both mechanisms, so the copy is gone and the installed
+    # file no longer calls itself an example.
+    Path("/etc/eidolon/system-services.yaml"): (
         "eidolon_kernel",
-        Path("config/system-services.systemd.example.yaml"),
+        Path("config/system-services.yaml"),
     ),
     Path("/etc/polkit-1/rules.d/60-eidolon-system-manager.rules"): (
         "eidolon_kernel",

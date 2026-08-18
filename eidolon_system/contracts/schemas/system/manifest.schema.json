@@ -25,6 +25,7 @@
             "default": []
           },
           "host_targets": {
+            "description": "One target per host driver. The reserved value \"external\" declares that the driver does not manage the service on this kind of Host: eidolond will not start, stop or restart it, but still probes it and still gates its dependents on it.",
             "type": "object",
             "minProperties": 1,
             "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 256}

@@ -6,7 +6,11 @@ from eidolon_system.adapters.directory.memory import InMemoryServiceDirectory
 from eidolon_system.adapters.persistence.sqlite import SqliteSystemStateStore
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.domain.errors import Conflict, HostOperationFailed, NotReady
-from eidolon_system.domain.model import HostServiceState, ServiceCatalog
+from eidolon_system.domain.model import (
+    EXTERNAL_HOST_TARGET,
+    HostServiceState,
+    ServiceCatalog,
+)
 from tests.system.support import FakeHostSupervisor, FakeReadinessProbe, FixedClock
 from tests.system.test_domain import service
 
@@ -160,4 +164,84 @@ async def test_enabled_dependents_prevent_disabling_dependency(tmp_path) -> None
             expected_revision=1,
             request_id="req-disable-kernel",
         )
+    store.close()
+
+
+def build_manager_with_external_dependency(tmp_path, *, ready: bool = True):
+    """A Host where the thing everything waits on is not ours to start."""
+
+    nats = service("nats", required=True, host_targets={"fake": EXTERNAL_HOST_TARGET})
+    catalog = ServiceCatalog((nats, service("agent", dependencies=("nats",))))
+    host = FakeHostSupervisor()
+    store = SqliteSystemStateStore(tmp_path / "system.sqlite3")
+    manager = ServiceManager(
+        catalog=catalog,
+        store=store,
+        directory=InMemoryServiceDirectory(),
+        host=host,
+        readiness=FakeReadinessProbe(ready=ready),
+        clock=FixedClock(),
+    )
+    return manager, store, host
+
+
+@pytest.mark.asyncio
+async def test_external_service_is_observed_never_started_and_still_gates(tmp_path) -> None:
+    manager, store, host = build_manager_with_external_dependency(tmp_path)
+    await manager.initialize()
+    await manager.reconcile()
+
+    assert host.calls == [("start", "agent")]
+    assert manager.get_service("nats").runtime_state == "ready"
+    assert manager.get_service("agent").runtime_state == "ready"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_unhealthy_external_service_blocks_its_dependents(tmp_path) -> None:
+    manager, store, host = build_manager_with_external_dependency(tmp_path, ready=False)
+    await manager.initialize()
+    await manager.reconcile()
+
+    # Nothing was started: an external dependency that is not answering is the
+    # one case where eidolond has nothing to do but say so.
+    assert host.calls == []
+    assert manager.get_service("nats").runtime_state == "degraded"
+    assert manager.get_service("agent").runtime_state == "blocked"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_external_service_cannot_be_restarted_here(tmp_path) -> None:
+    manager, store, _host = build_manager_with_external_dependency(tmp_path)
+    await manager.initialize()
+    await manager.reconcile()
+
+    with pytest.raises(Conflict, match="external system service"):
+        await manager.restart(service_id="nats", expected_revision=1, request_id="req-restart-nats")
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_disabling_an_external_service_reports_the_gap_rather_than_a_stop(tmp_path) -> None:
+    nats = service("nats", host_targets={"fake": EXTERNAL_HOST_TARGET})
+    store = SqliteSystemStateStore(tmp_path / "system.sqlite3")
+    host = FakeHostSupervisor()
+    manager = ServiceManager(
+        catalog=ServiceCatalog((nats,)),
+        store=store,
+        directory=InMemoryServiceDirectory(),
+        host=host,
+        readiness=FakeReadinessProbe(),
+        clock=FixedClock(),
+    )
+    await manager.initialize()
+    await manager.set_enabled(
+        service_id="nats", enabled=False, expected_revision=1, request_id="req-disable-nats"
+    )
+
+    status = manager.get_service("nats")
+    assert host.calls == []
+    assert status.runtime_state == "degraded"
+    assert "disable it where it actually runs" in status.detail
     store.close()

@@ -159,8 +159,8 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
-                    "config/system-services.systemd.example.yaml",
-                    "/etc/eidolon/system-services.systemd.example.yaml",
+                    "config/system-services.yaml",
+                    "/etc/eidolon/system-services.yaml",
                     "8",
                 ),
                 (

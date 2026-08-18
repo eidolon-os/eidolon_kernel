@@ -1,11 +1,83 @@
+# What this Host runs, stated once for every host driver.
+#
+# There used to be two of these — this file for the macOS source run and a
+# `system-services.systemd.example.yaml` for the Pi product image — and they
+# disagreed about the service set itself, not just the driver: 4 services here
+# against 11 there. Nothing compared them. `host_targets` is a map keyed by
+# driver precisely so one manifest can name both mechanisms, so the two files
+# are now one and the disagreement is no longer expressible.
+#
+# The reviewed systemd unit templates live under deploy/systemd; the image
+# builder must install and verify them. The supervisord group:program targets
+# are the macOS source topology Ops owns in
+# eidolon_ops/deploy/supervisor/product-source.conf, and Ops' own test suite
+# checks that every target named here exists there and is left for eidolond to
+# start rather than auto-started behind its back.
+#
+# `external` is the one reserved target value: it says this driver does not
+# manage the service on this kind of Host. eidolond never starts, stops or
+# restarts it, still probes its health, and still gates dependents on it.
 version: 1
 services:
+  - service_id: nats
+    description: Agent and Memory asynchronous protocol broker with JetStream
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-nats.service
+      # A macOS source run shares one already-listening NATS with whatever
+      # started it; run_all.sh gates on port 4222 rather than owning a process.
+      supervisord: external
+    endpoints:
+      - endpoint_id: messaging.nats
+        protocol: nats
+        address: nats://127.0.0.1:4222
+        contract: eidolon.agent-memory.nats.v1
+        health_url: http://127.0.0.1:8222/healthz
+  - service_id: livekit
+    description: Local real-time media and room server
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-livekit.service
+      supervisord: livekit:livekit-server
+    endpoints:
+      - endpoint_id: media.livekit
+        protocol: livekit
+        address: ws://127.0.0.1:7880
+        contract: livekit.protocol.v1
+  - service_id: memory-supervisor
+    description: Memory Realm process reconciliation owner
+    required: true
+    enabled_by_default: true
+    dependencies: [nats]
+    host_targets:
+      systemd: eidolon-memory-supervisor.service
+      supervisord: memory:memory-supervisor
+    endpoints: []
+  - service_id: memory-discovery
+    description: Owner-scoped Memory routing discovery
+    required: true
+    enabled_by_default: true
+    dependencies: [memory-supervisor]
+    host_targets:
+      systemd: eidolon-memory-discovery.service
+      supervisord: memory:memory-discovery
+    endpoints:
+      - endpoint_id: memory-routing.http
+        protocol: http
+        address: http://127.0.0.1:8020
+        contract: eidolon.memory.agent-routing.v1
+        health_url: http://127.0.0.1:8020/api/discovery/agent-routing
   - service_id: data
     description: System Data and Companion identity authority
     required: true
     enabled_by_default: true
     dependencies: []
     host_targets:
+      systemd: eidolon-data.service
       supervisord: data:data-api
     endpoints:
       - endpoint_id: companion-authority.http
@@ -29,6 +101,7 @@ services:
     enabled_by_default: true
     dependencies: [data]
     host_targets:
+      systemd: eidolon-data-workspace.service
       supervisord: data:data-workspace-api
     endpoints:
       - endpoint_id: workspace-authority.http
@@ -40,8 +113,9 @@ services:
     description: Device onboarding, registry and policy authority
     required: true
     enabled_by_default: true
-    dependencies: []
+    dependencies: [livekit, channel-provider]
     host_targets:
+      systemd: eidolon-hub.service
       supervisord: hub:hub-api
     endpoints:
       - endpoint_id: device-authority.http
@@ -54,8 +128,10 @@ services:
     required: true
     enabled_by_default: true
     # Hub/Data availability gates specific mutations, not Kernel startup.
+    # Existing authoritative Mount reads remain available during an outage.
     dependencies: []
     host_targets:
+      systemd: eidolon-kernel.service
       supervisord: kernel:kernel-api
     endpoints:
       - endpoint_id: device-mount.http
@@ -63,3 +139,40 @@ services:
         address: http://127.0.0.1:8083
         contract: eidolon.kernel.device-mount.v1
         health_url: http://127.0.0.1:8083/health
+  - service_id: agent
+    description: Companion brain and Agent runtime
+    required: true
+    enabled_by_default: true
+    dependencies: [nats, memory-discovery, data]
+    host_targets:
+      systemd: eidolon-agent.service
+      supervisord: agent:agent
+    endpoints:
+      - endpoint_id: companion-brain.grpc
+        protocol: grpc
+        address: 127.0.0.1:45051
+        contract: eidolon.agent.rpc.v1
+        health_url: http://127.0.0.1:8180/readyz
+  - service_id: channel
+    description: LiveKit voice interaction worker
+    required: true
+    enabled_by_default: true
+    dependencies: [livekit, agent, data, kernel]
+    host_targets:
+      systemd: eidolon-channel.service
+      supervisord: channel:channel-worker
+    endpoints: []
+  - service_id: channel-provider
+    description: Hub-owned provisioning adapter for device LiveKit channels
+    required: true
+    enabled_by_default: true
+    dependencies: [livekit]
+    host_targets:
+      systemd: eidolon-channel-provider.service
+      supervisord: channel-provider:channel-provider
+    endpoints:
+      - endpoint_id: device-channel-provider.http
+        protocol: http
+        address: http://127.0.0.1:8767
+        contract: application/vnd.eidolon.livekit-device+json;v=1
+        health_url: http://127.0.0.1:8767/health

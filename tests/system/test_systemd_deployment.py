@@ -123,7 +123,7 @@ def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
 
 def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:
     document = yaml.safe_load(
-        (ROOT / "config/system-services.systemd.example.yaml").read_text(encoding="utf-8")
+        (ROOT / "config/system-services.yaml").read_text(encoding="utf-8")
     )
     services = {item["service_id"]: item for item in document["services"]}
 
@@ -189,23 +189,36 @@ def test_product_kernel_profile_uses_local_authorities_and_dedicated_store() -> 
     assert settings.companion_authority.timeout_seconds == 3
 
 
-def test_dev_manifest_publishes_all_control_plane_authorities() -> None:
+def test_supervisord_targets_name_the_macos_source_topology() -> None:
     document = yaml.safe_load((ROOT / "config/system-services.yaml").read_text(encoding="utf-8"))
     services = {item["service_id"]: item for item in document["services"]}
 
-    assert services["data"]["host_targets"]["supervisord"] == "data:data-api"
+    # Ops owns the group:program names in
+    # eidolon_ops/deploy/supervisor/product-source.conf and its own suite
+    # checks these against that file; what this repository can say is that
+    # every service names one, so a Host running the supervisord driver has
+    # the same eleven services as one running systemd.
+    assert {
+        service_id: item["host_targets"]["supervisord"] for service_id, item in services.items()
+    } == {
+        "nats": "external",
+        "livekit": "livekit:livekit-server",
+        "memory-supervisor": "memory:memory-supervisor",
+        "memory-discovery": "memory:memory-discovery",
+        "data": "data:data-api",
+        "data-workspace": "data:data-workspace-api",
+        "hub": "hub:hub-api",
+        "kernel": "kernel:kernel-api",
+        "agent": "agent:agent",
+        "channel": "channel:channel-worker",
+        "channel-provider": "channel-provider:channel-provider",
+    }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
     )
     assert services["data"]["endpoints"][1]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
     )
-    assert services["data-workspace"]["host_targets"]["supervisord"] == ("data:data-workspace-api")
     assert services["data-workspace"]["dependencies"] == ["data"]
-    assert services["data-workspace"]["endpoints"][0]["contract"] == (
-        "https://eidolon.live/contracts/system-data/workspace/onboarding-operation-v1.schema.json"
-    )
-    assert services["hub"]["host_targets"]["supervisord"] == "hub:hub-api"
     assert services["hub"]["endpoints"][0]["health_url"] == "http://127.0.0.1:8082/health"
-    assert services["kernel"]["host_targets"]["supervisord"] == "kernel:kernel-api"
-    assert services["kernel"]["endpoints"][0]["contract"] == ("eidolon.kernel.device-mount.v1")
+    assert services["kernel"]["endpoints"][0]["contract"] == "eidolon.kernel.device-mount.v1"

@@ -114,7 +114,23 @@ class ServiceManager:
             await self._start_or_observe(definition, state)
 
     async def _stop_disabled(self, definition: ServiceDefinition, state) -> None:
-        target = definition.target_for(self.host.driver_name)
+        driver = self.host.driver_name
+        if not definition.manages(driver):
+            # Desired state says off and the thing that could turn it off is
+            # not this Host's driver. Reporting "inactive" would claim a stop
+            # that never happened, so the gap is published as what it is.
+            self.directory.put(
+                ServiceStatus(
+                    service_id=definition.service_id,
+                    required=definition.required,
+                    desired=state,
+                    runtime_state="degraded",
+                    detail=f"external to {driver}; disable it where it actually runs",
+                    observed_at=self.clock.now(),
+                )
+            )
+            return
+        target = definition.target_for(driver)
         try:
             observed = await self.host.inspect(target)
             if observed.active:
@@ -136,7 +152,11 @@ class ServiceManager:
         )
 
     async def _start_or_observe(self, definition: ServiceDefinition, state) -> None:
-        target = definition.target_for(self.host.driver_name)
+        driver = self.host.driver_name
+        if not definition.manages(driver):
+            await self._observe_external(definition, state)
+            return
+        target = definition.target_for(driver)
         try:
             observed = await self.host.inspect(target)
             if not observed.active:
@@ -152,13 +172,7 @@ class ServiceManager:
                     observed_at=self.clock.now(),
                 )
             else:
-                health_urls = tuple(
-                    dict.fromkeys(
-                        endpoint.health_url
-                        for endpoint in definition.endpoints
-                        if endpoint.health_url is not None
-                    )
-                )
+                health_urls = self._health_urls(definition)
                 checks = await asyncio.gather(
                     *(self.readiness.check(url) for url in health_urls)
                 )
@@ -182,6 +196,52 @@ class ServiceManager:
                 observed_at=self.clock.now(),
             )
         self.directory.put(status)
+
+    async def _observe_external(self, definition: ServiceDefinition, state) -> None:
+        """Publish an unmanaged service from its own health, not from a target.
+
+        A dependency gate reads ``runtime_state == "ready"``, so a service this
+        driver does not start still has to earn that word rather than be given
+        it: without a health endpoint there is nothing to earn it with, and the
+        honest answer is that we do not know.
+        """
+
+        health_urls = self._health_urls(definition)
+        if not health_urls:
+            self.directory.put(
+                ServiceStatus(
+                    service_id=definition.service_id,
+                    required=definition.required,
+                    desired=state,
+                    runtime_state="unknown",
+                    detail=f"external to {self.host.driver_name}; no health endpoint to observe it by",
+                    observed_at=self.clock.now(),
+                )
+            )
+            return
+        checks = await asyncio.gather(*(self.readiness.check(url) for url in health_urls))
+        ready = all(checks)
+        self.directory.put(
+            ServiceStatus(
+                service_id=definition.service_id,
+                required=definition.required,
+                desired=state,
+                runtime_state="ready" if ready else "degraded",
+                detail=None if ready else "external readiness probe failed",
+                observed_at=self.clock.now(),
+                endpoints=definition.endpoints if ready else (),
+            )
+        )
+
+    @staticmethod
+    def _health_urls(definition: ServiceDefinition) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                endpoint.health_url
+                for endpoint in definition.endpoints
+                if endpoint.health_url is not None
+            )
+        )
 
     def list_services(self) -> tuple[ServiceStatus, ...]:
         self._require_initialized()
@@ -258,6 +318,10 @@ class ServiceManager:
             state = self.store.get(service_id)
             if not state.enabled:
                 raise Conflict(f"disabled system service cannot be restarted: {service_id}")
+            if not definition.manages(self.host.driver_name):
+                raise Conflict(
+                    f"external system service cannot be restarted here: {service_id}"
+                )
             await self.host.restart(definition.target_for(self.host.driver_name))
             result = self.store.record_operation(
                 service_id=service_id,

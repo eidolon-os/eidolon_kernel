@@ -1,7 +1,7 @@
 # Raspberry Pi/Linux product profile. Installed systemd units are host mechanisms;
 # desired enablement remains authoritative in eidolond SQLite.
 manifest:
-  path: system-services.systemd.example.yaml
+  path: system-services.yaml
 persistence:
   path: /var/lib/eidolon/eidolond.sqlite3
 host:

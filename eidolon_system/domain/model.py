@@ -10,6 +10,16 @@ from eidolon_system.domain.errors import InvalidManifest, NotFound
 
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 
+#: The one reserved host target. It says the driver named alongside it does not
+#: manage this service on this kind of Host — NATS is a systemd unit on the
+#: product image and an already-listening server a macOS source run merely
+#: shares. Declaring that is not the same as leaving the driver out: an omitted
+#: driver is a manifest that forgot one, and reconciliation would fail on it at
+#: the moment it mattered. A service pinned here is still catalogued, still
+#: probed, and still gates its dependents; only start, stop and restart are
+#: refused, because there is nothing here to start them with.
+EXTERNAL_HOST_TARGET = "external"
+
 
 def _identifier(name: str, value: str, *, max_length: int = 128) -> str:
     if (
@@ -77,13 +87,23 @@ class ServiceDefinition:
         if len(endpoint_ids) != len(set(endpoint_ids)):
             raise InvalidManifest(f"{self.service_id} has duplicate endpoint_id")
 
+    def manages(self, driver_name: str) -> bool:
+        """Whether this driver is the thing that starts and stops the service."""
+
+        return self.host_targets.get(driver_name) not in (None, EXTERNAL_HOST_TARGET)
+
     def target_for(self, driver_name: str) -> str:
         try:
-            return self.host_targets[driver_name]
+            target = self.host_targets[driver_name]
         except KeyError as exc:
             raise InvalidManifest(
                 f"{self.service_id} has no host target for {driver_name}"
             ) from exc
+        if target == EXTERNAL_HOST_TARGET:
+            raise InvalidManifest(
+                f"{self.service_id} is external to {driver_name} and has no target to act on"
+            )
+        return target
 
 
 class ServiceCatalog:
