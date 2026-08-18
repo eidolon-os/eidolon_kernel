@@ -11,7 +11,7 @@ Group=eidolon
 UMask=0007
 EnvironmentFile=-/etc/eidolon/hub.env
 EnvironmentFile=/etc/eidolon/host.env
-Environment=EIDOLON_HUB_SETTINGS_YAML=/etc/eidolon/hub.yaml
+Environment=EIDOLON_HUB_SETTINGS_YAML=/etc/eidolon/generated/hub.yaml
 ExecStart=/opt/eidolon/current/eidolon_hub/.venv/bin/uvicorn hub.main:app --host 127.0.0.1 --port 8082
 Restart=on-failure
 RestartSec=3s

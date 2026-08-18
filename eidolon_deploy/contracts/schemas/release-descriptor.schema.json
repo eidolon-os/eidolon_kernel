@@ -46,8 +46,8 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 23,
-      "maxItems": 23,
+      "minItems": 22,
+      "maxItems": 22,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {

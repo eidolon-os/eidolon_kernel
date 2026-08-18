@@ -41,6 +41,14 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-memory-discovery"),
     ),
 }
+#: Every file a release writes outside its own release root, and which component
+#: it comes from.
+#:
+#: Hub's settings are deliberately not here. A Hub is started with the per-Host
+#: rendering Ops writes to /etc/eidolon/generated/hub.yaml, so a release copy at
+#: /etc/eidolon/hub.yaml was read by nothing while still looking authoritative:
+#: it carried the template's placeholder hub_id, and an operator who opened it
+#: on a working Host read it as evidence that the Host was misconfigured.
 V2_SYSTEM_ASSETS = {
     Path("/etc/systemd/system/eidolond.service"): (
         "eidolon_kernel",
@@ -69,10 +77,6 @@ V2_SYSTEM_ASSETS = {
     Path("/etc/eidolon/kernel.yaml"): (
         "eidolon_kernel",
         Path("config/kernel.systemd.example.yaml"),
-    ),
-    Path("/etc/eidolon/hub.yaml"): (
-        "eidolon_kernel",
-        Path("config/hub.systemd.example.yaml"),
     ),
     Path("/etc/eidolon/system-services.systemd.example.yaml"): (
         "eidolon_kernel",
