@@ -227,7 +227,12 @@ def seal_prepared_release(
     assert python_version is not None
 
     assets: list[dict[str, object]] = []
-    component_roots = {"eidolon_kernel": kernel, "eidolon_admin": admin}
+    # Every component in the release, not the two that happened to own a system
+    # asset when this was written: a component's own settings template is the
+    # kind of asset that belongs to whoever it configures.
+    component_roots = {
+        component_id: source for component_id, _revision, source, _entrypoints in component_inputs
+    }
     for destination, (source_component_id, source_value) in V2_SYSTEM_ASSETS.items():
         source = component_roots[source_component_id] / source_value
         if not source.is_file() or source.is_symlink():

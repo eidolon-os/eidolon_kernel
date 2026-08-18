@@ -95,6 +95,17 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "componentId": {
+      "enum": [
+        "eidolon_kernel",
+        "eidolon_data",
+        "eidolon_hub",
+        "eidolon_admin",
+        "eidolon_agent",
+        "eidolon_channel",
+        "eidolon_memory"
+      ]
+    },
     "component": {
       "type": "object",
       "additionalProperties": false,
@@ -109,17 +120,7 @@
         "required_entrypoints"
       ],
       "properties": {
-        "component_id": {
-          "enum": [
-            "eidolon_kernel",
-            "eidolon_data",
-            "eidolon_hub",
-            "eidolon_admin",
-            "eidolon_agent",
-            "eidolon_channel",
-            "eidolon_memory"
-          ]
-        },
+        "component_id": {"$ref": "#/$defs/componentId"},
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "release_path": {"type": "string", "pattern": "^/opt/eidolon/releases/"},
         "current_link": {"type": "string", "minLength": 1, "maxLength": 200},
@@ -156,7 +157,7 @@
         "mode"
       ],
       "properties": {
-        "source_component_id": {"enum": ["eidolon_kernel", "eidolon_admin"]},
+        "source_component_id": {"$ref": "#/$defs/componentId"},
         "source": {"type": "string", "minLength": 1, "maxLength": 200},
         "destination": {"type": "string", "minLength": 1, "maxLength": 200},
         "sha256": {"$ref": "#/$defs/sha256"},
