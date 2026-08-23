@@ -19,6 +19,10 @@ Environment=EIDOLON_MEMORY_PALACES_ROOT=/var/lib/eidolon/memory/mempalaces
 Environment=EIDOLON_ADMIN_API_URL=http://127.0.0.1:9000
 Environment=PATH=/opt/eidolon/current/eidolon_memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/opt/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-supervisor
+# The supervisor re-reads the authority roster on SIGHUP. Without this,
+# `systemctl reload` failed outright and the only ways in were `systemctl kill
+# -s HUP` or a full restart — a restart stops every Realm to pick up one.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM

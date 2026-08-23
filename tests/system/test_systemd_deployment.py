@@ -242,3 +242,16 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
     assert services["data-workspace"]["dependencies"] == ["data"]
     assert services["hub"]["endpoints"][0]["health_url"] == "http://127.0.0.1:8082/health"
     assert services["kernel"]["endpoints"][0]["contract"] == "eidolon.kernel.device-mount.v1"
+
+
+def test_memory_supervisor_can_be_reloaded_without_stopping_realms() -> None:
+    """Re-reading the roster must not cost every Realm a restart.
+
+    The supervisor converges on the authority roster on its own schedule and on
+    SIGHUP. Without ExecReload, `systemctl reload` failed outright, so the
+    reachable options were `systemctl kill -s HUP` or a full restart — and a
+    restart stops every Realm on the Host to pick up one.
+    """
+    service = _unit("eidolon-memory-supervisor.service")["Service"]
+    assert service["ExecReload"] == "/bin/kill -HUP $MAINPID"
+    assert service["KillSignal"] == "SIGTERM"
