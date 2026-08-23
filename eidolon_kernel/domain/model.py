@@ -26,11 +26,68 @@ def require_utc(name: str, value: datetime) -> datetime:
 
 
 @dataclass(frozen=True, slots=True)
+class DeviceRef:
+    device_instance_id: str
+    owner_domain_id: str
+    claim_generation: int
+    trust_epoch: int
+    accepted_manifest_digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "device_instance_id",
+            require_identifier("device_instance_id", self.device_instance_id),
+        )
+        object.__setattr__(
+            self,
+            "owner_domain_id",
+            require_identifier("owner_domain_id", self.owner_domain_id, 64),
+        )
+        if min(self.claim_generation, self.trust_epoch) < 1:
+            raise InvalidRequest("Claim and trust generations must be positive")
+        object.__setattr__(
+            self,
+            "accepted_manifest_digest",
+            require_identifier(
+                "accepted_manifest_digest", self.accepted_manifest_digest
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceAdmission:
     device_id: str
     owner_id: str
     status: str
     manifest_revision: str
+    device_ref: DeviceRef
+
+    def __post_init__(self) -> None:
+        if (
+            self.device_ref.device_instance_id != self.device_id
+            or self.device_ref.owner_domain_id != self.owner_id
+            or self.device_ref.accepted_manifest_digest != self.manifest_revision
+        ):
+            raise InvalidRequest("DeviceAdmission and DeviceRef do not match")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimEvent:
+    stream_position: int
+    event_id: str
+    event_type: str
+    device_ref: DeviceRef
+    aggregate_revision: int
+    correlation_id: str
+    causation_id: str
+    occurred_at: datetime
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.stream_position < 1 or self.aggregate_revision < 1:
+            raise InvalidRequest("Claim event positions and revisions must be positive")
+        object.__setattr__(self, "occurred_at", require_utc("occurred_at", self.occurred_at))
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +101,9 @@ class CompanionIdentity:
 class DeviceMount:
     device_id: str
     owner_id: str
+    claim_generation: int
+    trust_epoch: int
+    accepted_manifest_digest: str
     attached_companion_id: str | None
     revision: int
     created_at: datetime
@@ -55,6 +115,15 @@ class DeviceMount:
     def __post_init__(self) -> None:
         object.__setattr__(self, "device_id", require_identifier("device_id", self.device_id))
         object.__setattr__(self, "owner_id", require_identifier("owner_id", self.owner_id, 64))
+        if min(self.claim_generation, self.trust_epoch) < 1:
+            raise InvalidRequest("mount Claim and trust generations must be positive")
+        object.__setattr__(
+            self,
+            "accepted_manifest_digest",
+            require_identifier(
+                "accepted_manifest_digest", self.accepted_manifest_digest
+            ),
+        )
         if self.attached_companion_id is not None:
             object.__setattr__(
                 self,
@@ -77,13 +146,22 @@ class DeviceMount:
         *,
         device_id: str,
         owner_id: str,
+        device_ref: DeviceRef,
         at: datetime,
         request_id: str,
         fingerprint: str,
     ) -> DeviceMount:
+        if (
+            device_ref.device_instance_id != device_id
+            or device_ref.owner_domain_id != owner_id
+        ):
+            raise InvalidRequest("mount target and DeviceRef do not match")
         return cls(
             device_id=device_id,
             owner_id=owner_id,
+            claim_generation=device_ref.claim_generation,
+            trust_epoch=device_ref.trust_epoch,
+            accepted_manifest_digest=device_ref.accepted_manifest_digest,
             attached_companion_id=None,
             revision=1,
             created_at=at,
@@ -96,6 +174,7 @@ class DeviceMount:
         self,
         *,
         owner_id: str,
+        device_ref: DeviceRef,
         at: datetime,
         request_id: str,
         fingerprint: str,
@@ -105,9 +184,17 @@ class DeviceMount:
             raise InvalidRequest("mount transition time cannot move backwards")
         if owner_id != self.owner_id:
             raise InvalidRequest("device mount owner namespace cannot change")
+        if (
+            device_ref.device_instance_id != self.device_id
+            or device_ref.owner_domain_id != owner_id
+        ):
+            raise InvalidRequest("remount target and DeviceRef do not match")
         return DeviceMount(
             device_id=self.device_id,
             owner_id=owner_id,
+            claim_generation=device_ref.claim_generation,
+            trust_epoch=device_ref.trust_epoch,
+            accepted_manifest_digest=device_ref.accepted_manifest_digest,
             attached_companion_id=None,
             revision=self.revision + 1,
             created_at=at,

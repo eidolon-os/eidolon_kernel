@@ -8,11 +8,17 @@ import httpx
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
-from eidolon_kernel.contracts.bindings import HubDeviceDirectoryEntryWire
-from eidolon_kernel.contracts.mappers import hub_device_to_domain
+from eidolon_kernel.contracts.bindings import (
+    HubClaimEventPageWire,
+    HubDeviceDirectoryEntryWire,
+)
+from eidolon_kernel.contracts.mappers import (
+    hub_claim_event_to_domain,
+    hub_device_to_domain,
+)
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.domain.errors import AuthorityRejected, AuthorityUnavailable
-from eidolon_kernel.domain.model import DeviceAdmission
+from eidolon_kernel.domain.model import ClaimEvent, DeviceAdmission
 
 
 class HubHttpDeviceAuthority:
@@ -70,6 +76,38 @@ class HubHttpDeviceAuthority:
         except (TypeError, ValueError, ValidationError, PydanticValidationError) as exc:
             raise AuthorityUnavailable("Hub response violated consumed device contract") from exc
         return hub_device_to_domain(wire)
+
+    async def list_claim_events(
+        self, *, after_stream_position: int, limit: int
+    ) -> tuple[ClaimEvent, ...]:
+        try:
+            response = await self._client.get(
+                f"{self._base_url}/api/device-management/v1/claim-events",
+                headers={"Authorization": f"Bearer {self._token}"},
+                params={
+                    "after_stream_position": str(after_stream_position),
+                    "limit": str(limit),
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AuthorityUnavailable("Hub Claim event stream is unreachable") from exc
+        if response.status_code in {401, 403}:
+            raise AuthorityUnavailable("Hub rejected Kernel's Claim event credential")
+        if response.status_code != 200:
+            raise AuthorityUnavailable(
+                f"unexpected Hub Claim event status {response.status_code}"
+            )
+        try:
+            document = response.json()
+            if not isinstance(document, dict):
+                raise TypeError("Hub Claim event response must be an object")
+            self._contracts.validate(
+                "external/hub-claim-event-page.schema.json", document
+            )
+            page = HubClaimEventPageWire.model_validate(document)
+        except (TypeError, ValueError, ValidationError, PydanticValidationError) as exc:
+            raise AuthorityUnavailable("Hub Claim event response violated contract") from exc
+        return tuple(hub_claim_event_to_domain(item) for item in page.events)
 
     async def close(self) -> None:
         if self._owns_client:

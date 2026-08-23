@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/consumed-contracts/hub/claim-event-page-v1.schema.json",
+  "title": "Consumed Hub Claim Event Page V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "next_stream_position", "events"],
+  "properties": {
+    "operation": {"const": "device.claim-event-page"},
+    "next_stream_position": {"type": "integer", "minimum": 0},
+    "events": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation", "stream_position", "event_id", "event_type", "device_ref", "aggregate_revision", "correlation_id", "causation_id", "occurred_at", "reason"],
+        "properties": {
+          "operation": {"const": "device.claim-event"},
+          "stream_position": {"type": "integer", "minimum": 1},
+          "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "event_type": {"const": "live.eidolon.device.claim-revoked.v1"},
+          "device_ref": {"$ref": "#/$defs/deviceRef"},
+          "aggregate_revision": {"type": "integer", "minimum": 1},
+          "correlation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "causation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "occurred_at": {"type": "string", "format": "date-time"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 256}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "deviceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_instance_id", "owner_domain_id", "claim_generation", "trust_epoch", "accepted_manifest_digest"],
+      "properties": {
+        "device_instance_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "owner_domain_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "trust_epoch": {"type": "integer", "minimum": 1},
+        "accepted_manifest_digest": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    }
+  }
+}

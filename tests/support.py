@@ -11,9 +11,11 @@ from eidolon_kernel.domain.errors import (
 )
 from eidolon_kernel.domain.model import (
     AuditEvent,
+    ClaimEvent,
     CompanionIdentity,
     DeviceAdmission,
     DeviceMount,
+    DeviceRef,
 )
 from eidolon_kernel.ports.runtime import CommitResult, StoredRequest
 
@@ -33,15 +35,31 @@ class FakeDeviceAuthority:
     status: str = "approved"
     actual_owner: str | None = None
     calls: int = 0
+    claim_events: tuple[ClaimEvent, ...] = ()
 
     async def get_device(self, *, owner_id: str, device_id: str) -> DeviceAdmission:
         self.calls += 1
+        actual_owner = self.actual_owner or owner_id
         return DeviceAdmission(
             device_id=device_id,
-            owner_id=self.actual_owner or owner_id,
+            owner_id=actual_owner,
             status=self.status,
             manifest_revision="sha256:hub-manifest",
+            device_ref=DeviceRef(
+                device_instance_id=device_id,
+                owner_domain_id=actual_owner,
+                claim_generation=1,
+                trust_epoch=1,
+                accepted_manifest_digest="sha256:hub-manifest",
+            ),
         )
+
+    async def list_claim_events(self, *, after_stream_position: int, limit: int):
+        return tuple(
+            event
+            for event in self.claim_events
+            if event.stream_position > after_stream_position
+        )[:limit]
 
 
 @dataclass
@@ -69,6 +87,7 @@ class MemoryStore:
     mounts: dict[str, DeviceMount] = field(default_factory=dict)
     requests: dict[str, StoredRequest] = field(default_factory=dict)
     events: list[AuditEvent] = field(default_factory=list)
+    claim_events: dict[str, tuple[ClaimEvent, str]] = field(default_factory=dict)
 
     def get(self, device_id: str) -> DeviceMount | None:
         return self.mounts.get(device_id)
@@ -123,6 +142,21 @@ class MemoryStore:
             and event.mount.owner_id == owner_id
         )[:limit]
 
+    def claim_event_position(self) -> int:
+        return max((value[0].stream_position for value in self.claim_events.values()), default=0)
+
+    def claim_event_outcome(self, event_id: str) -> str | None:
+        value = self.claim_events.get(event_id)
+        return None if value is None else value[1]
+
+    def record_claim_event(self, *, event: ClaimEvent, outcome: str, processed_at) -> None:
+        existing = self.claim_events.get(event.event_id)
+        if existing is not None and existing != (event, outcome):
+            raise IdempotencyConflict
+        if existing is None and event.stream_position != self.claim_event_position() + 1:
+            raise RevisionConflict
+        self.claim_events[event.event_id] = (event, outcome)
+
 
 def sample_mount(
     revision: int = 1,
@@ -135,6 +169,9 @@ def sample_mount(
     return DeviceMount(
         device_id="device-1",
         owner_id="owner-1",
+        claim_generation=1,
+        trust_epoch=1,
+        accepted_manifest_digest="sha256:hub-manifest",
         attached_companion_id=attached_companion_id,
         revision=revision,
         created_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),

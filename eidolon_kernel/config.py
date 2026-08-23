@@ -42,6 +42,7 @@ class SystemDirectorySettings(SettingsModel):
 
 class HubSettings(SettingsModel):
     timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    claim_event_poll_seconds: float = Field(default=0.5, ge=0.1, le=30)
 
 
 class CompanionAuthoritySettings(SettingsModel):

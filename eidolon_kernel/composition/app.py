@@ -29,6 +29,7 @@ from eidolon_kernel.application.device_mounts import (
     AttachCompanion,
     DetachCompanion,
     MountDevice,
+    ReconcileClaimEvents,
     ReconcileMountPrerequisites,
     UnmountDevice,
 )
@@ -186,8 +187,23 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
         reconciliation,
         interval_seconds=settings.reconciliation.interval_seconds,
     )
+    claim_event_worker = PeriodicReconciliationWorker(
+        ReconcileClaimEvents(
+            store=store,
+            projection=projection,
+            devices=devices,
+            clock=SystemClock(),
+        ),
+        interval_seconds=settings.hub.claim_event_poll_seconds,
+        task_name="eidolon-kernel-claim-event-reconciliation",
+    )
+
+    def startup() -> None:
+        claim_event_worker.start()
+        reconciliation_worker.start()
 
     async def shutdown() -> None:
+        await claim_event_worker.close()
         await reconciliation_worker.close()
         await devices.close()
         await companions.close()
@@ -201,7 +217,7 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
                 device_mount_write=devices.is_available,
                 companion_attachment_write=companions.is_available,
             ),
-            startup=reconciliation_worker.start,
+            startup=startup,
             shutdown=shutdown,
         ),
         store=store,

@@ -11,16 +11,19 @@ from pathlib import Path
 from typing import Any
 
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
-from eidolon_kernel.domain.model import AuditEvent, DeviceMount
+from eidolon_kernel.domain.model import AuditEvent, ClaimEvent, DeviceMount
 from eidolon_kernel.ports.runtime import CommitResult, StoredRequest
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _EXPECTED_COLUMNS = {
     "kernel_schema_meta": {"schema_version"},
     "kernel_device_mounts": {
         "device_id",
         "owner_id",
+        "claim_generation",
+        "trust_epoch",
+        "accepted_manifest_digest",
         "attached_companion_id",
         "revision",
         "created_at",
@@ -43,6 +46,9 @@ _EXPECTED_COLUMNS = {
         "event_type",
         "device_id",
         "owner_id",
+        "claim_generation",
+        "trust_epoch",
+        "accepted_manifest_digest",
         "attached_companion_id",
         "mount_revision",
         "mount_created_at",
@@ -52,6 +58,27 @@ _EXPECTED_COLUMNS = {
         "occurred_at",
         "data_json",
     },
+    "kernel_claim_event_inbox": {
+        "stream_position",
+        "event_id",
+        "event_type",
+        "device_id",
+        "owner_domain_id",
+        "claim_generation",
+        "trust_epoch",
+        "accepted_manifest_digest",
+        "aggregate_revision",
+        "occurred_at",
+        "outcome",
+        "processed_at",
+    },
+}
+
+_V3_TABLES = {
+    "kernel_schema_meta",
+    "kernel_device_mounts",
+    "kernel_requests",
+    "kernel_audit_events",
 }
 
 
@@ -63,6 +90,9 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
     return {
         "device_id": mount.device_id,
         "owner_id": mount.owner_id,
+        "claim_generation": mount.claim_generation,
+        "trust_epoch": mount.trust_epoch,
+        "accepted_manifest_digest": mount.accepted_manifest_digest,
         "attached_companion_id": mount.attached_companion_id,
         "revision": mount.revision,
         "created_at": _timestamp(mount.created_at),
@@ -77,6 +107,9 @@ def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
     return DeviceMount(
         device_id=document["device_id"],
         owner_id=document["owner_id"],
+        claim_generation=document["claim_generation"],
+        trust_epoch=document["trust_epoch"],
+        accepted_manifest_digest=document["accepted_manifest_digest"],
         attached_companion_id=document["attached_companion_id"],
         revision=document["revision"],
         created_at=datetime.fromisoformat(document["created_at"].replace("Z", "+00:00")),
@@ -91,6 +124,9 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
     return DeviceMount(
         device_id=row["device_id"],
         owner_id=row["owner_id"],
+        claim_generation=row["claim_generation"],
+        trust_epoch=row["trust_epoch"],
+        accepted_manifest_digest=row["accepted_manifest_digest"],
         attached_companion_id=row["attached_companion_id"],
         revision=row["revision"],
         created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
@@ -139,10 +175,13 @@ class SqliteMountStore:
                 CREATE TABLE kernel_schema_meta (
                     schema_version INTEGER NOT NULL
                 );
-                INSERT INTO kernel_schema_meta(schema_version) VALUES (3);
+                INSERT INTO kernel_schema_meta(schema_version) VALUES (4);
                 CREATE TABLE kernel_device_mounts (
                     device_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
+                    claim_generation INTEGER NOT NULL CHECK (claim_generation >= 1),
+                    trust_epoch INTEGER NOT NULL CHECK (trust_epoch >= 1),
+                    accepted_manifest_digest TEXT NOT NULL,
                     attached_companion_id TEXT,
                     revision INTEGER NOT NULL CHECK (revision >= 1),
                     created_at TEXT NOT NULL,
@@ -161,6 +200,9 @@ class SqliteMountStore:
                     event_type TEXT NOT NULL,
                     device_id TEXT NOT NULL,
                     owner_id TEXT NOT NULL,
+                    claim_generation INTEGER NOT NULL,
+                    trust_epoch INTEGER NOT NULL,
+                    accepted_manifest_digest TEXT NOT NULL,
                     attached_companion_id TEXT,
                     mount_revision INTEGER NOT NULL,
                     mount_created_at TEXT NOT NULL,
@@ -180,10 +222,96 @@ class SqliteMountStore:
                     audit_position INTEGER NOT NULL REFERENCES kernel_audit_events(position),
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE kernel_claim_event_inbox (
+                    stream_position INTEGER PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    owner_domain_id TEXT NOT NULL,
+                    claim_generation INTEGER NOT NULL,
+                    trust_epoch INTEGER NOT NULL,
+                    accepted_manifest_digest TEXT NOT NULL,
+                    aggregate_revision INTEGER NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    processed_at TEXT NOT NULL
+                );
                 COMMIT;
                 """
             )
+        elif tables == _V3_TABLES:
+            version = self._connection.execute(
+                "SELECT schema_version FROM kernel_schema_meta"
+            ).fetchall()
+            if len(version) == 1 and version[0][0] == 3:
+                self._migrate_v3_to_v4()
         self._validate_schema()
+
+    def _migrate_v3_to_v4(self) -> None:
+        """One audited cutover that preserves existing Pi5 mounts."""
+
+        self._connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+            ALTER TABLE kernel_device_mounts
+                ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE kernel_device_mounts
+                ADD COLUMN trust_epoch INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE kernel_device_mounts
+                ADD COLUMN accepted_manifest_digest TEXT NOT NULL DEFAULT 'legacy:unknown';
+            UPDATE kernel_device_mounts
+               SET accepted_manifest_digest = COALESCE(
+                   (SELECT json_extract(a.data_json, '$.manifest_revision')
+                      FROM kernel_audit_events AS a
+                     WHERE a.device_id = kernel_device_mounts.device_id
+                       AND json_extract(a.data_json, '$.manifest_revision') IS NOT NULL
+                     ORDER BY a.position DESC LIMIT 1),
+                   accepted_manifest_digest
+               );
+            ALTER TABLE kernel_audit_events
+                ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE kernel_audit_events
+                ADD COLUMN trust_epoch INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE kernel_audit_events
+                ADD COLUMN accepted_manifest_digest TEXT NOT NULL DEFAULT 'legacy:unknown';
+            UPDATE kernel_audit_events
+               SET accepted_manifest_digest = COALESCE(
+                   (SELECT m.accepted_manifest_digest
+                      FROM kernel_device_mounts AS m
+                     WHERE m.device_id = kernel_audit_events.device_id),
+                   accepted_manifest_digest
+               );
+            UPDATE kernel_requests
+               SET outcome_json = json_set(
+                   outcome_json,
+                   '$.claim_generation',
+                   COALESCE((SELECT m.claim_generation FROM kernel_device_mounts AS m
+                              WHERE m.device_id = json_extract(kernel_requests.outcome_json, '$.device_id')), 1),
+                   '$.trust_epoch',
+                   COALESCE((SELECT m.trust_epoch FROM kernel_device_mounts AS m
+                              WHERE m.device_id = json_extract(kernel_requests.outcome_json, '$.device_id')), 1),
+                   '$.accepted_manifest_digest',
+                   COALESCE((SELECT m.accepted_manifest_digest FROM kernel_device_mounts AS m
+                              WHERE m.device_id = json_extract(kernel_requests.outcome_json, '$.device_id')), 'legacy:unknown')
+               );
+            CREATE TABLE kernel_claim_event_inbox (
+                stream_position INTEGER PRIMARY KEY,
+                event_id TEXT NOT NULL UNIQUE,
+                event_type TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                owner_domain_id TEXT NOT NULL,
+                claim_generation INTEGER NOT NULL,
+                trust_epoch INTEGER NOT NULL,
+                accepted_manifest_digest TEXT NOT NULL,
+                aggregate_revision INTEGER NOT NULL,
+                occurred_at TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                processed_at TEXT NOT NULL
+            );
+            UPDATE kernel_schema_meta SET schema_version = 4;
+            COMMIT;
+            """
+        )
 
     def _validate_schema(self) -> None:
         tables = {
@@ -287,6 +415,9 @@ class SqliteMountStore:
                 values = (
                     mount.device_id,
                     mount.owner_id,
+                    mount.claim_generation,
+                    mount.trust_epoch,
+                    mount.accepted_manifest_digest,
                     mount.attached_companion_id,
                     mount.revision,
                     _timestamp(mount.created_at),
@@ -298,18 +429,23 @@ class SqliteMountStore:
                 if current is None:
                     self._connection.execute(
                         """INSERT INTO kernel_device_mounts(
-                            device_id, owner_id, attached_companion_id, revision, created_at, updated_at,
+                            device_id, owner_id, claim_generation, trust_epoch,
+                            accepted_manifest_digest, attached_companion_id, revision, created_at, updated_at,
                             request_id, fingerprint, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         values,
                     )
                 else:
                     cursor = self._connection.execute(
                         """UPDATE kernel_device_mounts SET
+                            claim_generation=?, trust_epoch=?, accepted_manifest_digest=?,
                             attached_companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
                             fingerprint=?, active=?
                         WHERE device_id=? AND owner_id=? AND revision=?""",
                         (
+                            mount.claim_generation,
+                            mount.trust_epoch,
+                            mount.accepted_manifest_digest,
                             mount.attached_companion_id,
                             mount.revision,
                             _timestamp(mount.created_at),
@@ -327,14 +463,18 @@ class SqliteMountStore:
                 event_id = f"kernel:{mount.request_id}:{mount.revision}"
                 cursor = self._connection.execute(
                     """INSERT INTO kernel_audit_events(
-                        event_id, event_type, device_id, owner_id, attached_companion_id, mount_revision,
+                        event_id, event_type, device_id, owner_id, claim_generation,
+                        trust_epoch, accepted_manifest_digest, attached_companion_id, mount_revision,
                         mount_created_at, active, request_id, fingerprint, occurred_at, data_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         event_id,
                         event_type,
                         mount.device_id,
                         mount.owner_id,
+                        mount.claim_generation,
+                        mount.trust_epoch,
+                        mount.accepted_manifest_digest,
                         mount.attached_companion_id,
                         mount.revision,
                         _timestamp(mount.created_at),
@@ -388,6 +528,9 @@ class SqliteMountStore:
             document = {
                 "device_id": row["device_id"],
                 "owner_id": row["owner_id"],
+                "claim_generation": row["claim_generation"],
+                "trust_epoch": row["trust_epoch"],
+                "accepted_manifest_digest": row["accepted_manifest_digest"],
                 "attached_companion_id": row["attached_companion_id"],
                 "revision": row["mount_revision"],
                 "created_at": row["mount_created_at"],
@@ -409,3 +552,83 @@ class SqliteMountStore:
                 )
             )
         return tuple(events)
+
+    def claim_event_position(self) -> int:
+        with self._mutex:
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(stream_position), 0) FROM kernel_claim_event_inbox"
+            ).fetchone()
+        return int(row[0])
+
+    def claim_event_outcome(self, event_id: str) -> str | None:
+        with self._mutex:
+            row = self._connection.execute(
+                "SELECT outcome FROM kernel_claim_event_inbox WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def record_claim_event(
+        self, *, event: ClaimEvent, outcome: str, processed_at: datetime
+    ) -> None:
+        with self._mutex:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT * FROM kernel_claim_event_inbox WHERE event_id = ?",
+                    (event.event_id,),
+                ).fetchone()
+                if existing is not None:
+                    same = (
+                        existing["stream_position"] == event.stream_position
+                        and existing["event_type"] == event.event_type
+                        and existing["device_id"] == event.device_ref.device_instance_id
+                        and existing["owner_domain_id"] == event.device_ref.owner_domain_id
+                        and existing["claim_generation"] == event.device_ref.claim_generation
+                        and existing["trust_epoch"] == event.device_ref.trust_epoch
+                        and existing["accepted_manifest_digest"]
+                        == event.device_ref.accepted_manifest_digest
+                        and existing["aggregate_revision"] == event.aggregate_revision
+                        and existing["occurred_at"] == _timestamp(event.occurred_at)
+                        and existing["outcome"] == outcome
+                    )
+                    if not same:
+                        raise IdempotencyConflict(
+                            "Claim event_id was reused with different content"
+                        )
+                    self._connection.execute("COMMIT")
+                    return
+                current = self._connection.execute(
+                    "SELECT COALESCE(MAX(stream_position), 0) FROM kernel_claim_event_inbox"
+                ).fetchone()[0]
+                if event.stream_position != current + 1:
+                    raise RevisionConflict(
+                        f"Claim event stream gap: expected {current + 1}, got {event.stream_position}"
+                    )
+                self._connection.execute(
+                    """INSERT INTO kernel_claim_event_inbox(
+                        stream_position, event_id, event_type, device_id,
+                        owner_domain_id, claim_generation, trust_epoch,
+                        accepted_manifest_digest, aggregate_revision, occurred_at,
+                        outcome, processed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        event.stream_position,
+                        event.event_id,
+                        event.event_type,
+                        event.device_ref.device_instance_id,
+                        event.device_ref.owner_domain_id,
+                        event.device_ref.claim_generation,
+                        event.device_ref.trust_epoch,
+                        event.device_ref.accepted_manifest_digest,
+                        event.aggregate_revision,
+                        _timestamp(event.occurred_at),
+                        outcome,
+                        _timestamp(processed_at),
+                    ),
+                )
+                self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise

@@ -24,7 +24,9 @@ ADMIN_ROOT = ROOT.parent / "eidolon_admin"
 SUPERVISORD = ADMIN_ROOT / ".venv/bin/supervisord"
 SUPERVISORCTL = ADMIN_ROOT / ".venv/bin/supervisorctl"
 HUB_UVICORN = HUB_ROOT / ".venv/bin/uvicorn"
+HUB_PYTHON = HUB_ROOT / ".venv/bin/python"
 EIDOLOND = ROOT / ".venv/bin/eidolond"
+OWNER_DIRECTORY_HELPER = Path(__file__).with_name("owner_directory_material.py")
 
 HUB_MANAGEMENT_SECRET = "m2b-hub-management-secret-value-0001"
 HUB_READER_TOKEN = "m2b-hub-registry-reader-token-value-0001"
@@ -111,7 +113,7 @@ def _management_token() -> str:
         json.dumps(
             {
                 "sub": "m2b-e2e-admin",
-                "aud": "eidolon-hub",
+                "aud": "eidolon-admission",
                 "roles": ["hub-admin"],
                 "exp": int(time.time()) + 300,
             },
@@ -134,10 +136,28 @@ def _write_runtime_configuration(root: Path, *, hub_port: int, kernel_port: int)
     manifest = root / "services.yaml"
     system_settings = root / "eidolond.yaml"
 
+    subprocess.run(
+        [
+            str(HUB_PYTHON),
+            str(OWNER_DIRECTORY_HELPER),
+            str(root),
+            "hub.m2b.invalid",
+            "owner-m2b",
+        ],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
     hub_settings.write_text(
         f"""onboarding:
-  hub_id: eidolon-hub-m2b
-  public_base_url: https://hub.m2b.invalid
+  owner_domain_id: owner-m2b
+  trust_epoch: 1
+  descriptor_uri: https://hub.m2b.invalid/api/device-onboarding/v1/descriptor
+  descriptor_path: {root / "owner-domain-descriptor.json"}
+  owner_root_certificate_path: {root / "owner-domain-root.pem"}
+  authority_signing_certificate_path: {root / "authority-signing.pem"}
   retrieval_window_seconds: 1800
 discovery:
   mdns:

@@ -12,10 +12,19 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class DeviceRefWire(ContractModel):
+    device_instance_id: str = Field(min_length=1, max_length=128)
+    owner_domain_id: str = Field(min_length=1, max_length=64)
+    claim_generation: int = Field(ge=1)
+    trust_epoch: int = Field(ge=1)
+    accepted_manifest_digest: str = Field(min_length=1, max_length=128)
+
+
 class DeviceMountWire(ContractModel):
     operation: Literal["kernel.device-mount"] = "kernel.device-mount"
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
+    device_ref: DeviceRefWire
     attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     revision: int = Field(ge=1)
     created_at: datetime
@@ -110,6 +119,31 @@ class HubDeviceDirectoryEntryWire(ContractModel):
     lifecycle_state: Literal["pending-approval", "approved", "revoked"]
     enrolled_at: datetime
     updated_at: datetime
+    device_ref: DeviceRefWire
+
+
+class HubClaimEventWire(ContractModel):
+    operation: Literal["device.claim-event"]
+    stream_position: int = Field(ge=1)
+    event_id: str = Field(min_length=1, max_length=128)
+    event_type: Literal["live.eidolon.device.claim-revoked.v1"]
+    device_ref: DeviceRefWire
+    aggregate_revision: int = Field(ge=1)
+    correlation_id: str = Field(min_length=1, max_length=128)
+    causation_id: str = Field(min_length=1, max_length=128)
+    occurred_at: datetime
+    reason: str = Field(min_length=1, max_length=256)
+
+
+class HubClaimEventPageWire(ContractModel):
+    operation: Literal["device.claim-event-page"]
+    next_stream_position: int = Field(ge=0)
+    events: tuple[HubClaimEventWire, ...] = Field(default=(), max_length=500)
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _claim_event_arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
 
 
 class CompanionIdentityWire(ContractModel):

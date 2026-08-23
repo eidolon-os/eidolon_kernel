@@ -29,6 +29,13 @@ def document(**overrides):
         "lifecycle_state": "approved",
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
+        "device_ref": {
+            "device_instance_id": "device one",
+            "owner_domain_id": "owner one",
+            "claim_generation": 1,
+            "trust_epoch": 1,
+            "accepted_manifest_digest": "sha256:manifest",
+        },
     }
     value.update(overrides)
     return value

@@ -17,7 +17,7 @@ from eidolon_kernel.contracts.bindings import (
 )
 from eidolon_kernel.contracts.mappers import commit_to_wire
 from eidolon_kernel.contracts.registry import ContractRegistry
-from eidolon_kernel.domain.model import DeviceMount
+from eidolon_kernel.domain.model import DeviceMount, DeviceRef
 from eidolon_kernel.ports.runtime import CommitResult
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 12
+    assert len(files) == len(registry.schema_names) == 13
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -49,6 +49,9 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
     mount = DeviceMount.first(
         device_id="device-1",
         owner_id="owner-1",
+        device_ref=DeviceRef(
+            "device-1", "owner-1", 1, 1, "sha256:hub-manifest"
+        ),
         at=now,
         request_id="request-1",
         fingerprint="sha256:" + "a" * 64,
@@ -119,6 +122,13 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
         "lifecycle_state": "approved",
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
+        "device_ref": {
+            "device_instance_id": "device-1",
+            "owner_domain_id": "owner-1",
+            "claim_generation": 1,
+            "trust_epoch": 1,
+            "accepted_manifest_digest": "sha256:manifest",
+        },
     }
     ContractRegistry().validate(
         "external/hub-device-directory-entry.schema.json", document

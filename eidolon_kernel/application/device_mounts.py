@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from eidolon_kernel.domain.commands import (
     AttachCompanionCommand,
@@ -118,6 +118,7 @@ class MountDevice:
             mount = DeviceMount.first(
                 device_id=command.device_id,
                 owner_id=command.owner_id,
+                device_ref=device.device_ref,
                 at=now,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
@@ -126,6 +127,7 @@ class MountDevice:
         else:
             mount = current.mounted_as(
                 owner_id=command.owner_id,
+                device_ref=device.device_ref,
                 at=now,
                 request_id=command.request_id,
                 fingerprint=command.fingerprint,
@@ -325,6 +327,94 @@ class ReconciliationResult:
     unmounted: int
     detached: int
     deferred: int
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimEventReconciliationResult:
+    consumed: int
+    unmounted: int
+    ignored: int
+
+
+@dataclass(slots=True)
+class ReconcileClaimEvents:
+    """Consume Hub Claim facts and converge only matching Mount generations."""
+
+    store: MountStore
+    projection: MountProjection
+    devices: DeviceAuthority
+    clock: Clock
+    batch_size: int = 100
+
+    async def execute(self) -> ClaimEventReconciliationResult:
+        events = await self.devices.list_claim_events(
+            after_stream_position=self.store.claim_event_position(),
+            limit=self.batch_size,
+        )
+        consumed = unmounted = ignored = 0
+        for event in events:
+            existing_outcome = self.store.claim_event_outcome(event.event_id)
+            if existing_outcome is not None:
+                consumed += 1
+                continue
+            current = self.store.get(event.device_ref.device_instance_id)
+            expected_ref = event.device_ref
+            if current is None:
+                outcome = "no-mount"
+                ignored += 1
+            else:
+                mount_ref = {
+                    "device_instance_id": current.device_id,
+                    "owner_domain_id": current.owner_id,
+                    "claim_generation": current.claim_generation,
+                    "trust_epoch": current.trust_epoch,
+                    "accepted_manifest_digest": current.accepted_manifest_digest,
+                }
+                if mount_ref != asdict(expected_ref):
+                    outcome = "stale-generation-ignored"
+                    ignored += 1
+                elif not current.active:
+                    outcome = "already-unmounted"
+                    ignored += 1
+                else:
+                    request_id = (
+                        "claim-event-unmount:"
+                        + hashlib.sha256(event.event_id.encode()).hexdigest()[:48]
+                    )
+                    fingerprint = request_fingerprint(
+                        "device.unmount-by-claim-event",
+                        {
+                            "event_id": event.event_id,
+                            "device_ref": asdict(expected_ref),
+                        },
+                    )
+                    mount = current.unmounted(
+                        at=self.clock.now(),
+                        request_id=request_id,
+                        fingerprint=fingerprint,
+                    )
+                    result = self.store.commit(
+                        mount=mount,
+                        expected_revision=current.revision,
+                        operation="device.unmount-by-claim-event",
+                        event_type="eidolon.kernel.device-unmounted-by-claim-event.v1",
+                        event_data={
+                            "claim_event_id": event.event_id,
+                            "claim_event_position": event.stream_position,
+                            "claim_aggregate_revision": event.aggregate_revision,
+                            "previous_revision": current.revision,
+                        },
+                    )
+                    _project_committed(self.store, self.projection, result.mount)
+                    outcome = "unmounted"
+                    unmounted += 1
+            self.store.record_claim_event(
+                event=event,
+                outcome=outcome,
+                processed_at=self.clock.now(),
+            )
+            consumed += 1
+        return ClaimEventReconciliationResult(consumed, unmounted, ignored)
 
 
 @dataclass(slots=True)

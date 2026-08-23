@@ -66,6 +66,25 @@ def create_dependency_app() -> FastAPI:
             "lifecycle_state": "approved",
             "enrolled_at": timestamp,
             "updated_at": timestamp,
+            "device_ref": {
+                "device_instance_id": device_id,
+                "owner_domain_id": owner_id,
+                "claim_generation": 1,
+                "trust_epoch": 1,
+                "accepted_manifest_digest": "fixture-v1",
+            },
+        }
+
+    @app.get("/api/device-management/v1/claim-events")
+    async def claim_events(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict[str, object]:
+        if authorization != f"Bearer {hub_token}":
+            raise HTTPException(status_code=403, detail="invalid Hub credential")
+        return {
+            "operation": "device.claim-event-page",
+            "next_stream_position": 0,
+            "events": [],
         }
 
     return app

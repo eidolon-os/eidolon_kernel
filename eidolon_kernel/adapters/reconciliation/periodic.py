@@ -19,11 +19,13 @@ class PeriodicReconciliationWorker:
         reconciliation: ReconciliationJob,
         *,
         interval_seconds: float,
+        task_name: str = "eidolon-kernel-mount-reconciliation",
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("reconciliation interval must be positive")
         self._reconciliation = reconciliation
         self._interval_seconds = interval_seconds
+        self._task_name = task_name
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -31,7 +33,7 @@ class PeriodicReconciliationWorker:
             raise RuntimeError("reconciliation worker is already started")
         self._task = asyncio.create_task(
             self._run(),
-            name="eidolon-kernel-mount-reconciliation",
+            name=self._task_name,
         )
 
     async def close(self) -> None:

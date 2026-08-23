@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from eidolon_kernel.domain.model import AuditEvent, DeviceMount
+from eidolon_kernel.domain.model import AuditEvent, ClaimEvent, DeviceMount
 
 
 class Clock(Protocol):
@@ -49,6 +49,14 @@ class MountStore(Protocol):
     def list_audit(
         self, *, after_position: int, limit: int, owner_id: str
     ) -> tuple[AuditEvent, ...]: ...
+
+    def claim_event_position(self) -> int: ...
+
+    def claim_event_outcome(self, event_id: str) -> str | None: ...
+
+    def record_claim_event(
+        self, *, event: ClaimEvent, outcome: str, processed_at: datetime
+    ) -> None: ...
 
 
 class MountProjection(Protocol):
