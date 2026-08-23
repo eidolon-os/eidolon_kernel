@@ -24,6 +24,7 @@ from tests.deploy.support import release_document
 class FakeRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
+        self.verified_unit_texts: dict[str, str] = {}
         self.fail_command: tuple[str, ...] | None = None
         self.missing_units: set[str] = set()
         self.current_bootstrap_schema_version = 5
@@ -32,6 +33,11 @@ class FakeRunner:
 
     def run(self, *command: str) -> CommandResult:
         self.calls.append(command)
+        if command[:2] == ("/usr/bin/systemd-analyze", "verify"):
+            self.verified_unit_texts = {
+                Path(path).name: Path(path).read_text(encoding="utf-8")
+                for path in command[2:]
+            }
         if self.fail_command and command[: len(self.fail_command)] == self.fail_command:
             return CommandResult(1, "", "injected command failure")
         if command[1:4] == ("show", "--property=LoadState", "--value"):
@@ -196,6 +202,36 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
     assert len(verify_call[2:]) == 16
     assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_verifies_new_entrypoints_against_the_candidate_release(tmp_path: Path) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    lifecycle = next(
+        asset
+        for asset in release.system_assets
+        if asset.destination.name == "eidolon-lifecycle-workflow.service"
+    )
+    source = _host_path(root, release.components_by_id[lifecycle.source_component_id].release_path)
+    source = source / lifecycle.source
+    source.write_text(
+        "[Service]\n"
+        "ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/"
+        "eidolon-lifecycle-workflow\n",
+        encoding="utf-8",
+    )
+    object.__setattr__(lifecycle, "sha256", hashlib.sha256(source.read_bytes()).hexdigest())
+    admin_component = release.components_by_id["eidolon_admin"]
+    object.__setattr__(
+        admin_component,
+        "source_tree_sha256",
+        source_tree_sha256(_host_path(root, admin_component.release_path)),
+    )
+
+    host.preflight(release)
+
+    rendered = runner.verified_unit_texts["eidolon-lifecycle-workflow.service"]
+    assert "/opt/eidolon/current/eidolon_admin" not in rendered
+    assert str(release.components_by_id["eidolon_admin"].release_path) in rendered
 
 
 def test_preflight_rejects_bootstrap_schema_transition_before_host_mutation(

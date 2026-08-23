@@ -13,6 +13,7 @@ import socket
 import ssl
 import stat
 import subprocess
+import tempfile
 import time
 import uuid
 from contextlib import contextmanager
@@ -315,9 +316,32 @@ class LinuxDeploymentHost:
                     f"is {actual_mode:04o}, expected {secret.mode:04o}"
                 )
         if service_sources:
-            self._checked_command(
-                "systemd unit verification", _SYSTEMD_ANALYZE, "verify", *service_sources
-            )
+            # Units intentionally execute through stable /opt/eidolon/current
+            # links.  During a topology expansion the current release cannot
+            # contain a newly introduced entrypoint yet, so systemd-analyze
+            # would reject a valid candidate before activation.  Verify an
+            # ephemeral copy whose current links point at this candidate; the
+            # digests above still authenticate the original shipped assets.
+            with tempfile.TemporaryDirectory(prefix="eidolon-systemd-verify-") as temporary:
+                candidate_sources: list[str] = []
+                replacements = tuple(
+                    (str(component.current_link), str(component.release_path))
+                    for component in release.components
+                )
+                for source_value in service_sources:
+                    source = Path(source_value)
+                    rendered = source.read_text(encoding="utf-8")
+                    for current_link, release_path in replacements:
+                        rendered = rendered.replace(current_link, release_path)
+                    candidate = Path(temporary) / source.name
+                    candidate.write_text(rendered, encoding="utf-8")
+                    candidate_sources.append(str(candidate))
+                self._checked_command(
+                    "systemd unit verification",
+                    _SYSTEMD_ANALYZE,
+                    "verify",
+                    *candidate_sources,
+                )
         return previous_targets
 
     def create_snapshot(
