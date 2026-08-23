@@ -62,6 +62,7 @@ def main(root: Path, host: str, owner_domain_id: str) -> None:
     descriptor = sign_descriptor(
         OwnerDomainDescriptor(
             owner_domain_id=owner_domain_id,
+            owner_domain_generation=1,
             directory_revision=1,
             trust_root_refs=(descriptor_key_id(root_spki),),
             endpoints=(

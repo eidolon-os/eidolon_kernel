@@ -15,6 +15,7 @@ class ContractModel(BaseModel):
 class DeviceRefWire(ContractModel):
     device_instance_id: str = Field(min_length=1, max_length=128)
     owner_domain_id: str = Field(min_length=1, max_length=64)
+    owner_domain_generation: int = Field(ge=1)
     claim_generation: int = Field(ge=1)
     trust_epoch: int = Field(ge=1)
     accepted_manifest_digest: str = Field(min_length=1, max_length=128)

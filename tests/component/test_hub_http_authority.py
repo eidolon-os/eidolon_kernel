@@ -32,6 +32,7 @@ def document(**overrides):
         "device_ref": {
             "device_instance_id": "device one",
             "owner_domain_id": "owner one",
+            "owner_domain_generation": 1,
             "claim_generation": 1,
             "trust_epoch": 1,
             "accepted_manifest_digest": "sha256:manifest",

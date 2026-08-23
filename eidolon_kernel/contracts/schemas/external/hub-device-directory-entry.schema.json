@@ -35,10 +35,11 @@
     "deviceRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["device_instance_id", "owner_domain_id", "claim_generation", "trust_epoch", "accepted_manifest_digest"],
+      "required": ["device_instance_id", "owner_domain_id", "owner_domain_generation", "claim_generation", "trust_epoch", "accepted_manifest_digest"],
       "properties": {
         "device_instance_id": {"type": "string", "minLength": 1, "maxLength": 128},
         "owner_domain_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "owner_domain_generation": {"type": "integer", "minimum": 1},
         "claim_generation": {"type": "integer", "minimum": 1},
         "trust_epoch": {"type": "integer", "minimum": 1},
         "accepted_manifest_digest": {"type": "string", "minLength": 1, "maxLength": 128}

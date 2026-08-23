@@ -366,6 +366,7 @@ class ReconcileClaimEvents:
                 mount_ref = {
                     "device_instance_id": current.device_id,
                     "owner_domain_id": current.owner_id,
+                    "owner_domain_generation": current.owner_domain_generation,
                     "claim_generation": current.claim_generation,
                     "trust_epoch": current.trust_epoch,
                     "accepted_manifest_digest": current.accepted_manifest_digest,

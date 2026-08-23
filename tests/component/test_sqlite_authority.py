@@ -128,3 +128,58 @@ def test_partial_or_old_database_is_rejected_without_migration(tmp_path) -> None
     connection.close()
     with pytest.raises(RuntimeError, match="migrations are unsupported"):
         SqliteMountStore(path)
+
+
+def test_v4_database_expands_owner_generation_without_losing_mounts(tmp_path) -> None:
+    """The one supported expand migration preserves exact prior authority.
+
+    Generation did not exist in v4, so its only sound migrated value is the
+    first Owner Authority generation.  Later resets create new state rather
+    than rewriting these rows in place.
+    """
+
+    path = tmp_path / "kernel-v4.sqlite3"
+    current = SqliteMountStore(path)
+    current.commit(
+        mount=sample_mount(),
+        expected_revision=0,
+        operation="device.mount",
+        event_type="mounted",
+        event_data={"source": "v4-characterization"},
+    )
+    current.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "UPDATE kernel_requests SET outcome_json = "
+        "json_remove(outcome_json, '$.owner_domain_generation')"
+    )
+    for table in (
+        "kernel_device_mounts",
+        "kernel_audit_events",
+        "kernel_claim_event_inbox",
+    ):
+        connection.execute(
+            f"ALTER TABLE {table} DROP COLUMN owner_domain_generation"
+        )
+    connection.execute("UPDATE kernel_schema_meta SET schema_version = 4")
+    connection.commit()
+    connection.close()
+
+    migrated = SqliteMountStore(path)
+    try:
+        mount = migrated.get("device-1")
+        assert mount is not None
+        assert mount.owner_domain_generation == 1
+        request = migrated.get_request("request-1")
+        assert request is not None
+        assert request.mount.owner_domain_generation == 1
+        columns = {
+            row[1]
+            for row in migrated._connection.execute(
+                "PRAGMA table_info(kernel_claim_event_inbox)"
+            )
+        }
+        assert "owner_domain_generation" in columns
+    finally:
+        migrated.close()

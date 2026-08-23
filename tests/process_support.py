@@ -69,6 +69,7 @@ def create_dependency_app() -> FastAPI:
             "device_ref": {
                 "device_instance_id": device_id,
                 "owner_domain_id": owner_id,
+                "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
                 "accepted_manifest_digest": "fixture-v1",

@@ -87,6 +87,7 @@ def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
         device_ref=DeviceRefWire(
             device_instance_id=mount.device_id,
             owner_domain_id=mount.owner_id,
+            owner_domain_generation=mount.owner_domain_generation,
             claim_generation=mount.claim_generation,
             trust_epoch=mount.trust_epoch,
             accepted_manifest_digest=mount.accepted_manifest_digest,

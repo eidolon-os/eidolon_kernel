@@ -123,9 +123,10 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
         "device_ref": {
-            "device_instance_id": "device-1",
-            "owner_domain_id": "owner-1",
-            "claim_generation": 1,
+                "device_instance_id": "device-1",
+                "owner_domain_id": "owner-1",
+                "owner_domain_generation": 1,
+                "claim_generation": 1,
             "trust_epoch": 1,
             "accepted_manifest_digest": "sha256:manifest",
         },

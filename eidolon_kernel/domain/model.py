@@ -32,6 +32,7 @@ class DeviceRef:
     claim_generation: int
     trust_epoch: int
     accepted_manifest_digest: str
+    owner_domain_generation: int = 1
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -44,8 +45,12 @@ class DeviceRef:
             "owner_domain_id",
             require_identifier("owner_domain_id", self.owner_domain_id, 64),
         )
-        if min(self.claim_generation, self.trust_epoch) < 1:
-            raise InvalidRequest("Claim and trust generations must be positive")
+        if min(
+            self.owner_domain_generation,
+            self.claim_generation,
+            self.trust_epoch,
+        ) < 1:
+            raise InvalidRequest("Owner, Claim and trust generations must be positive")
         object.__setattr__(
             self,
             "accepted_manifest_digest",
@@ -111,12 +116,17 @@ class DeviceMount:
     request_id: str
     fingerprint: str
     active: bool = True
+    owner_domain_generation: int = 1
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "device_id", require_identifier("device_id", self.device_id))
         object.__setattr__(self, "owner_id", require_identifier("owner_id", self.owner_id, 64))
-        if min(self.claim_generation, self.trust_epoch) < 1:
-            raise InvalidRequest("mount Claim and trust generations must be positive")
+        if min(
+            self.owner_domain_generation,
+            self.claim_generation,
+            self.trust_epoch,
+        ) < 1:
+            raise InvalidRequest("mount Owner, Claim and trust generations must be positive")
         object.__setattr__(
             self,
             "accepted_manifest_digest",
@@ -168,6 +178,7 @@ class DeviceMount:
             updated_at=at,
             request_id=request_id,
             fingerprint=fingerprint,
+            owner_domain_generation=device_ref.owner_domain_generation,
         )
 
     def mounted_as(
@@ -202,6 +213,7 @@ class DeviceMount:
             request_id=request_id,
             fingerprint=fingerprint,
             active=True,
+            owner_domain_generation=device_ref.owner_domain_generation,
         )
 
     def attached(
