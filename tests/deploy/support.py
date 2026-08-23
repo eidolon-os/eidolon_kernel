@@ -59,6 +59,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                     ".venv/bin/eidolon-admin",
                     ".venv/bin/eidolon-bootstrapd",
                     ".venv/bin/eidolon-local-api",
+                    ".venv/bin/eidolon-lifecycle-workflow",
                 ],
             },
             {
@@ -183,6 +184,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_admin",
+                    "deploy/systemd/eidolon-lifecycle-workflow.service",
+                    "/etc/systemd/system/eidolon-lifecycle-workflow.service",
+                    "0",
+                ),
+                (
+                    "eidolon_admin",
                     "deploy/systemd/eidolon-admin.service",
                     "/etc/systemd/system/eidolon-admin.service",
                     "c",
@@ -268,6 +275,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
         "affected_units": [
             "eidolon-admin.service",
             "eidolon-local-api.service",
+            "eidolon-lifecycle-workflow.service",
             "eidolon-bootstrapd.service",
             "eidolon-data.service",
             "eidolon-data-workspace.service",
@@ -324,6 +332,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "kind": "https",
                 "url": "https://127.0.0.1:9002/healthz",
                 "expected_status": "ok",
+            },
+            {
+                "check_id": "lifecycle-workflow",
+                "kind": "systemd",
+                "url": "systemd://eidolon-lifecycle-workflow.service",
+                "expected_status": "active",
             },
             {
                 "check_id": "nats",

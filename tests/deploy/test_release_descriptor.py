@@ -31,6 +31,23 @@ def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
     )
     assert release.support_sources[0].source_id == "eidolon_sdk"
     assert release.readiness_checks[0].socket == Path("/run/eidolon/system.sock")
+    assert len(release.system_assets) == 23
+    assert len(release.required_secrets) == 11
+    assert len(release.affected_units) == 15
+    assert len(release.readiness_checks) == 14
+    assert Path("/etc/eidolon/lifecycle.env") not in {
+        secret.path for secret in release.required_secrets
+    }
+    assert "eidolon-lifecycle-workflow.service" in release.affected_units
+    assert {
+        check.check_id: check.url for check in release.readiness_checks
+    }["lifecycle-workflow"] == "systemd://eidolon-lifecycle-workflow.service"
+    admin = next(
+        component
+        for component in release.components
+        if component.component_id == "eidolon_admin"
+    )
+    assert Path(".venv/bin/eidolon-lifecycle-workflow") in admin.required_entrypoints
     assert release.database_migrations == ()
 
 

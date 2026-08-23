@@ -30,6 +30,7 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-admin"),
         Path(".venv/bin/eidolon-bootstrapd"),
         Path(".venv/bin/eidolon-local-api"),
+        Path(".venv/bin/eidolon-lifecycle-workflow"),
     ),
     "eidolon_agent": (Path(".venv/bin/eidolon-agent"),),
     "eidolon_channel": (
@@ -98,6 +99,10 @@ V2_SYSTEM_ASSETS = {
         "eidolon_admin",
         Path("deploy/systemd/eidolon-local-api.service"),
     ),
+    Path("/etc/systemd/system/eidolon-lifecycle-workflow.service"): (
+        "eidolon_admin",
+        Path("deploy/systemd/eidolon-lifecycle-workflow.service"),
+    ),
     Path("/etc/systemd/system/eidolon-admin.service"): (
         "eidolon_admin",
         Path("deploy/systemd/eidolon-admin.service"),
@@ -159,6 +164,7 @@ V2_REQUIRED_SECRETS = (
 V2_AFFECTED_UNITS = (
     "eidolon-admin.service",
     "eidolon-local-api.service",
+    "eidolon-lifecycle-workflow.service",
     "eidolon-bootstrapd.service",
     "eidolon-data.service",
     "eidolon-data-workspace.service",
@@ -185,6 +191,12 @@ V2_READINESS = {
     "kernel": ("http", "http://127.0.0.1:8083/health", None, "ready"),
     "admin": ("http", "http://127.0.0.1:9000/healthz", None, "ready"),
     "local-api": ("https", "https://127.0.0.1:9002/healthz", None, "ok"),
+    "lifecycle-workflow": (
+        "systemd",
+        "systemd://eidolon-lifecycle-workflow.service",
+        None,
+        "active",
+    ),
     "nats": ("http", "http://127.0.0.1:8222/healthz", None, "ok"),
     "livekit": ("tcp", "tcp://127.0.0.1:7880", None, "open"),
     "memory": (
@@ -458,9 +470,15 @@ def _readiness_from_wire(value: dict) -> ReadinessCheck:
         if (
             socket is not None
             or parsed.scheme != "systemd"
-            or parsed.hostname != "eidolon-channel.service"
+            or parsed.hostname
+            not in {
+                "eidolon-channel.service",
+                "eidolon-lifecycle-workflow.service",
+            }
         ):
-            raise ReleaseDescriptorError("systemd readiness must name the fixed Channel unit")
+            raise ReleaseDescriptorError(
+                "systemd readiness must name a fixed non-HTTP unit"
+            )
     elif (
         kind != "unix_http"
         or socket != Path("/run/eidolon/system.sock")

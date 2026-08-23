@@ -46,8 +46,8 @@
     },
     "system_assets": {
       "type": "array",
-      "minItems": 22,
-      "maxItems": 22,
+      "minItems": 23,
+      "maxItems": 23,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
@@ -58,13 +58,14 @@
     },
     "affected_units": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 15,
+      "maxItems": 15,
       "uniqueItems": true,
       "items": {
         "enum": [
           "eidolon-admin.service",
           "eidolon-local-api.service",
+          "eidolon-lifecycle-workflow.service",
           "eidolon-bootstrapd.service",
           "eidolon-data.service",
           "eidolon-data-workspace.service",
@@ -82,8 +83,8 @@
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 13,
-      "maxItems": 13,
+      "minItems": 14,
+      "maxItems": 14,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {

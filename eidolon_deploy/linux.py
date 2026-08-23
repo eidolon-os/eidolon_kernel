@@ -34,11 +34,16 @@ _SYSTEMCTL = "/usr/bin/systemctl"
 _SYSTEMD_ANALYZE = "/usr/bin/systemd-analyze"
 _MANAGER_UNIT = "eidolond.service"
 _PRE_MANAGER_UNITS = (
-    "eidolon-admin.service",
     "eidolon-local-api.service",
+    "eidolon-lifecycle-workflow.service",
+    "eidolon-admin.service",
     "eidolon-bootstrapd.service",
 )
-_POST_MANAGER_UNITS = ("eidolon-local-api.service", "eidolon-admin.service")
+_POST_MANAGER_UNITS = (
+    "eidolon-admin.service",
+    "eidolon-lifecycle-workflow.service",
+    "eidolon-local-api.service",
+)
 _READINESS_UNITS = {
     "eidolond": _MANAGER_UNIT,
     "data": "eidolon-data.service",
@@ -47,6 +52,7 @@ _READINESS_UNITS = {
     "kernel": "eidolon-kernel.service",
     "admin": "eidolon-admin.service",
     "local-api": "eidolon-local-api.service",
+    "lifecycle-workflow": "eidolon-lifecycle-workflow.service",
     "nats": "eidolon-nats.service",
     "livekit": "eidolon-livekit.service",
     "memory": "eidolon-memory-discovery.service",
@@ -62,6 +68,7 @@ _RELEASE_UNITS = (
     "eidolon-hub.service",
     "eidolon-kernel.service",
     "eidolon-local-api.service",
+    "eidolon-lifecycle-workflow.service",
     "eidolon-admin.service",
     "eidolon-nats.service",
     "eidolon-livekit.service",
@@ -368,8 +375,9 @@ class LinuxDeploymentHost:
 
     def quiesce(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
-        for unit in release.affected_units:
-            if unit in _PRE_MANAGER_UNITS:
+        affected = set(release.affected_units)
+        for unit in _PRE_MANAGER_UNITS:
+            if unit in affected:
                 self._stop_unit_if_loaded(unit, operation="service stop")
         self._stop_unit_if_loaded(_MANAGER_UNIT, operation="manager stop")
         for unit in release.affected_units:
