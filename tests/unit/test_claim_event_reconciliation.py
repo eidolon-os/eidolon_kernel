@@ -11,7 +11,7 @@ from eidolon_kernel.domain.model import ClaimEvent, DeviceRef
 from tests.support import FakeDeviceAuthority, MemoryStore, MutableClock, sample_mount
 
 
-def _event(*, generation: int = 1) -> ClaimEvent:
+def _event(*, generation: int = 1, owner_generation: int = 1) -> ClaimEvent:
     return ClaimEvent(
         stream_position=1,
         event_id=f"claim-event-{generation}",
@@ -22,6 +22,7 @@ def _event(*, generation: int = 1) -> ClaimEvent:
             generation,
             1,
             "sha256:hub-manifest",
+            owner_generation,
         ),
         aggregate_revision=3,
         correlation_id="removal-intent-1",
@@ -68,6 +69,30 @@ async def test_old_claim_event_cannot_unmount_a_newer_mount_generation() -> None
         store=store,
         projection=projection,
         devices=FakeDeviceAuthority(claim_events=(_event(generation=1),)),
+        clock=MutableClock(value=newer.updated_at + timedelta(seconds=1)),
+    )
+
+    result = await reconciler.execute()
+
+    assert result.ignored == result.consumed == 1
+    assert store.get("device-1").active is True
+    assert store.claim_event_outcome("claim-event-1") == (
+        "stale-generation-ignored"
+    )
+
+
+@pytest.mark.asyncio
+async def test_old_owner_generation_event_cannot_unmount_generation_two_mount() -> None:
+    newer = replace(sample_mount(), owner_domain_generation=2)
+    store = MemoryStore(mounts={newer.device_id: newer})
+    projection = InMemoryMountProjection()
+    projection.rebuild(store.list_all())
+    reconciler = ReconcileClaimEvents(
+        store=store,
+        projection=projection,
+        devices=FakeDeviceAuthority(
+            claim_events=(_event(owner_generation=1),)
+        ),
         clock=MutableClock(value=newer.updated_at + timedelta(seconds=1)),
     )
 
