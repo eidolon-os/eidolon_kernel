@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimActivatedEvent,
+    ClaimEventCursor,
+    ClaimRevokedEvent,
+    DeviceRef,
+)
 
 from eidolon_kernel.domain.commands import (
     AttachCompanionCommand,
@@ -332,6 +339,7 @@ class ReconciliationResult:
 @dataclass(frozen=True, slots=True)
 class ClaimEventReconciliationResult:
     consumed: int
+    mounted: int
     unmounted: int
     ignored: int
 
@@ -347,75 +355,176 @@ class ReconcileClaimEvents:
     batch_size: int = 100
 
     async def execute(self) -> ClaimEventReconciliationResult:
-        events = await self.devices.list_claim_events(
-            after_stream_position=self.store.claim_event_position(),
-            limit=self.batch_size,
-        )
-        consumed = unmounted = ignored = 0
-        for event in events:
-            existing_outcome = self.store.claim_event_outcome(event.event_id)
-            if existing_outcome is not None:
-                consumed += 1
-                continue
-            current = self.store.get(event.device_ref.device_instance_id)
-            expected_ref = event.device_ref
-            if current is None:
-                outcome = "no-mount"
+        cursor = self.store.claim_event_cursor()
+        page = await self.devices.list_claim_events(cursor=cursor, limit=self.batch_size)
+        if page.requested_after != cursor:
+            raise RevisionConflict("Hub Claim page does not continue the persisted cursor")
+        if not page.events:
+            if page.high_watermark > cursor.stream_position:
+                raise RevisionConflict(
+                    "Hub Claim page omitted events below its high watermark"
+                )
+            self.store.checkpoint_claim_cursor(
+                requested_after=cursor,
+                next_cursor=page.next_cursor,
+                high_watermark=page.high_watermark,
+                processed_at=self.clock.now(),
+            )
+            return ClaimEventReconciliationResult(0, 0, 0, 0)
+
+        consumed = mounted = unmounted = ignored = 0
+        requested_after = cursor
+        for item in page.events:
+            event = item.event
+            expected_ref = event.data.device_ref
+            history = self.store.claim_events_for_device(
+                expected_ref.device_instance_id
+            )
+            if history and event.aggregaterev <= max(
+                stored.aggregate_revision for stored in history
+            ):
+                raise RevisionConflict(
+                    "Claim aggregate revision is duplicate or out of order"
+                )
+
+            current = self.store.get(expected_ref.device_instance_id)
+            mount = None
+            expected_mount_revision = None
+            outcome: str
+            prior_refs = [stored.device_ref for stored in history]
+            if current is not None:
+                prior_refs.append(self._mount_ref(current))
+            if any(
+                str(ref.owner_domain_id) != str(expected_ref.owner_domain_id)
+                for ref in prior_refs
+            ):
+                raise RevisionConflict(
+                    "Claim event Owner Domain conflicts with persisted device history"
+                )
+
+            newest = max(
+                prior_refs,
+                key=self._generation,
+                default=None,
+            )
+            if newest is not None and self._generation(expected_ref) < self._generation(newest):
+                outcome = "stale-generation-ignored"
                 ignored += 1
-            else:
-                mount_ref = {
-                    "device_instance_id": current.device_id,
-                    "owner_domain_id": current.owner_id,
-                    "owner_domain_generation": current.owner_domain_generation,
-                    "claim_generation": current.claim_generation,
-                    "trust_epoch": current.trust_epoch,
-                    "accepted_manifest_digest": current.accepted_manifest_digest,
-                }
-                if mount_ref != asdict(expected_ref):
-                    outcome = "stale-generation-ignored"
+            elif isinstance(event, ClaimActivatedEvent):
+                was_revoked = any(
+                    stored.device_ref == expected_ref
+                    and stored.event_type
+                    == "live.eidolon.device.claim-revoked.v1"
+                    for stored in history
+                )
+                if was_revoked or (
+                    current is not None
+                    and self._mount_ref(current) == expected_ref
+                    and not current.active
+                ):
+                    outcome = "terminal-generation-ignored"
                     ignored += 1
-                elif not current.active:
-                    outcome = "already-unmounted"
+                elif (
+                    current is not None
+                    and self._mount_ref(current) == expected_ref
+                    and current.active
+                ):
+                    outcome = "already-mounted"
                     ignored += 1
                 else:
-                    request_id = (
-                        "claim-event-unmount:"
-                        + hashlib.sha256(event.event_id.encode()).hexdigest()[:48]
+                    request_id, fingerprint = self._event_mutation_identity(
+                        event.id, "device.mount-by-claim-event", expected_ref
                     )
-                    fingerprint = request_fingerprint(
-                        "device.unmount-by-claim-event",
-                        {
-                            "event_id": event.event_id,
-                            "device_ref": asdict(expected_ref),
-                        },
+                    if current is None:
+                        mount = DeviceMount.first(
+                            device_id=expected_ref.device_instance_id,
+                            owner_id=str(expected_ref.owner_domain_id),
+                            device_ref=expected_ref,
+                            at=self.clock.now(),
+                            request_id=request_id,
+                            fingerprint=fingerprint,
+                        )
+                        expected_mount_revision = 0
+                    else:
+                        mount = current.mounted_as(
+                            owner_id=str(expected_ref.owner_domain_id),
+                            device_ref=expected_ref,
+                            at=self.clock.now(),
+                            request_id=request_id,
+                            fingerprint=fingerprint,
+                        )
+                        expected_mount_revision = current.revision
+                    outcome = "mounted"
+                    mounted += 1
+            elif isinstance(event, ClaimRevokedEvent):
+                if (
+                    current is not None
+                    and self._mount_ref(current) == expected_ref
+                    and current.active
+                ):
+                    request_id, fingerprint = self._event_mutation_identity(
+                        event.id, "device.unmount-by-claim-event", expected_ref
                     )
                     mount = current.unmounted(
                         at=self.clock.now(),
                         request_id=request_id,
                         fingerprint=fingerprint,
                     )
-                    result = self.store.commit(
-                        mount=mount,
-                        expected_revision=current.revision,
-                        operation="device.unmount-by-claim-event",
-                        event_type="eidolon.kernel.device-unmounted-by-claim-event.v1",
-                        event_data={
-                            "claim_event_id": event.event_id,
-                            "claim_event_position": event.stream_position,
-                            "claim_aggregate_revision": event.aggregate_revision,
-                            "previous_revision": current.revision,
-                        },
-                    )
-                    _project_committed(self.store, self.projection, result.mount)
+                    expected_mount_revision = current.revision
                     outcome = "unmounted"
                     unmounted += 1
-            self.store.record_claim_event(
-                event=event,
+                else:
+                    outcome = "no-matching-active-mount"
+                    ignored += 1
+            else:  # pragma: no cover - SDK discriminator makes this unreachable.
+                raise RevisionConflict("unsupported canonical Claim event type")
+
+            next_cursor = ClaimEventCursor(stream_position=item.stream_position)
+            result = self.store.commit_claim_event(
+                item=item,
+                requested_after=requested_after,
+                next_cursor=next_cursor,
+                high_watermark=page.high_watermark,
                 outcome=outcome,
+                mount=mount,
+                expected_mount_revision=expected_mount_revision,
                 processed_at=self.clock.now(),
             )
+            if result.mount is not None:
+                _project_committed(self.store, self.projection, result.mount)
+            requested_after = next_cursor
             consumed += 1
-        return ClaimEventReconciliationResult(consumed, unmounted, ignored)
+        if requested_after != page.next_cursor:
+            raise RevisionConflict("Hub Claim page next_cursor was not checkpointed")
+        return ClaimEventReconciliationResult(consumed, mounted, unmounted, ignored)
+
+    @staticmethod
+    def _generation(device_ref: DeviceRef) -> tuple[int, int, int]:
+        return (
+            device_ref.owner_domain_generation,
+            device_ref.claim_generation,
+            device_ref.trust_epoch,
+        )
+
+    @staticmethod
+    def _mount_ref(mount: DeviceMount) -> DeviceRef:
+        return mount.device_ref
+
+    @staticmethod
+    def _event_mutation_identity(
+        event_id: str, operation: str, device_ref: DeviceRef
+    ) -> tuple[str, str]:
+        request_id = (
+            "claim-event:" + hashlib.sha256(event_id.encode()).hexdigest()[:48]
+        )
+        fingerprint = request_fingerprint(
+            operation,
+            {
+                "event_id": event_id,
+                "device_ref": device_ref.model_dump(mode="json"),
+            },
+        )
+        return request_id, fingerprint
 
 
 @dataclass(slots=True)

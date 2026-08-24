@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from eidolon_sdk.device_foundation.v1 import DeviceRef
+
 from eidolon_kernel.contracts.bindings import (
     AttachCompanionRequestWire,
     AuditEventWire,
     CompanionIdentityWire,
     DetachCompanionRequestWire,
     DeviceMountWire,
-    DeviceRefWire,
-    HubClaimEventWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
     MutationResultWire,
@@ -24,11 +24,9 @@ from eidolon_kernel.domain.commands import (
 )
 from eidolon_kernel.domain.model import (
     AuditEvent,
-    ClaimEvent,
     CompanionIdentity,
     DeviceAdmission,
     DeviceMount,
-    DeviceRef,
 )
 from eidolon_kernel.ports.runtime import CommitResult
 from eidolon_kernel.ports.system_services import ResolvedServiceEndpoint
@@ -84,14 +82,7 @@ def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
     return DeviceMountWire(
         device_id=mount.device_id,
         owner_id=mount.owner_id,
-        device_ref=DeviceRefWire(
-            device_instance_id=mount.device_id,
-            owner_domain_id=mount.owner_id,
-            owner_domain_generation=mount.owner_domain_generation,
-            claim_generation=mount.claim_generation,
-            trust_epoch=mount.trust_epoch,
-            accepted_manifest_digest=mount.accepted_manifest_digest,
-        ),
+        device_ref=mount.device_ref,
         attached_companion_id=mount.attached_companion_id,
         revision=mount.revision,
         created_at=mount.created_at,
@@ -134,21 +125,13 @@ def hub_device_to_domain(wire: HubDeviceDirectoryEntryWire) -> DeviceAdmission:
         owner_id=wire.owner_scope,
         status=wire.lifecycle_state,
         manifest_revision=wire.manifest_revision,
-        device_ref=DeviceRef(**wire.device_ref.model_dump()),
-    )
-
-
-def hub_claim_event_to_domain(wire: HubClaimEventWire) -> ClaimEvent:
-    return ClaimEvent(
-        stream_position=wire.stream_position,
-        event_id=wire.event_id,
-        event_type=wire.event_type,
-        device_ref=DeviceRef(**wire.device_ref.model_dump()),
-        aggregate_revision=wire.aggregate_revision,
-        correlation_id=wire.correlation_id,
-        causation_id=wire.causation_id,
-        occurred_at=wire.occurred_at,
-        reason=wire.reason,
+        device_ref=DeviceRef(
+            device_instance_id=wire.device_ref.device_instance_id,
+            owner_domain_id=wire.device_ref.owner_domain_id,
+            owner_domain_generation=wire.device_ref.owner_domain_generation,
+            claim_generation=wire.device_ref.claim_generation,
+            trust_epoch=wire.device_ref.trust_epoch,
+        ),
     )
 
 

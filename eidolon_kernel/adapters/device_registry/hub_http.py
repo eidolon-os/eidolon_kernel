@@ -1,24 +1,23 @@
-"""Narrow consumer of Hub's stable owner-scoped device GET."""
+"""Hub authority adapter with a canonical PH2 Claim-event consumer."""
 
 from __future__ import annotations
 
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventPage, DeviceProblem
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
-from eidolon_kernel.contracts.bindings import (
-    HubClaimEventPageWire,
-    HubDeviceDirectoryEntryWire,
-)
-from eidolon_kernel.contracts.mappers import (
-    hub_claim_event_to_domain,
-    hub_device_to_domain,
-)
+from eidolon_kernel.contracts.bindings import HubDeviceDirectoryEntryWire
+from eidolon_kernel.contracts.mappers import hub_device_to_domain
 from eidolon_kernel.contracts.registry import ContractRegistry
-from eidolon_kernel.domain.errors import AuthorityRejected, AuthorityUnavailable
-from eidolon_kernel.domain.model import ClaimEvent, DeviceAdmission
+from eidolon_kernel.domain.errors import (
+    AuthorityRejected,
+    AuthorityUnavailable,
+    ClaimCursorGap,
+)
+from eidolon_kernel.domain.model import DeviceAdmission
 
 
 class HubHttpDeviceAuthority:
@@ -78,14 +77,14 @@ class HubHttpDeviceAuthority:
         return hub_device_to_domain(wire)
 
     async def list_claim_events(
-        self, *, after_stream_position: int, limit: int
-    ) -> tuple[ClaimEvent, ...]:
+        self, *, cursor: ClaimEventCursor, limit: int
+    ) -> ClaimEventPage:
         try:
             response = await self._client.get(
-                f"{self._base_url}/api/device-management/v1/claim-events",
+                f"{self._base_url}/api/admission/v1/claim-events",
                 headers={"Authorization": f"Bearer {self._token}"},
                 params={
-                    "after_stream_position": str(after_stream_position),
+                    "after_stream_position": str(cursor.stream_position),
                     "limit": str(limit),
                 },
             )
@@ -93,21 +92,31 @@ class HubHttpDeviceAuthority:
             raise AuthorityUnavailable("Hub Claim event stream is unreachable") from exc
         if response.status_code in {401, 403}:
             raise AuthorityUnavailable("Hub rejected Kernel's Claim event credential")
+        if response.status_code == 409:
+            try:
+                problem = DeviceProblem.model_validate(response.json())
+            except (TypeError, ValueError, PydanticValidationError) as exc:
+                raise AuthorityUnavailable(
+                    "Hub Claim event error violated canonical problem contract"
+                ) from exc
+            if problem.code == "CURSOR_GAP":
+                raise ClaimCursorGap(problem.detail)
+            raise AuthorityUnavailable(
+                f"Hub Claim event request conflicted with {problem.code}"
+            )
         if response.status_code != 200:
             raise AuthorityUnavailable(
                 f"unexpected Hub Claim event status {response.status_code}"
             )
         try:
-            document = response.json()
-            if not isinstance(document, dict):
-                raise TypeError("Hub Claim event response must be an object")
-            self._contracts.validate(
-                "external/hub-claim-event-page.schema.json", document
-            )
-            page = HubClaimEventPageWire.model_validate(document)
-        except (TypeError, ValueError, ValidationError, PydanticValidationError) as exc:
-            raise AuthorityUnavailable("Hub Claim event response violated contract") from exc
-        return tuple(hub_claim_event_to_domain(item) for item in page.events)
+            page = ClaimEventPage.model_validate(response.json())
+        except (TypeError, ValueError, PydanticValidationError) as exc:
+            raise AuthorityUnavailable(
+                "Hub Claim event response violated canonical SDK contract"
+            ) from exc
+        if page.requested_after != cursor:
+            raise AuthorityUnavailable("Hub Claim event page does not match requested cursor")
+        return page
 
     async def close(self) -> None:
         if self._owns_client:

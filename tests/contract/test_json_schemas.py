@@ -27,7 +27,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 13
+    assert len(files) == len(registry.schema_names) == 12
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -50,7 +50,11 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         device_id="device-1",
         owner_id="owner-1",
         device_ref=DeviceRef(
-            "device-1", "owner-1", 1, 1, "sha256:hub-manifest"
+            device_instance_id="device-1",
+            owner_domain_id="owner-1",
+            owner_domain_generation=1,
+            claim_generation=1,
+            trust_epoch=1,
         ),
         at=now,
         request_id="request-1",
@@ -127,8 +131,8 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
                 "owner_domain_id": "owner-1",
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
-            "trust_epoch": 1,
-            "accepted_manifest_digest": "sha256:manifest",
+                "trust_epoch": 1,
+                "accepted_manifest_digest": "sha256:manifest",
         },
     }
     ContractRegistry().validate(

@@ -1,0 +1,11 @@
+{
+  "capability": "ph2-b-kernel-claim-consumer",
+  "sdk_commit": "d88196757e8c054befd2c17f7cb9c7a9eb6f5253",
+  "hub_commit": "5d6403649e466f557c26a0ba3a94e5869d86df13",
+  "stream_id": "admission-claims-v1",
+  "endpoint": "/api/admission/v1/claim-events",
+  "event_source": "urn:eidolon:authority:admission",
+  "audience": "eidolon-claim-consumers",
+  "activated_type": "live.eidolon.device.claim-activated.v1",
+  "revoked_type": "live.eidolon.device.claim-revoked.v1"
+}

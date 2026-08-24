@@ -4,6 +4,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimActivatedData,
+    ClaimActivatedEvent,
+    ClaimEventCursor,
+    ClaimEventPage,
+    ClaimEventStreamItem,
+    ClaimRevokedData,
+    ClaimRevokedEvent,
+    DeviceRef,
+    ManifestRef,
+)
+
 from eidolon_kernel.domain.errors import (
     AuthorityUnavailable,
     IdempotencyConflict,
@@ -11,13 +23,16 @@ from eidolon_kernel.domain.errors import (
 )
 from eidolon_kernel.domain.model import (
     AuditEvent,
-    ClaimEvent,
     CompanionIdentity,
     DeviceAdmission,
     DeviceMount,
-    DeviceRef,
 )
-from eidolon_kernel.ports.runtime import CommitResult, StoredRequest
+from eidolon_kernel.ports.runtime import (
+    ClaimEventCommitResult,
+    CommitResult,
+    StoredClaimEvent,
+    StoredRequest,
+)
 
 
 @dataclass
@@ -35,7 +50,8 @@ class FakeDeviceAuthority:
     status: str = "approved"
     actual_owner: str | None = None
     calls: int = 0
-    claim_events: tuple[ClaimEvent, ...] = ()
+    claim_events: tuple[ClaimEventStreamItem, ...] = ()
+    high_watermark: int | None = None
 
     async def get_device(self, *, owner_id: str, device_id: str) -> DeviceAdmission:
         self.calls += 1
@@ -48,18 +64,31 @@ class FakeDeviceAuthority:
             device_ref=DeviceRef(
                 device_instance_id=device_id,
                 owner_domain_id=actual_owner,
+                owner_domain_generation=1,
                 claim_generation=1,
                 trust_epoch=1,
-                accepted_manifest_digest="sha256:hub-manifest",
             ),
         )
 
-    async def list_claim_events(self, *, after_stream_position: int, limit: int):
-        return tuple(
-            event
-            for event in self.claim_events
-            if event.stream_position > after_stream_position
+    async def list_claim_events(self, *, cursor: ClaimEventCursor, limit: int):
+        events = tuple(
+            item
+            for item in self.claim_events
+            if item.stream_position > cursor.stream_position
         )[:limit]
+        next_position = events[-1].stream_position if events else cursor.stream_position
+        high_watermark = self.high_watermark
+        if high_watermark is None:
+            high_watermark = max(
+                (item.stream_position for item in self.claim_events), default=cursor.stream_position
+            )
+        return ClaimEventPage(
+            requested_after=cursor,
+            events=events,
+            next_cursor=ClaimEventCursor(stream_position=next_position),
+            high_watermark=high_watermark,
+            observed_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
+        )
 
 
 @dataclass
@@ -87,7 +116,11 @@ class MemoryStore:
     mounts: dict[str, DeviceMount] = field(default_factory=dict)
     requests: dict[str, StoredRequest] = field(default_factory=dict)
     events: list[AuditEvent] = field(default_factory=list)
-    claim_events: dict[str, tuple[ClaimEvent, str]] = field(default_factory=dict)
+    claim_inbox: dict[tuple[str, str], tuple[ClaimEventStreamItem, str, str]] = field(
+        default_factory=dict
+    )
+    claim_cursor_position: int = 0
+    claim_high_watermark: int = 0
 
     def get(self, device_id: str) -> DeviceMount | None:
         return self.mounts.get(device_id)
@@ -142,20 +175,172 @@ class MemoryStore:
             and event.mount.owner_id == owner_id
         )[:limit]
 
-    def claim_event_position(self) -> int:
-        return max((value[0].stream_position for value in self.claim_events.values()), default=0)
+    def claim_event_cursor(self) -> ClaimEventCursor:
+        return ClaimEventCursor(stream_position=self.claim_cursor_position)
 
-    def claim_event_outcome(self, event_id: str) -> str | None:
-        value = self.claim_events.get(event_id)
-        return None if value is None else value[1]
+    def claim_event_high_watermark(self) -> int:
+        return self.claim_high_watermark
 
-    def record_claim_event(self, *, event: ClaimEvent, outcome: str, processed_at) -> None:
-        existing = self.claim_events.get(event.event_id)
-        if existing is not None and existing != (event, outcome):
-            raise IdempotencyConflict
-        if existing is None and event.stream_position != self.claim_event_position() + 1:
+    def claim_events_for_device(self, device_id: str) -> tuple[StoredClaimEvent, ...]:
+        values = []
+        for item, outcome, fingerprint in self.claim_inbox.values():
+            event = item.event
+            if event.data.device_ref.device_instance_id != device_id:
+                continue
+            values.append(
+                StoredClaimEvent(
+                    stream_position=item.stream_position,
+                    source=event.source,
+                    event_id=event.id,
+                    event_fingerprint=fingerprint,
+                    event_type=event.type,
+                    device_ref=event.data.device_ref,
+                    aggregate_revision=event.aggregaterev,
+                    outcome=outcome,
+                )
+            )
+        return tuple(sorted(values, key=lambda value: value.stream_position))
+
+    def commit_claim_event(
+        self,
+        *,
+        item: ClaimEventStreamItem,
+        requested_after: ClaimEventCursor,
+        next_cursor: ClaimEventCursor,
+        high_watermark: int,
+        outcome: str,
+        mount: DeviceMount | None,
+        expected_mount_revision: int | None,
+        processed_at,
+    ) -> ClaimEventCommitResult:
+        import hashlib
+        import json
+
+        event = item.event
+        encoded = json.dumps(
+            event.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        fingerprint = "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
+        key = (event.source, event.id)
+        existing = self.claim_inbox.get(key)
+        if existing is not None:
+            if existing != (item, outcome, fingerprint):
+                raise IdempotencyConflict
+            return ClaimEventCommitResult(self.get(event.data.device_ref.device_instance_id), outcome, True)
+        if requested_after.stream_position != self.claim_cursor_position:
             raise RevisionConflict
-        self.claim_events[event.event_id] = (event, outcome)
+        if item.stream_position != self.claim_cursor_position + 1:
+            raise RevisionConflict
+        if (
+            next_cursor.stream_position != item.stream_position
+            or high_watermark < item.stream_position
+            or high_watermark < self.claim_high_watermark
+        ):
+            raise RevisionConflict
+        if mount is not None:
+            current = self.mounts.get(mount.device_id)
+            actual = current.revision if current else 0
+            if actual != expected_mount_revision:
+                raise RevisionConflict
+            position = len(self.events) + 1
+            self.mounts[mount.device_id] = mount
+            self.events.append(
+                AuditEvent(
+                    position=position,
+                    event_id=f"event-{position}",
+                    event_type=(
+                        "eidolon.kernel.device-mounted-by-claim-event.v1"
+                        if mount.active
+                        else "eidolon.kernel.device-unmounted-by-claim-event.v1"
+                    ),
+                    mount=mount,
+                    occurred_at=mount.updated_at,
+                    data={"claim_event_id": event.id},
+                )
+            )
+        self.claim_inbox[key] = (item, outcome, fingerprint)
+        self.claim_cursor_position = next_cursor.stream_position
+        self.claim_high_watermark = high_watermark
+        return ClaimEventCommitResult(mount, outcome, False)
+
+    def checkpoint_claim_cursor(
+        self,
+        *,
+        requested_after: ClaimEventCursor,
+        next_cursor: ClaimEventCursor,
+        high_watermark: int,
+        processed_at,
+    ) -> None:
+        if (
+            requested_after.stream_position != self.claim_cursor_position
+            or next_cursor != requested_after
+            or high_watermark < next_cursor.stream_position
+            or high_watermark < self.claim_high_watermark
+        ):
+            raise RevisionConflict
+        self.claim_high_watermark = high_watermark
+
+
+def claim_event_item(
+    *,
+    position: int = 1,
+    aggregate_revision: int = 5,
+    event_id: str | None = None,
+    event_type: str = "activated",
+    claim_generation: int = 1,
+    owner_domain_generation: int = 1,
+    trust_epoch: int = 1,
+    owner_domain_id: str = "owner-1",
+    reason: str = "owner-removed",
+) -> ClaimEventStreamItem:
+    device_ref = DeviceRef(
+        device_instance_id="device-1",
+        owner_domain_id=owner_domain_id,
+        owner_domain_generation=owner_domain_generation,
+        claim_generation=claim_generation,
+        trust_epoch=trust_epoch,
+    )
+    at = datetime(2026, 8, 4, 8, 0, tzinfo=UTC) + timedelta(seconds=position)
+    if event_type == "activated":
+        event = ClaimActivatedEvent(
+            id=event_id or f"claim-activated-{position}",
+            subject="device-instances/device-1",
+            time=at,
+            ownerdomainid=owner_domain_id,
+            aggregaterev=aggregate_revision,
+            correlationid="intent-one",
+            causationid="grant-ack-one",
+            data=ClaimActivatedData(
+                device_ref=device_ref,
+                manifest_ref=ManifestRef(
+                    manifest_id="manifest-one",
+                    revision=1,
+                    digest="sha256:" + "a" * 64,
+                ),
+                approval_decision_id="decision-one",
+                activated_at=at,
+            ),
+        )
+    elif event_type == "revoked":
+        event = ClaimRevokedEvent(
+            id=event_id or f"claim-revoked-{position}",
+            subject="device-instances/device-1",
+            time=at,
+            ownerdomainid=owner_domain_id,
+            aggregaterev=aggregate_revision,
+            correlationid="intent-one",
+            causationid="revoke-command-one",
+            data=ClaimRevokedData(
+                device_ref=device_ref,
+                reason=reason,
+                revoked_at=at,
+            ),
+        )
+    else:
+        raise ValueError("unsupported test Claim event type")
+    return ClaimEventStreamItem(stream_position=position, event=event)
 
 
 def sample_mount(
@@ -171,7 +356,6 @@ def sample_mount(
         owner_id="owner-1",
         claim_generation=1,
         trust_epoch=1,
-        accepted_manifest_digest="sha256:hub-manifest",
         attached_companion_id=attached_companion_id,
         revision=revision,
         created_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),

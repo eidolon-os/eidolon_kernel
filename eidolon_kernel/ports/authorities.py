@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from eidolon_kernel.domain.model import ClaimEvent, CompanionIdentity, DeviceAdmission
+from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventPage
+
+from eidolon_kernel.domain.model import CompanionIdentity, DeviceAdmission
 
 
 class DeviceAuthority(Protocol):
     async def get_device(self, *, owner_id: str, device_id: str) -> DeviceAdmission: ...
 
     async def list_claim_events(
-        self, *, after_stream_position: int, limit: int
-    ) -> tuple[ClaimEvent, ...]: ...
+        self, *, cursor: ClaimEventCursor, limit: int
+    ) -> ClaimEventPage: ...
 
 
 class CompanionAuthority(Protocol):

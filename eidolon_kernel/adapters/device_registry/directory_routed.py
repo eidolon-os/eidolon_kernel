@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import httpx
+from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventPage
 
 from eidolon_kernel.adapters.device_registry.hub_http import HubHttpDeviceAuthority
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.domain.errors import AuthorityUnavailable
-from eidolon_kernel.domain.model import ClaimEvent, DeviceAdmission
+from eidolon_kernel.domain.model import DeviceAdmission
 from eidolon_kernel.ports.system_services import (
     ResolvedServiceEndpoint,
     ServiceDirectoryUnavailable,
@@ -72,8 +73,8 @@ class DirectoryRoutedHubDeviceAuthority:
         return await delegate.get_device(owner_id=owner_id, device_id=device_id)
 
     async def list_claim_events(
-        self, *, after_stream_position: int, limit: int
-    ) -> tuple[ClaimEvent, ...]:
+        self, *, cursor: ClaimEventCursor, limit: int
+    ) -> ClaimEventPage:
         try:
             endpoint = await self._resolve_hub_endpoint()
         except ServiceDirectoryUnavailable as exc:
@@ -86,9 +87,7 @@ class DirectoryRoutedHubDeviceAuthority:
             contracts=self._contracts,
             client=self._client,
         )
-        return await delegate.list_claim_events(
-            after_stream_position=after_stream_position, limit=limit
-        )
+        return await delegate.list_claim_events(cursor=cursor, limit=limit)
 
     async def close(self) -> None:
         if self._owns_client:

@@ -76,16 +76,27 @@ def create_dependency_app() -> FastAPI:
             },
         }
 
-    @app.get("/api/device-management/v1/claim-events")
+    @app.get("/api/admission/v1/claim-events")
     async def claim_events(
+        after_stream_position: int = 0,
+        limit: int = 100,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict[str, object]:
         if authorization != f"Bearer {hub_token}":
             raise HTTPException(status_code=403, detail="invalid Hub credential")
         return {
-            "operation": "device.claim-event-page",
-            "next_stream_position": 0,
+            "stream_id": "admission-claims-v1",
+            "requested_after": {
+                "stream_id": "admission-claims-v1",
+                "stream_position": after_stream_position,
+            },
             "events": [],
+            "next_cursor": {
+                "stream_id": "admission-claims-v1",
+                "stream_position": after_stream_position,
+            },
+            "high_watermark": after_stream_position,
+            "observed_at": "2026-08-06T00:00:00Z",
         }
 
     return app

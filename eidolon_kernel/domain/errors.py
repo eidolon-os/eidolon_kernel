@@ -25,6 +25,10 @@ class IdempotencyConflict(Conflict):
     """A request_id was reused with a different fingerprint."""
 
 
+class ClaimCursorGap(Conflict):
+    """Hub cannot serve the persisted canonical Claim stream cursor."""
+
+
 class AuthorityRejected(KernelError):
     """An external authority rejected a prerequisite fact."""
 

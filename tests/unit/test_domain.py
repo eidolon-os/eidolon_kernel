@@ -15,7 +15,13 @@ FP = "sha256:" + "a" * 64
 
 
 def _ref(device_id="device-1", owner_id="owner-1") -> DeviceRef:
-    return DeviceRef(device_id, owner_id, 1, 1, "sha256:hub-manifest")
+    return DeviceRef(
+        device_instance_id=device_id,
+        owner_domain_id=owner_id,
+        owner_domain_generation=1,
+        claim_generation=1,
+        trust_epoch=1,
+    )
 
 
 def test_mount_aggregate_transitions_preserve_monotonic_revision() -> None:
@@ -27,6 +33,7 @@ def test_mount_aggregate_transitions_preserve_monotonic_revision() -> None:
         request_id="request-1",
         fingerprint=FP,
     )
+    assert first.device_ref == _ref()
     attached = first.attached(
         companion_id="companion-1",
         at=NOW,
@@ -73,9 +80,9 @@ def test_command_fingerprint_is_canonical_and_sensitive() -> None:
         lambda: AttachCompanionCommand("r", "d", "o", "c", 0),
         lambda: UnmountDeviceCommand("r", "d", "o", 0),
         lambda: DeviceMount.first(
-            device_id="d",
+            device_id="dev",
             owner_id="owner-1",
-            device_ref=_ref("d"),
+            device_ref=_ref("dev"),
             at=datetime(2026, 8, 4),
             request_id="r",
             fingerprint=FP,
@@ -90,17 +97,17 @@ def test_invalid_domain_values_are_rejected(factory) -> None:
 def test_mount_rejects_non_hex_fingerprint_and_backwards_transition_time() -> None:
     with pytest.raises(InvalidRequest, match="sha256"):
         DeviceMount.first(
-            device_id="d",
+            device_id="dev",
             owner_id="owner-1",
-            device_ref=_ref("d"),
+            device_ref=_ref("dev"),
             at=NOW,
             request_id="r",
             fingerprint="sha256:" + "z" * 64,
         )
     first = DeviceMount.first(
-        device_id="d",
+        device_id="dev",
         owner_id="owner-1",
-        device_ref=_ref("d"),
+        device_ref=_ref("dev"),
         at=NOW,
         request_id="r",
         fingerprint=FP,
@@ -111,9 +118,9 @@ def test_mount_rejects_non_hex_fingerprint_and_backwards_transition_time() -> No
 
 def test_mount_aggregate_rejects_owner_namespace_transfer() -> None:
     first = DeviceMount.first(
-        device_id="d",
+        device_id="dev",
         owner_id="owner-1",
-        device_ref=_ref("d"),
+        device_ref=_ref("dev"),
         at=NOW,
         request_id="r",
         fingerprint=FP,
@@ -121,7 +128,7 @@ def test_mount_aggregate_rejects_owner_namespace_transfer() -> None:
     with pytest.raises(InvalidRequest, match="owner namespace"):
         first.mounted_as(
             owner_id="owner-2",
-            device_ref=_ref("d", "owner-2"),
+            device_ref=_ref("dev", "owner-2"),
             at=NOW,
             request_id="r2",
             fingerprint=FP,

@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from eidolon_kernel.domain.model import AuditEvent, ClaimEvent, DeviceMount
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimEventCursor,
+    ClaimEventStreamItem,
+    DeviceRef,
+)
+
+from eidolon_kernel.domain.model import AuditEvent, DeviceMount
 
 
 class Clock(Protocol):
@@ -26,6 +32,25 @@ class StoredRequest:
 class CommitResult:
     mount: DeviceMount
     audit_position: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredClaimEvent:
+    stream_position: int
+    source: str
+    event_id: str
+    event_fingerprint: str
+    event_type: str
+    device_ref: DeviceRef
+    aggregate_revision: int
+    outcome: str
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimEventCommitResult:
+    mount: DeviceMount | None
+    outcome: str
     replayed: bool
 
 
@@ -50,12 +75,32 @@ class MountStore(Protocol):
         self, *, after_position: int, limit: int, owner_id: str
     ) -> tuple[AuditEvent, ...]: ...
 
-    def claim_event_position(self) -> int: ...
+    def claim_event_cursor(self) -> ClaimEventCursor: ...
 
-    def claim_event_outcome(self, event_id: str) -> str | None: ...
+    def claim_event_high_watermark(self) -> int: ...
 
-    def record_claim_event(
-        self, *, event: ClaimEvent, outcome: str, processed_at: datetime
+    def claim_events_for_device(self, device_id: str) -> tuple[StoredClaimEvent, ...]: ...
+
+    def commit_claim_event(
+        self,
+        *,
+        item: ClaimEventStreamItem,
+        requested_after: ClaimEventCursor,
+        next_cursor: ClaimEventCursor,
+        high_watermark: int,
+        outcome: str,
+        mount: DeviceMount | None,
+        expected_mount_revision: int | None,
+        processed_at: datetime,
+    ) -> ClaimEventCommitResult: ...
+
+    def checkpoint_claim_cursor(
+        self,
+        *,
+        requested_after: ClaimEventCursor,
+        next_cursor: ClaimEventCursor,
+        high_watermark: int,
+        processed_at: datetime,
     ) -> None: ...
 
 
