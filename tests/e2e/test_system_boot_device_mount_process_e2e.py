@@ -175,6 +175,10 @@ def _management_token() -> str:
     return f"Bearer {header}.{payload}.{signature}"
 
 
+#: What a Host wires: Kernel reads the Claim stream with Hub's exact device
+#: registry reader token, not a Controller JWT. Reading the stream is a workload
+#: capability, and a test that authenticated it as an Owner action would be
+#: proving a path no deployment takes.
 def _write_runtime_configuration(root: Path, *, hub_port: int, kernel_port: int) -> dict[str, Path]:
     supervisor_socket = root / "supervisor.sock"
     system_socket = root / "system.sock"
@@ -184,15 +188,17 @@ def _write_runtime_configuration(root: Path, *, hub_port: int, kernel_port: int)
     manifest = root / "services.yaml"
     system_settings = root / "eidolond.yaml"
     commissioning_registry = root / "commissioning-secrets.json"
-    hub_actor_token = _management_token().removeprefix("Bearer ")
 
     commissioning_registry.write_text(
         json.dumps(
             {
                 "profile": "eidolon-development-hmac-commissioning-v1",
                 "devices": {
-                    device_id: _b64url(SETUP_SECRET)
-                    for device_id in ("device-m2b-a", "device-m2b-b")
+                    lookup_id: {
+                        "setup_secret": _b64url(SETUP_SECRET),
+                        "hardware_identity_ref": f"hardware-{lookup_id}",
+                    }
+                    for lookup_id in (HARDWARE_LOOKUP_IDS["m2b-a"], HARDWARE_LOOKUP_IDS["m2b-b"])
                 },
             },
             sort_keys=True,
@@ -350,7 +356,7 @@ stopsignal=TERM
 stopwaitsecs=10
 stdout_logfile={root / "kernel.log"}
 stderr_logfile={root / "kernel.err.log"}
-environment=EIDOLON_KERNEL_SETTINGS_YAML="{kernel_settings}",EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN="{hub_actor_token}",EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN="{COMPANION_TOKEN}"
+environment=EIDOLON_KERNEL_SETTINGS_YAML="{kernel_settings}",EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN="{HUB_READER_TOKEN}",EIDOLON_KERNEL_COMPANION_AUTHORITY_TOKEN="{COMPANION_TOKEN}"
 
 [group:kernel]
 programs=kernel-api
@@ -374,6 +380,28 @@ def _start_eidolond(settings: Path) -> subprocess.Popen[str]:
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+#: One per device in this test, standing in for the stable hardware identity a
+#: manufactured board would carry. Deliberately not the instance ID: the
+#: instance is derived from a rotatable operational key, and the whole point of
+#: separating them is that a device can rejoin as a new instance on the same
+#: hardware.
+HARDWARE_LOOKUP_IDS = {"m2b-a": "box-3-m2b-a", "m2b-b": "box-3-m2b-b"}
+
+
+def _instance_id(key: ec.EllipticCurvePrivateKey) -> str:
+    """The device instance ID Hub will accept, derived from its operational key.
+
+    Rotating the operational key produces a different instance on the same
+    hardware, which is what makes a factory reset a new instance rather than a
+    reused one.
+    """
+
+    der = key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return "device-instance-" + hashlib.sha256(der).hexdigest()
 
 
 def _p256_spki(key: ec.EllipticCurvePrivateKey) -> str:
@@ -452,7 +480,6 @@ def _open_claim_grant(
 
 def _create_enrollment(
     *,
-    device_id: str,
     suffix: str,
     handoff_key: ec.EllipticCurvePrivateKey,
     operational_key: ec.EllipticCurvePrivateKey,
@@ -471,16 +498,27 @@ def _create_enrollment(
         digest="sha256:" + hashlib.sha256(rfc8785.dumps(manifest_document)).hexdigest(),
         document=manifest_document,
     )
+    lookup_id = HARDWARE_LOOKUP_IDS[suffix]
+    device_id = _instance_id(operational_key)
+    operational_public_key = _p256_spki(operational_key)
+    evidence_document = {
+        "device_instance_id": device_id,
+        "hardware_lookup_id": lookup_id,
+        "operational_public_key": operational_public_key,
+        "profile_id": "eidolon-trust-p256-hpke-v1",
+    }
+    evidence = (
+        rfc8785.dumps(evidence_document).decode() + "." + _sign(operational_key, evidence_document)
+    )
     nonce = f"commissioning-nonce-{suffix}-0001"
-    proof_document = f"{device_id}\0{OWNER_DOMAIN_ID}\0{nonce}".encode()
+    proof_document = f"{lookup_id}\0{device_id}\0{OWNER_DOMAIN_ID}\0{nonce}".encode()
     command = CreateEnrollment(
         device_instance_candidate_id=device_id,
         requested_owner_domain_id=OWNER_DOMAIN_ID,
         hardware_identity_evidence=HardwareIdentityEvidence(
-            scheme="manufacturer-p256",
-            evidence=f"manufacturer-evidence-{suffix}-0001",
-            evidence_digest="sha256:"
-            + hashlib.sha256(f"manufacturer-evidence-{suffix}-0001".encode()).hexdigest(),
+            scheme="dev-self-signed-p256",
+            evidence=evidence,
+            evidence_digest="sha256:" + hashlib.sha256(evidence.encode()).hexdigest(),
         ),
         commissioning_proof=CommissioningProof(
             proof=_b64url(hmac.new(SETUP_SECRET, proof_document, hashlib.sha256).digest()),
@@ -497,11 +535,10 @@ def _create_enrollment(
     )
 
 
-async def _activate_claim(hub: httpx.AsyncClient, *, device_id: str, suffix: str) -> DeviceRef:
+async def _activate_claim(hub: httpx.AsyncClient, *, suffix: str) -> DeviceRef:
     handoff_key = ec.generate_private_key(ec.SECP256R1())
     operational_key = ec.generate_private_key(ec.SECP256R1())
     create_command, manifest_ref = _create_enrollment(
-        device_id=device_id,
         suffix=suffix,
         handoff_key=handoff_key,
         operational_key=operational_key,
@@ -675,10 +712,9 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                         trust_env=False,
                     ) as kernel,
                 ):
-                    await _activate_claim(hub, device_id="device-m2b-a", suffix="m2b-a")
+                    device_a = (await _activate_claim(hub, suffix="m2b-a")).device_instance_id
                     visible = await hub.get(
-                        f"/api/device-management/v1/owners/{BUSINESS_OWNER_ID}"
-                        "/devices/device-m2b-a",
+                        f"/api/device-management/v1/owners/{BUSINESS_OWNER_ID}/devices/{device_a}",
                         headers={"Authorization": _management_token()},
                     )
                     assert visible.status_code == 200, (
@@ -688,7 +724,7 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
 
                     mounted = await _eventually(
                         lambda: kernel.get(
-                            "/api/kernel/v1/device-mounts/devices/device-m2b-a",
+                            f"/api/kernel/v1/device-mounts/devices/{device_a}",
                             headers=OWNER_HEADERS,
                         ),
                         lambda response: response.status_code == 200,
@@ -717,7 +753,7 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                         message="Kernel did not become ready after managed restart",
                     )
                     persisted = await kernel.get(
-                        "/api/kernel/v1/device-mounts/devices/device-m2b-a",
+                        f"/api/kernel/v1/device-mounts/devices/{device_a}",
                         headers=OWNER_HEADERS,
                     )
                     assert persisted.status_code == 200
@@ -748,14 +784,14 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                         message="Kernel did not expose Hub-dependent write degradation",
                     )
                     still_readable = await kernel.get(
-                        "/api/kernel/v1/device-mounts/devices/device-m2b-a",
+                        f"/api/kernel/v1/device-mounts/devices/{device_a}",
                         headers=OWNER_HEADERS,
                     )
                     assert still_readable.status_code == 200
                     failed_mount = await kernel.post(
                         "/api/kernel/v1/device-mounts",
                         headers=OWNER_HEADERS,
-                        json=_mount_body("device-m2b-b", "mount-m2b-b"),
+                        json=_mount_body("device-instance-" + "b" * 64, "mount-m2b-b"),
                     )
                     assert failed_mount.status_code == 503
 
@@ -769,10 +805,10 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                         ),
                         message="eidolond did not republish the recovered Hub",
                     )
-                    await _activate_claim(hub, device_id="device-m2b-b", suffix="m2b-b")
+                    device_b = (await _activate_claim(hub, suffix="m2b-b")).device_instance_id
                     recovered = await _eventually(
                         lambda: kernel.get(
-                            "/api/kernel/v1/device-mounts/devices/device-m2b-b",
+                            f"/api/kernel/v1/device-mounts/devices/{device_b}",
                             headers=OWNER_HEADERS,
                         ),
                         lambda response: response.status_code == 200,

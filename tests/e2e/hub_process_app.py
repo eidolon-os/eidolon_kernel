@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import stat
@@ -17,7 +16,13 @@ from hub.config import HubConfig, load_hub_config
 def _load_process_e2e_commissioning_verifier(
     config: HubConfig,
 ) -> tuple[HmacCommissioningProofVerifier, bool]:
-    """Load a 0600, current-owner registry for this unprivileged process test only."""
+    """Load a 0600, current-owner registry for this unprivileged process test only.
+
+    Only the file policy is this test's own: a Host installs the registry
+    root-owned, and this process is not root. The registry *format* stays Hub's,
+    read by Hub's own parser, so a change to what the file means fails here
+    instead of being quietly accepted by a second reader.
+    """
 
     proof = config.commissioning_proof
     if proof.profile != "development-hmac":
@@ -33,24 +38,11 @@ def _load_process_e2e_commissioning_verifier(
         raise RuntimeError(
             "process E2E commissioning registry must be a current-owner 0600 regular file"
         )
-    document = json.loads(path.read_text(encoding="utf-8"))
-    if document.get("profile") != "eidolon-development-hmac-commissioning-v1":
-        raise RuntimeError("process E2E commissioning registry profile differs")
-    encoded = document.get("devices")
-    if not isinstance(encoded, dict) or not encoded:
-        raise RuntimeError("process E2E commissioning registry has no devices")
     try:
-        secrets_by_device = {
-            str(device_id): base64.urlsafe_b64decode(str(value) + "=" * (-len(str(value)) % 4))
-            for device_id, value in encoded.items()
-        }
-    except (TypeError, ValueError) as exc:
+        identities = resources.read_development_commissioning_registry(path)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("process E2E commissioning registry is invalid") from exc
-    if any(
-        not device_id.strip() or len(secret) < 16 for device_id, secret in secrets_by_device.items()
-    ):
-        raise RuntimeError("process E2E commissioning registry entry is invalid")
-    return HmacCommissioningProofVerifier(secrets_by_device.get), True
+    return HmacCommissioningProofVerifier(identities.get), True
 
 
 def create_app():

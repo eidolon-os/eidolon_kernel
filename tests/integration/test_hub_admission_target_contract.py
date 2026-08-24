@@ -8,6 +8,7 @@ import pytest
 from eidolon_sdk.device_foundation.v1 import (
     ClaimEventCursor,
     ClaimEventPage,
+    OwnerDomainId,
 )
 
 from eidolon_kernel.adapters.device_registry.hub_http import HubHttpDeviceAuthority
@@ -29,9 +30,10 @@ async def test_kernel_consumes_the_frozen_hub_target_router(monkeypatch) -> None
     item = claim_event_item()
 
     class Authority:
-        async def claim_event_page(self, *, cursor, limit, context):
+        async def claim_event_page(self, *, cursor, limit, owner_domain_id):
             assert cursor == ClaimEventCursor(stream_position=0)
             assert limit == 100
+            assert owner_domain_id == OwnerDomainId("owner-domain_01")
             return ClaimEventPage(
                 requested_after=cursor,
                 events=(item,),
@@ -40,11 +42,24 @@ async def test_kernel_consumes_the_frozen_hub_target_router(monkeypatch) -> None
                 observed_at=datetime(2026, 8, 4, 8, 1, tzinfo=UTC),
             )
 
+    seen_credentials: list[str] = []
+
     async def actor_provider(request):
-        return object()
+        raise AssertionError("Kernel reads the Claim event stream as a workload, not a Controller")
+
+    async def claim_event_reader(request):
+        # What a Host actually checks: an exact service capability, not a
+        # Controller ActorRef. Reading the stream is not an Owner action.
+        credential = request.headers.get("Authorization", "")
+        seen_credentials.append(credential)
+        if credential != f"Bearer {HUB_READER_TOKEN}":
+            raise AssertionError("Kernel presented another credential")
+        return OwnerDomainId("owner-domain_01")
 
     app = create_admission_target_app(
-        authority=Authority(), actor_provider=actor_provider
+        authority=Authority(),
+        actor_provider=actor_provider,
+        claim_event_reader_provider=claim_event_reader,
     )
     assert "/api/admission/v1/claim-events" in app.openapi()["paths"]
     assert not any(
@@ -68,5 +83,6 @@ async def test_kernel_consumes_the_frozen_hub_target_router(monkeypatch) -> None
         )
         assert page.events == (item,)
         assert page.next_cursor.stream_position == 1
+        assert seen_credentials == [f"Bearer {HUB_READER_TOKEN}"]
     finally:
         await client.aclose()
