@@ -596,19 +596,24 @@ class ReconcileMountPrerequisites:
         return ReconciliationResult(checked, unmounted, detached, deferred)
 
     async def _rejection(self, mount: DeviceMount) -> tuple[str | None, str | None]:
-        try:
-            device = await self.devices.get_device(
-                owner_id=mount.owner_id,
-                device_id=mount.device_id,
-            )
-        except AuthorityRejected:
-            return "unmount", "device-missing-from-owner-scope"
-        if (
-            device.device_id != mount.device_id
-            or device.owner_id != mount.owner_id
-            or device.status != "approved"
-        ):
-            return "unmount", "device-not-approved"
+        """What this scan can still say about a mount that already exists.
+
+        Not whether the Claim stands. That fact arrives on the Claim event
+        stream, which this Kernel consumes in order, fences by generation, and
+        refuses to skip a gap in — so a Claim that was revoked unmounts from the
+        revocation event, and nothing here can know better.
+
+        It used to ask a second Hub surface, the pre-canonical device directory,
+        which knows nothing about a canonically claimed device. Every device
+        added through Admission was therefore mounted from its ClaimActivated
+        event and unmounted thirteen seconds later as "missing from owner
+        scope" — and, because the same reference then read as terminal, could
+        never be mounted again.
+
+        Companions are different: their state comes from an authority this
+        Kernel does not consume as a stream, so a mount that names one has to be
+        checked against it.
+        """
 
         if mount.attached_companion_id is None:
             return None, None

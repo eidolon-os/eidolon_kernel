@@ -11,7 +11,6 @@ from eidolon_kernel.application.device_mounts import (
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
 from eidolon_kernel.domain.errors import (
     AuthorityRejected,
-    AuthorityUnavailable,
     Conflict,
     IdempotencyConflict,
     NotFound,
@@ -213,7 +212,16 @@ async def test_concurrent_identical_mounts_share_one_stable_outcome() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_tombstones_a_rejected_device() -> None:
+async def test_reconciliation_does_not_adjudicate_a_claim() -> None:
+    """Whether a Claim stands is the Claim stream's answer, not this scan's.
+
+    This scan used to ask a second Hub surface and unmount on its answer. That
+    surface knows nothing about a canonically claimed device, so every device
+    added through Admission was mounted from its ClaimActivated event and
+    unmounted seconds later — and could then never be mounted again, because
+    the same reference read as terminal.
+    """
+
     devices = FakeDeviceAuthority()
     companions = FakeCompanionAuthority()
     mount, _, store, projection = handler(devices=devices)
@@ -230,34 +238,6 @@ async def test_reconciliation_tombstones_a_rejected_device() -> None:
         MutableClock(),
     ).execute()
 
-    assert result.checked == result.unmounted == 1
-    assert result.detached == result.deferred == 0
-    assert store.get("device-1").active is False
-    assert projection.get("device-1").revision == 2
-    assert store.events[-1].event_type == (
-        "eidolon.kernel.device-unmounted-by-authority.v1"
-    )
-    assert store.events[-1].data["reason"] == "device-not-approved"
-
-
-@pytest.mark.asyncio
-async def test_reconciliation_defers_outages_without_revoking_mount() -> None:
-    class OfflineDeviceAuthority(FakeDeviceAuthority):
-        async def get_device(self, **kwargs):
-            raise AuthorityUnavailable("Hub offline")
-
-    mount, _, store, projection = handler()
-    await mount.execute(
-        MountDeviceCommand("mount", "device-1", "owner-1", 0)
-    )
-    result = await ReconcileMountPrerequisites(
-        store,
-        projection,
-        OfflineDeviceAuthority(),
-        FakeCompanionAuthority(),
-        MutableClock(),
-    ).execute()
-
-    assert result.checked == result.deferred == 1
-    assert result.unmounted == result.detached == 0
+    assert result.checked == 1
+    assert result.unmounted == result.detached == result.deferred == 0
     assert store.get("device-1").active is True

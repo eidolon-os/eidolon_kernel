@@ -14,6 +14,7 @@ from eidolon_kernel.domain.commands import (
     MountDeviceCommand,
     UnmountDeviceCommand,
 )
+from eidolon_kernel.domain.errors import AuthorityUnavailable
 from tests.support import (
     FakeCompanionAuthority,
     FakeDeviceAuthority,
@@ -139,7 +140,13 @@ async def test_reconciliation_detaches_inactive_companion_but_keeps_device_mount
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_unmounts_a_revoked_device_without_companion_lookup() -> None:
+async def test_reconciliation_asks_nothing_about_a_mount_with_no_companion() -> None:
+    """A mount nothing is attached to has nothing this scan can check.
+
+    Its Claim is the stream's to adjudicate, so an authority reached here would
+    only be re-deriving a fact this Kernel was already told.
+    """
+
     devices = FakeDeviceAuthority()
     companions = FakeCompanionAuthority()
     mount, _, _, reconciliation, store, _ = services(
@@ -150,7 +157,35 @@ async def test_reconciliation_unmounts_a_revoked_device_without_companion_lookup
 
     result = await reconciliation.execute()
 
-    assert result.unmounted == 1
-    assert result.detached == result.deferred == 0
-    assert store.get("device-1").active is False
+    assert result.checked == 1
+    assert result.unmounted == result.detached == result.deferred == 0
+    assert store.get("device-1").active is True
     assert companions.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_defers_outages_without_detaching() -> None:
+    """An authority that did not answer has not revoked anything."""
+
+    class OfflineCompanionAuthority(FakeCompanionAuthority):
+        async def get_companion(self, **kwargs):
+            raise AuthorityUnavailable("Companion authority offline")
+
+    mount, attach, _, _, store, projection = services()
+    await mount.execute(MountDeviceCommand("mount", "device-1", "owner-1", 0))
+    await attach.execute(
+        AttachCompanionCommand("attach", "device-1", "owner-1", "companion-1", 1)
+    )
+
+    result = await ReconcileMountPrerequisites(
+        store,
+        projection,
+        FakeDeviceAuthority(),
+        OfflineCompanionAuthority(),
+        MutableClock(),
+    ).execute()
+
+    assert result.checked == result.deferred == 1
+    assert result.unmounted == result.detached == 0
+    assert store.get("device-1").active is True
+    assert store.get("device-1").attached_companion_id == "companion-1"
