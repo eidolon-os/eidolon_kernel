@@ -14,6 +14,7 @@
     "required_secrets",
     "affected_units",
     "readiness_checks",
+    "cutover_mode",
     "database_migrations"
   ],
   "properties": {
@@ -89,6 +90,9 @@
     },
     "database_migrations": {
       "type": "array"
+    },
+    "cutover_mode": {
+      "enum": ["reversible", "forward-only"]
     }
   },
   "$defs": {

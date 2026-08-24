@@ -9,6 +9,7 @@ from eidolon_deploy.activation import (
     ActivationFailed,
     ActivationReceipt,
     ActivationStatus,
+    ForwardFixRequired,
     ReleaseActivator,
     RollbackFailed,
 )
@@ -79,6 +80,12 @@ class FakeDeploymentHost:
 
 def descriptor():
     return release_descriptor_from_document(release_document())
+
+
+def forward_descriptor():
+    document = release_document()
+    document["cutover_mode"] = "forward-only"
+    return release_descriptor_from_document(document)
 
 
 def test_dry_run_is_read_only() -> None:
@@ -160,3 +167,46 @@ def test_explicit_rollback_restores_snapshot_and_records_result() -> None:
     assert receipt.status is ActivationStatus.RESTORED
     assert host.calls == ["restore", "receipt:restored"]
     assert host.receipts == [receipt]
+
+
+@pytest.mark.parametrize("fail_at", ["quiesce", "assets", "switch", "reload"])
+def test_forward_only_failure_before_persistent_barrier_restores_previous_targets(
+    fail_at: str,
+) -> None:
+    host = FakeDeploymentHost(fail_at=fail_at)
+
+    with pytest.raises(ActivationFailed):
+        ReleaseActivator(host).activate(forward_descriptor())
+
+    assert "restore" in host.calls
+    assert host.receipts[-1].persistent_state_mutated is False
+
+
+@pytest.mark.parametrize("fail_at", ["start", "ready"])
+def test_forward_only_failure_after_persistent_barrier_requires_forward_fix(
+    fail_at: str,
+) -> None:
+    host = FakeDeploymentHost(fail_at=fail_at)
+
+    with pytest.raises(ForwardFixRequired) as captured:
+        ReleaseActivator(host).activate(forward_descriptor())
+
+    assert "restore" not in host.calls
+    assert captured.value.receipt.status is ActivationStatus.FORWARD_FIX_REQUIRED
+    assert captured.value.receipt.persistent_state_mutated is True
+    assert host.receipts == [captured.value.receipt]
+
+
+def test_explicit_rollback_is_forbidden_for_forward_only_release() -> None:
+    host = FakeDeploymentHost()
+    snapshot = DeploymentSnapshot(
+        transaction_id="tx-forward",
+        previous_targets=host.preflight(forward_descriptor()),
+        backup_path="/var/lib/eidolon/deployments/tx-forward",
+    )
+    host.calls.clear()
+
+    with pytest.raises(ForwardFixRequired):
+        ReleaseActivator(host).rollback(forward_descriptor(), snapshot)
+
+    assert host.calls == []

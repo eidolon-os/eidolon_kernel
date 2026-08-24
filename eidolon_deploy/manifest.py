@@ -282,6 +282,7 @@ class ReleaseDescriptor:
     required_secrets: tuple[RequiredSecret, ...]
     affected_units: tuple[str, ...]
     readiness_checks: tuple[ReadinessCheck, ...]
+    cutover_mode: str
     database_migrations: tuple[str, ...]
 
     @property
@@ -403,9 +404,10 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         raise ReleaseDescriptorError("readiness set must equal the fixed V2 set")
 
     migrations = tuple(str(item) for item in document["database_migrations"])
+    cutover_mode = str(document["cutover_mode"])
     if migrations:
         raise ReleaseDescriptorError(
-            "database migration is outside release descriptor V2 rollback semantics"
+            "database migration execution is not declared by release descriptor V2"
         )
     return ReleaseDescriptor(
         schema_version=int(document["schema_version"]),
@@ -421,6 +423,7 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         required_secrets=secrets,
         affected_units=affected_units,
         readiness_checks=readiness,
+        cutover_mode=cutover_mode,
         database_migrations=migrations,
     )
 

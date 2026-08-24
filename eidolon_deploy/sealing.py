@@ -118,6 +118,7 @@ def seal_prepared_release(
     inspector: EnvironmentInspector | None = None,
     system: str | None = None,
     machine: str | None = None,
+    cutover_mode: str = "reversible",
 ) -> Path:
     """Validate and seal the fixed Eidolon OS V2 release layout on its target."""
 
@@ -247,6 +248,8 @@ def seal_prepared_release(
             }
         )
 
+    if cutover_mode not in {"reversible", "forward-only"}:
+        raise PreparationError("release cutover mode is invalid")
     document = {
         "schema_version": 2,
         "release_id": release_id,
@@ -277,6 +280,7 @@ def seal_prepared_release(
             }
             for check_id, values in V2_READINESS.items()
         ],
+        "cutover_mode": cutover_mode,
         "database_migrations": [],
     }
     release_descriptor_from_document(document)

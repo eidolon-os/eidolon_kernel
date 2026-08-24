@@ -11,6 +11,7 @@ from typing import Sequence
 from eidolon_deploy.activation import (
     ActivationFailed,
     ActivationReceipt,
+    ForwardFixRequired,
     ReleaseActivator,
     RollbackFailed,
     receipt_to_document,
@@ -59,6 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 revisions=revisions,
                 output=arguments.output,
                 uv=arguments.uv,
+                cutover_mode=arguments.cutover_mode,
             )
             _print_json({"status": "bundled", "manifest": str(path)})
             return 0
@@ -75,6 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     memory=arguments.memory_revision,
                     sdk=arguments.sdk_revision,
                 ),
+                cutover_mode=arguments.cutover_mode,
             )
             _print_json({"status": "sealed", "descriptor": str(path)})
             return 0
@@ -96,6 +99,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ActivationFailed as exc:
         _print_receipt(exc.receipt, stream=sys.stderr)
         return 2
+    except ForwardFixRequired as exc:
+        _print_receipt(exc.receipt, stream=sys.stderr)
+        return 4
     except RollbackFailed as exc:
         _print_json(
             {
@@ -153,6 +159,11 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--memory-revision", required=True)
     bundle.add_argument("--sdk-revision", required=True)
     bundle.add_argument("--uv", default="uv", help="exact uv 0.11.15 executable")
+    bundle.add_argument(
+        "--cutover-mode",
+        choices=("reversible", "forward-only"),
+        default="reversible",
+    )
 
     seal = operations.add_parser("seal", help="seal an already prepared native release")
     seal.add_argument("release_id")
@@ -164,6 +175,11 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--channel-revision", required=True)
     seal.add_argument("--memory-revision", required=True)
     seal.add_argument("--sdk-revision", required=True)
+    seal.add_argument(
+        "--cutover-mode",
+        choices=("reversible", "forward-only"),
+        default="reversible",
+    )
 
     activate = operations.add_parser("activate", help="preflight and activate a release")
     activate.add_argument("descriptor", type=Path)

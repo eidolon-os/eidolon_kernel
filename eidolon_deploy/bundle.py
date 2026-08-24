@@ -84,6 +84,7 @@ class BundleSource:
 @dataclass(frozen=True, slots=True)
 class SourceBundle:
     release_id: str
+    cutover_mode: str
     sources: tuple[BundleSource, ...]
     preparer_sha256: str
     dependency_cache_sha256: str
@@ -97,11 +98,14 @@ def build_source_bundle(
     output: Path,
     git: str = "git",
     uv: str = "uv",
+    cutover_mode: str = "reversible",
 ) -> Path:
     """Archive exact Git commits without reading working-tree content."""
 
     if _RELEASE_ID.fullmatch(release_id) is None:
         raise BundleError("release id is invalid")
+    if cutover_mode not in {"reversible", "forward-only"}:
+        raise BundleError("release cutover mode is invalid")
     if set(repositories) != set(_SOURCE_IDS):
         raise BundleError(
             "repository set must be exactly Kernel/Data/Hub/Admin/Agent/Channel/Memory/SDK"
@@ -179,6 +183,7 @@ def build_source_bundle(
         document = {
             "schema_version": 2,
             "release_id": release_id,
+            "cutover_mode": cutover_mode,
             "target": {"system": "linux", "machine": "aarch64"},
             "sources": records,
             "preparer": {
@@ -218,6 +223,7 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     if not isinstance(document, dict) or set(document) != {
         "schema_version",
         "release_id",
+        "cutover_mode",
         "target",
         "sources",
         "preparer",
@@ -230,6 +236,7 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
         or document.get("target") != {"system": "linux", "machine": "aarch64"}
+        or document.get("cutover_mode") not in {"reversible", "forward-only"}
     ):
         raise BundleError("bundle identity or target is invalid")
     wire_sources = document.get("sources")
@@ -316,6 +323,7 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         raise BundleError("bundle Python dependency cache checksum mismatch")
     return SourceBundle(
         release_id=release_id,
+        cutover_mode=document["cutover_mode"],
         sources=tuple(sources),
         preparer_sha256=preparer["sha256"],
         dependency_cache_sha256=dependency_cache["sha256"],

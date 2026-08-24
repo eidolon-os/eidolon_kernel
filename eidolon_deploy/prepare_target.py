@@ -138,7 +138,13 @@ def prepare_target_release(
             sealer = release_root / "eidolon_kernel/.venv/bin/eidolon-release"
             if not sealer.is_file() or not os.access(sealer, os.X_OK):
                 raise TargetPreparationError("prepared Kernel release entrypoint is missing")
-            seal_command = [str(sealer), "seal", release_id]
+            seal_command = [
+                str(sealer),
+                "seal",
+                release_id,
+                "--cutover-mode",
+                document["cutover_mode"],
+            ]
             for source in document["sources"]:
                 seal_command.extend((_REVISION_FLAGS[source["source_id"]], source["revision"]))
             _run("release sealing", *seal_command)
@@ -177,6 +183,7 @@ def _validate_bundle(root: Path) -> dict:
     if not isinstance(document, dict) or set(document) != {
         "schema_version",
         "release_id",
+        "cutover_mode",
         "target",
         "sources",
         "preparer",
@@ -189,6 +196,7 @@ def _validate_bundle(root: Path) -> dict:
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
         or document.get("target") != {"system": "linux", "machine": "aarch64"}
+        or document.get("cutover_mode") not in {"reversible", "forward-only"}
     ):
         raise TargetPreparationError("bundle identity or target is invalid")
     sources = document.get("sources")

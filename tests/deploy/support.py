@@ -376,6 +376,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "expected_status": "ok",
             },
         ],
+        "cutover_mode": "reversible",
         "database_migrations": [],
     }
 
