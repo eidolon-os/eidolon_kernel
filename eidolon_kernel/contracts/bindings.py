@@ -167,6 +167,12 @@ class CompanionIdentityWire(ContractModel):
     #: parses — a Companion being retired or archived is a real state Data can
     #: report, and refusing to read it would turn "you may not assign this" into
     #: "the authority is broken".
+    #: Kept as a literal here on purpose. Every other consumer imports this
+    #: vocabulary from ``eidolon_sdk.biz.contracts.companion``; this package
+    #: deliberately does not depend on the SDK and mirrors external schemas
+    #: instead (``schemas/external/``), with a test comparing the mirror to the
+    #: producer. That is a trust boundary, not an oversight — so the copy stays
+    #: and the mirror test is what keeps it honest.
     lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
     #: Neither is used here, and both are admitted for the same reason as
     #: ``display_name``: Data answers one document to every consumer. ``kind``
