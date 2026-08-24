@@ -105,7 +105,7 @@ async def main():
             companion_id="companion-e2e",
             genome_id="genome-e2e",
             realm_id="realm-e2e",
-            role="primary",
+            kind="conversational",
         )
         await store.owner_commands.create_owner(owner_id="owner-other")
         await store.companion_workspaces.provision_workspace(
@@ -113,7 +113,7 @@ async def main():
             companion_id="companion-other",
             genome_id="genome-other",
             realm_id="realm-other",
-            role="primary",
+            kind="conversational",
         )
     finally:
         await store.close()

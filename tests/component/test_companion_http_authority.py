@@ -18,6 +18,8 @@ def document(**overrides):
         "companion_id": "companion one",
         "owner_id": "owner-1",
         "lifecycle_state": "active",
+        "kind": "conversational",
+        "revision": 1,
     }
     value.update(overrides)
     return value

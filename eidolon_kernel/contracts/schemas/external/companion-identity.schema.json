@@ -9,7 +9,9 @@
     "operation",
     "companion_id",
     "owner_id",
-    "lifecycle_state"
+    "lifecycle_state",
+    "kind",
+    "revision"
   ],
   "properties": {
     "operation": {
@@ -28,12 +30,23 @@
     "lifecycle_state": {
       "enum": [
         "active",
-        "inactive"
+        "retiring",
+        "archived",
+        "deleting"
       ]
     },
     "display_name": {
       "type": "string",
       "maxLength": 128
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
     }
   }
 }

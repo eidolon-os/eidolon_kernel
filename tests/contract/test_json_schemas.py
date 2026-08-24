@@ -160,6 +160,8 @@ def test_consumed_companion_contract_is_a_strict_identity_subset() -> None:
         "companion_id": "companion-1",
         "owner_id": "owner-1",
         "lifecycle_state": "active",
+        "kind": "conversational",
+        "revision": 1,
     }
     ContractRegistry().validate("external/companion-identity.schema.json", document)
     assert CompanionIdentityWire.model_validate(document).lifecycle_state == "active"

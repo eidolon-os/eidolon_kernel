@@ -162,7 +162,18 @@ class CompanionIdentityWire(ContractModel):
     #: What the Owner calls this Companion. Kernel does not use it; it is
     #: admitted so Data may answer one document to every consumer.
     display_name: str = Field(default="", max_length=128)
-    lifecycle_state: Literal["active", "inactive"]
+    #: Kernel only ever asks whether this Companion may be assigned, which is
+    #: ``active`` and nothing else. The other three are admitted so the answer
+    #: parses — a Companion being retired or archived is a real state Data can
+    #: report, and refusing to read it would turn "you may not assign this" into
+    #: "the authority is broken".
+    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    #: Neither is used here, and both are admitted for the same reason as
+    #: ``display_name``: Data answers one document to every consumer. ``kind``
+    #: is a product type, ``revision`` is the version a writer compares against
+    #: — assignment eligibility depends on neither.
+    kind: str = Field(default="", max_length=32)
+    revision: int = Field(default=1, ge=1)
 
 
 class SystemServiceEndpointWire(ContractModel):
