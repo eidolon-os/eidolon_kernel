@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eidolon.dev/kernel/consumed-contracts/hub/device-directory-entry-v1.schema.json",
   "title": "Consumed Hub Device Directory Entry V1",
-  "description": "Pinned subset contract for GET /api/device-management/v1/owners/{owner_scope}/devices/{device_id}; copied from Hub on 2026-08-04.",
+  "description": "Strict consumer contract for the canonical Claim-backed Hub device directory entry.",
   "type": "object",
   "additionalProperties": false,
   "required": ["operation", "device_id", "owner_scope", "display_name", "device_kind", "manifest", "manifest_revision", "lifecycle_state", "enrolled_at", "updated_at", "device_ref"],
@@ -35,14 +35,13 @@
     "deviceRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["device_instance_id", "owner_domain_id", "owner_domain_generation", "claim_generation", "trust_epoch", "accepted_manifest_digest"],
+      "required": ["device_instance_id", "owner_domain_id", "owner_domain_generation", "claim_generation", "trust_epoch"],
       "properties": {
-        "device_instance_id": {"type": "string", "minLength": 1, "maxLength": 128},
-        "owner_domain_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "device_instance_id": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+        "owner_domain_id": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^owner-.+$"},
         "owner_domain_generation": {"type": "integer", "minimum": 1},
         "claim_generation": {"type": "integer", "minimum": 1},
-        "trust_epoch": {"type": "integer", "minimum": 1},
-        "accepted_manifest_digest": {"type": "string", "minLength": 1, "maxLength": 128}
+        "trust_epoch": {"type": "integer", "minimum": 1}
       }
     },
     "property": {

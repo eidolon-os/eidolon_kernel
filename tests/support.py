@@ -72,9 +72,7 @@ class FakeDeviceAuthority:
 
     async def list_claim_events(self, *, cursor: ClaimEventCursor, limit: int):
         events = tuple(
-            item
-            for item in self.claim_events
-            if item.stream_position > cursor.stream_position
+            item for item in self.claim_events if item.stream_position > cursor.stream_position
         )[:limit]
         next_position = events[-1].stream_position if events else cursor.stream_position
         high_watermark = self.high_watermark
@@ -171,8 +169,7 @@ class MemoryStore:
         return tuple(
             event
             for event in self.events
-            if event.position > after_position
-            and event.mount.owner_id == owner_id
+            if event.position > after_position and event.mount.owner_id == owner_id
         )[:limit]
 
     def claim_event_cursor(self) -> ClaimEventCursor:
@@ -228,7 +225,9 @@ class MemoryStore:
         if existing is not None:
             if existing != (item, outcome, fingerprint):
                 raise IdempotencyConflict
-            return ClaimEventCommitResult(self.get(event.data.device_ref.device_instance_id), outcome, True)
+            return ClaimEventCommitResult(
+                self.get(event.data.device_ref.device_instance_id), outcome, True
+            )
         if requested_after.stream_position != self.claim_cursor_position:
             raise RevisionConflict
         if item.stream_position != self.claim_cursor_position + 1:
@@ -314,6 +313,7 @@ def claim_event_item(
             causationid="grant-ack-one",
             data=ClaimActivatedData(
                 device_ref=device_ref,
+                business_owner_id="owner_01",
                 manifest_ref=ManifestRef(
                     manifest_id="manifest-one",
                     revision=1,
@@ -354,6 +354,7 @@ def sample_mount(
     return DeviceMount(
         device_id="device-1",
         owner_id="owner-1",
+        owner_domain_id="owner-1",
         claim_generation=1,
         trust_epoch=1,
         attached_companion_id=attached_companion_id,

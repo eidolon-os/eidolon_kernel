@@ -72,7 +72,6 @@ def create_dependency_app() -> FastAPI:
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
-                "accepted_manifest_digest": "fixture-v1",
             },
         }
 

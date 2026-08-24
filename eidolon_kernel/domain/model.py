@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
-from eidolon_sdk.device_foundation.v1 import DeviceRef
+from eidolon_sdk.device_foundation.v1 import DeviceRef, OwnerDomainId
 
 from eidolon_kernel.domain.errors import InvalidRequest
 
@@ -36,10 +36,8 @@ class DeviceAdmission:
     device_ref: DeviceRef
 
     def __post_init__(self) -> None:
-        if (
-            self.device_ref.device_instance_id != self.device_id
-            or str(self.device_ref.owner_domain_id) != self.owner_id
-        ):
+        require_identifier("owner_id", self.owner_id, 64)
+        if self.device_ref.device_instance_id != self.device_id:
             raise InvalidRequest("DeviceAdmission and DeviceRef do not match")
 
 
@@ -54,6 +52,7 @@ class CompanionIdentity:
 class DeviceMount:
     device_id: str
     owner_id: str
+    owner_domain_id: str
     claim_generation: int
     trust_epoch: int
     attached_companion_id: str | None
@@ -68,11 +67,19 @@ class DeviceMount:
     def __post_init__(self) -> None:
         object.__setattr__(self, "device_id", require_identifier("device_id", self.device_id))
         object.__setattr__(self, "owner_id", require_identifier("owner_id", self.owner_id, 64))
-        if min(
-            self.owner_domain_generation,
-            self.claim_generation,
-            self.trust_epoch,
-        ) < 1:
+        try:
+            owner_domain_id = str(OwnerDomainId(self.owner_domain_id))
+        except ValueError as exc:
+            raise InvalidRequest("owner_domain_id is invalid") from exc
+        object.__setattr__(self, "owner_domain_id", owner_domain_id)
+        if (
+            min(
+                self.owner_domain_generation,
+                self.claim_generation,
+                self.trust_epoch,
+            )
+            < 1
+        ):
             raise InvalidRequest("mount Owner, Claim and trust generations must be positive")
         if self.attached_companion_id is not None:
             object.__setattr__(
@@ -80,7 +87,9 @@ class DeviceMount:
                 "attached_companion_id",
                 require_identifier("attached_companion_id", self.attached_companion_id, 64),
             )
-        object.__setattr__(self, "request_id", require_identifier("request_id", self.request_id, 96))
+        object.__setattr__(
+            self, "request_id", require_identifier("request_id", self.request_id, 96)
+        )
         if self.revision < 1:
             raise InvalidRequest("revision must be positive")
         if re.fullmatch(r"sha256:[0-9a-f]{64}", self.fingerprint) is None:
@@ -96,7 +105,7 @@ class DeviceMount:
 
         return DeviceRef(
             device_instance_id=self.device_id,
-            owner_domain_id=self.owner_id,
+            owner_domain_id=self.owner_domain_id,
             owner_domain_generation=self.owner_domain_generation,
             claim_generation=self.claim_generation,
             trust_epoch=self.trust_epoch,
@@ -113,14 +122,12 @@ class DeviceMount:
         request_id: str,
         fingerprint: str,
     ) -> DeviceMount:
-        if (
-            device_ref.device_instance_id != device_id
-            or str(device_ref.owner_domain_id) != owner_id
-        ):
+        if device_ref.device_instance_id != device_id:
             raise InvalidRequest("mount target and DeviceRef do not match")
         return cls(
             device_id=device_id,
             owner_id=owner_id,
+            owner_domain_id=str(device_ref.owner_domain_id),
             claim_generation=device_ref.claim_generation,
             trust_epoch=device_ref.trust_epoch,
             attached_companion_id=None,
@@ -148,12 +155,13 @@ class DeviceMount:
             raise InvalidRequest("device mount owner namespace cannot change")
         if (
             device_ref.device_instance_id != self.device_id
-            or str(device_ref.owner_domain_id) != owner_id
+            or str(device_ref.owner_domain_id) != self.owner_domain_id
         ):
             raise InvalidRequest("remount target and DeviceRef do not match")
         return DeviceMount(
             device_id=self.device_id,
             owner_id=owner_id,
+            owner_domain_id=self.owner_domain_id,
             claim_generation=device_ref.claim_generation,
             trust_epoch=device_ref.trust_epoch,
             attached_companion_id=None,
@@ -188,9 +196,7 @@ class DeviceMount:
             fingerprint=fingerprint,
         )
 
-    def detached(
-        self, *, at: datetime, request_id: str, fingerprint: str
-    ) -> DeviceMount:
+    def detached(self, *, at: datetime, request_id: str, fingerprint: str) -> DeviceMount:
         at = require_utc("detached_at", at)
         if at < self.updated_at:
             raise InvalidRequest("attachment transition time cannot move backwards")
@@ -205,9 +211,7 @@ class DeviceMount:
             fingerprint=fingerprint,
         )
 
-    def unmounted(
-        self, *, at: datetime, request_id: str, fingerprint: str
-    ) -> DeviceMount:
+    def unmounted(self, *, at: datetime, request_id: str, fingerprint: str) -> DeviceMount:
         at = require_utc("unmounted_at", at)
         if at < self.updated_at:
             raise InvalidRequest("mount transition time cannot move backwards")

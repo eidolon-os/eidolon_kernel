@@ -27,9 +27,7 @@ MANIFEST = ManifestRef(
 )
 
 
-def _ref(
-    *, generation: int = 1, owner_generation: int = 1, owner: str = "owner-1"
-) -> DeviceRef:
+def _ref(*, generation: int = 1, owner_generation: int = 1, owner: str = "owner-1") -> DeviceRef:
     return DeviceRef(
         device_instance_id="device-1",
         owner_domain_id=owner,
@@ -47,9 +45,7 @@ def _activated(
     owner_generation: int = 1,
     owner: str = "owner-1",
 ) -> ClaimEventStreamItem:
-    ref = _ref(
-        generation=generation, owner_generation=owner_generation, owner=owner
-    )
+    ref = _ref(generation=generation, owner_generation=owner_generation, owner=owner)
     at = NOW + timedelta(seconds=position)
     return ClaimEventStreamItem(
         stream_position=position,
@@ -63,6 +59,7 @@ def _activated(
             causationid="grant-ack-1",
             data=ClaimActivatedData(
                 device_ref=ref,
+                business_owner_id="owner_01",
                 manifest_ref=MANIFEST,
                 approval_decision_id="decision-1",
                 activated_at=at,
@@ -79,9 +76,7 @@ def _revoked(
     owner_generation: int = 1,
     owner: str = "owner-1",
 ) -> ClaimEventStreamItem:
-    ref = _ref(
-        generation=generation, owner_generation=owner_generation, owner=owner
-    )
+    ref = _ref(generation=generation, owner_generation=owner_generation, owner=owner)
     at = NOW + timedelta(seconds=position)
     return ClaimEventStreamItem(
         stream_position=position,
@@ -114,7 +109,7 @@ def _reconciler(store: MemoryStore, *items: ClaimEventStreamItem) -> ReconcileCl
 
 
 @pytest.mark.asyncio
-async def test_claim_activated_mounts_once_and_advances_canonical_cursor() -> None:
+async def test_claim_activated_mounts_distinct_business_owner_and_owner_domain() -> None:
     store = MemoryStore()
     reconciler = _reconciler(store, _activated(position=1, aggregate_revision=5))
 
@@ -125,12 +120,14 @@ async def test_claim_activated_mounts_once_and_advances_canonical_cursor() -> No
     assert replay.consumed == 0
     assert store.claim_event_cursor().stream_position == 1
     assert store.get("device-1").active is True
+    assert store.get("device-1").owner_id == "owner_01"
+    assert store.get("device-1").owner_domain_id == "owner-1"
     assert store.get("device-1").claim_generation == 1
 
 
 @pytest.mark.asyncio
 async def test_matching_claim_revoked_unmounts_once() -> None:
-    mount = sample_mount()
+    mount = replace(sample_mount(), owner_id="owner_01")
     store = MemoryStore(mounts={mount.device_id: mount})
     reconciler = _reconciler(store, _revoked(position=1, aggregate_revision=6))
 
@@ -138,9 +135,7 @@ async def test_matching_claim_revoked_unmounts_once() -> None:
 
     assert result.unmounted == result.consumed == 1
     assert store.get("device-1").active is False
-    assert store.events[-1].event_type == (
-        "eidolon.kernel.device-unmounted-by-claim-event.v1"
-    )
+    assert store.events[-1].event_type == ("eidolon.kernel.device-unmounted-by-claim-event.v1")
 
 
 @pytest.mark.asyncio
@@ -154,9 +149,7 @@ async def test_matching_claim_revoked_unmounts_once() -> None:
 )
 async def test_old_generation_event_cannot_unmount_new_mount(mount) -> None:
     store = MemoryStore(mounts={mount.device_id: mount})
-    result = await _reconciler(
-        store, _revoked(position=1, aggregate_revision=6)
-    ).execute()
+    result = await _reconciler(store, _revoked(position=1, aggregate_revision=6)).execute()
 
     assert result.ignored == result.consumed == 1
     assert store.get("device-1").active is True
@@ -181,7 +174,7 @@ async def test_revoked_generation_is_terminal_and_cannot_be_reactivated() -> Non
 
 @pytest.mark.asyncio
 async def test_new_claim_generation_can_mount_after_old_generation_revocation() -> None:
-    mount = sample_mount()
+    mount = replace(sample_mount(), owner_id="owner_01")
     store = MemoryStore(mounts={mount.device_id: mount})
     reconciler = _reconciler(
         store,

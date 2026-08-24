@@ -27,13 +27,14 @@ from eidolon_kernel.ports.runtime import (
     StoredRequest,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _EXPECTED_COLUMNS = {
     "kernel_schema_meta": {"schema_version"},
     "kernel_device_mounts": {
         "device_id",
         "owner_id",
+        "owner_domain_id",
         "owner_domain_generation",
         "claim_generation",
         "trust_epoch",
@@ -59,6 +60,7 @@ _EXPECTED_COLUMNS = {
         "event_type",
         "device_id",
         "owner_id",
+        "owner_domain_id",
         "owner_domain_generation",
         "claim_generation",
         "trust_epoch",
@@ -116,6 +118,7 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
     return {
         "device_id": mount.device_id,
         "owner_id": mount.owner_id,
+        "owner_domain_id": mount.owner_domain_id,
         "owner_domain_generation": mount.owner_domain_generation,
         "claim_generation": mount.claim_generation,
         "trust_epoch": mount.trust_epoch,
@@ -133,6 +136,7 @@ def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
     return DeviceMount(
         device_id=document["device_id"],
         owner_id=document["owner_id"],
+        owner_domain_id=document["owner_domain_id"],
         owner_domain_generation=document["owner_domain_generation"],
         claim_generation=document["claim_generation"],
         trust_epoch=document["trust_epoch"],
@@ -150,6 +154,7 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
     return DeviceMount(
         device_id=row["device_id"],
         owner_id=row["owner_id"],
+        owner_domain_id=row["owner_domain_id"],
         owner_domain_generation=row["owner_domain_generation"],
         claim_generation=row["claim_generation"],
         trust_epoch=row["trust_epoch"],
@@ -201,10 +206,11 @@ class SqliteMountStore:
                 CREATE TABLE kernel_schema_meta (
                     schema_version INTEGER NOT NULL
                 );
-                INSERT INTO kernel_schema_meta(schema_version) VALUES (6);
+                INSERT INTO kernel_schema_meta(schema_version) VALUES (7);
                 CREATE TABLE kernel_device_mounts (
                     device_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
+                    owner_domain_id TEXT NOT NULL,
                     owner_domain_generation INTEGER NOT NULL CHECK (owner_domain_generation >= 1),
                     claim_generation INTEGER NOT NULL CHECK (claim_generation >= 1),
                     trust_epoch INTEGER NOT NULL CHECK (trust_epoch >= 1),
@@ -226,6 +232,7 @@ class SqliteMountStore:
                     event_type TEXT NOT NULL,
                     device_id TEXT NOT NULL,
                     owner_id TEXT NOT NULL,
+                    owner_domain_id TEXT NOT NULL,
                     owner_domain_generation INTEGER NOT NULL,
                     claim_generation INTEGER NOT NULL,
                     trust_epoch INTEGER NOT NULL,
@@ -293,7 +300,9 @@ class SqliteMountStore:
             )
         }
         if tables != set(_EXPECTED_COLUMNS):
-            raise RuntimeError("kernel SQLite schema is partial or unknown; migrations are unsupported")
+            raise RuntimeError(
+                "kernel SQLite schema is partial or unknown; migrations are unsupported"
+            )
         for table, expected in _EXPECTED_COLUMNS.items():
             actual = {row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")}
             if actual != expected:
@@ -369,12 +378,11 @@ class SqliteMountStore:
                     )
 
                 if mount.revision != expected_revision + 1:
-                    raise RevisionConflict(
-                        "next mount revision must equal expected revision + 1"
-                    )
+                    raise RevisionConflict("next mount revision must equal expected revision + 1")
 
                 current = self._connection.execute(
-                    "SELECT owner_id, revision FROM kernel_device_mounts WHERE device_id = ?",
+                    "SELECT owner_id, owner_domain_id, revision "
+                    "FROM kernel_device_mounts WHERE device_id = ?",
                     (mount.device_id,),
                 ).fetchone()
                 actual_revision = current["revision"] if current is not None else 0
@@ -384,9 +392,12 @@ class SqliteMountStore:
                     )
                 if current is not None and current["owner_id"] != mount.owner_id:
                     raise RevisionConflict("device mount owner namespace cannot change")
+                if current is not None and current["owner_domain_id"] != mount.owner_domain_id:
+                    raise RevisionConflict("device mount Owner Domain cannot change")
                 values = (
                     mount.device_id,
                     mount.owner_id,
+                    mount.owner_domain_id,
                     mount.owner_domain_generation,
                     mount.claim_generation,
                     mount.trust_epoch,
@@ -401,21 +412,23 @@ class SqliteMountStore:
                 if current is None:
                     self._connection.execute(
                         """INSERT INTO kernel_device_mounts(
-                            device_id, owner_id, owner_domain_generation,
+                            device_id, owner_id, owner_domain_id, owner_domain_generation,
                             claim_generation, trust_epoch,
                             attached_companion_id, revision, created_at, updated_at,
                             request_id, fingerprint, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         values,
                     )
                 else:
                     cursor = self._connection.execute(
                         """UPDATE kernel_device_mounts SET
-                            owner_domain_generation=?, claim_generation=?, trust_epoch=?,
+                            owner_domain_id=?, owner_domain_generation=?,
+                            claim_generation=?, trust_epoch=?,
                             attached_companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
                             fingerprint=?, active=?
                         WHERE device_id=? AND owner_id=? AND revision=?""",
                         (
+                            mount.owner_domain_id,
                             mount.owner_domain_generation,
                             mount.claim_generation,
                             mount.trust_epoch,
@@ -436,16 +449,18 @@ class SqliteMountStore:
                 event_id = f"kernel:{mount.request_id}:{mount.revision}"
                 cursor = self._connection.execute(
                     """INSERT INTO kernel_audit_events(
-                        event_id, event_type, device_id, owner_id, owner_domain_generation,
+                        event_id, event_type, device_id, owner_id, owner_domain_id,
+                        owner_domain_generation,
                         claim_generation,
                         trust_epoch, attached_companion_id, mount_revision,
                         mount_created_at, active, request_id, fingerprint, occurred_at, data_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         event_id,
                         event_type,
                         mount.device_id,
                         mount.owner_id,
+                        mount.owner_domain_id,
                         mount.owner_domain_generation,
                         mount.claim_generation,
                         mount.trust_epoch,
@@ -502,6 +517,7 @@ class SqliteMountStore:
             document = {
                 "device_id": row["device_id"],
                 "owner_id": row["owner_id"],
+                "owner_domain_id": row["owner_domain_id"],
                 "owner_domain_generation": row["owner_domain_generation"],
                 "claim_generation": row["claim_generation"],
                 "trust_epoch": row["trust_epoch"],
@@ -519,9 +535,7 @@ class SqliteMountStore:
                     event_id=row["event_id"],
                     event_type=row["event_type"],
                     mount=_mount_from_document(document),
-                    occurred_at=datetime.fromisoformat(
-                        row["occurred_at"].replace("Z", "+00:00")
-                    ),
+                    occurred_at=datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")),
                     data=json.loads(row["data_json"]),
                 )
             )
@@ -607,9 +621,7 @@ class SqliteMountStore:
                     ).fetchone()
                     return ClaimEventCommitResult(
                         mount=(
-                            _mount_from_row(current_mount)
-                            if current_mount is not None
-                            else None
+                            _mount_from_row(current_mount) if current_mount is not None else None
                         ),
                         outcome=outcome,
                         replayed=True,
@@ -637,7 +649,10 @@ class SqliteMountStore:
 
                 committed_mount: DeviceMount | None = None
                 if mount is not None:
-                    if expected_mount_revision is None or mount.revision != expected_mount_revision + 1:
+                    if (
+                        expected_mount_revision is None
+                        or mount.revision != expected_mount_revision + 1
+                    ):
                         raise RevisionConflict("Claim event mount revision is invalid")
                     current_mount = self._connection.execute(
                         "SELECT * FROM kernel_device_mounts WHERE device_id = ?",
@@ -645,10 +660,13 @@ class SqliteMountStore:
                     ).fetchone()
                     actual_revision = current_mount["revision"] if current_mount is not None else 0
                     if actual_revision != expected_mount_revision:
-                        raise RevisionConflict("Claim event mount revision changed before checkpoint")
+                        raise RevisionConflict(
+                            "Claim event mount revision changed before checkpoint"
+                        )
                     values = (
                         mount.device_id,
                         mount.owner_id,
+                        mount.owner_domain_id,
                         mount.owner_domain_generation,
                         mount.claim_generation,
                         mount.trust_epoch,
@@ -663,22 +681,29 @@ class SqliteMountStore:
                     if current_mount is None:
                         self._connection.execute(
                             """INSERT INTO kernel_device_mounts(
-                                device_id, owner_id, owner_domain_generation, claim_generation,
+                                device_id, owner_id, owner_domain_id,
+                                owner_domain_generation, claim_generation,
                                 trust_epoch, attached_companion_id, revision, created_at,
                                 updated_at, request_id, fingerprint, active
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             values,
                         )
                     else:
                         if current_mount["owner_id"] != mount.owner_id:
-                            raise RevisionConflict("Claim event cannot change Mount owner namespace")
+                            raise RevisionConflict(
+                                "Claim event cannot change Mount owner namespace"
+                            )
+                        if current_mount["owner_domain_id"] != mount.owner_domain_id:
+                            raise RevisionConflict("Claim event cannot change Mount Owner Domain")
                         cursor = self._connection.execute(
                             """UPDATE kernel_device_mounts SET
-                                owner_domain_generation=?, claim_generation=?, trust_epoch=?,
+                                owner_domain_id=?, owner_domain_generation=?,
+                                claim_generation=?, trust_epoch=?,
                                 attached_companion_id=?, revision=?, created_at=?, updated_at=?,
                                 request_id=?, fingerprint=?, active=?
                             WHERE device_id=? AND owner_id=? AND revision=?""",
                             (
+                                mount.owner_domain_id,
                                 mount.owner_domain_generation,
                                 mount.claim_generation,
                                 mount.trust_epoch,
@@ -698,10 +723,11 @@ class SqliteMountStore:
                             raise RevisionConflict("Claim event Mount CAS failed")
                     self._connection.execute(
                         """INSERT INTO kernel_audit_events(
-                            event_id, event_type, device_id, owner_id, owner_domain_generation,
+                            event_id, event_type, device_id, owner_id, owner_domain_id,
+                            owner_domain_generation,
                             claim_generation, trust_epoch, attached_companion_id, mount_revision,
                             mount_created_at, active, request_id, fingerprint, occurred_at, data_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             f"kernel:{mount.request_id}:{mount.revision}",
                             (
@@ -711,6 +737,7 @@ class SqliteMountStore:
                             ),
                             mount.device_id,
                             mount.owner_id,
+                            mount.owner_domain_id,
                             mount.owner_domain_generation,
                             mount.claim_generation,
                             mount.trust_epoch,
@@ -737,9 +764,7 @@ class SqliteMountStore:
                     committed_mount = mount
 
                 manifest_ref = (
-                    event.data.manifest_ref
-                    if isinstance(event, ClaimActivatedEvent)
-                    else None
+                    event.data.manifest_ref if isinstance(event, ClaimActivatedEvent) else None
                 )
                 self._connection.execute(
                     """INSERT INTO kernel_claim_event_inbox(

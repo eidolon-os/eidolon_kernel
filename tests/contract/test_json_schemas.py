@@ -41,9 +41,7 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         expected_revision=0,
         replace_existing=False,
     )
-    registry.validate(
-        "device-mount/mount-request.schema.json", request.model_dump(mode="json")
-    )
+    registry.validate("device-mount/mount-request.schema.json", request.model_dump(mode="json"))
 
     now = datetime(2026, 8, 4, tzinfo=UTC)
     mount = DeviceMount.first(
@@ -61,9 +59,7 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
         fingerprint="sha256:" + "a" * 64,
     )
     result = commit_to_wire(CommitResult(mount, 1, False))
-    registry.validate(
-        "device-mount/mutation-result.schema.json", result.model_dump(mode="json")
-    )
+    registry.validate("device-mount/mutation-result.schema.json", result.model_dump(mode="json"))
 
     attachment = AttachCompanionRequestWire(
         operation="companion.attach",
@@ -127,27 +123,24 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
         "device_ref": {
-                "device_instance_id": "device-1",
-                "owner_domain_id": "owner-1",
-                "owner_domain_generation": 1,
-                "claim_generation": 1,
-                "trust_epoch": 1,
-                "accepted_manifest_digest": "sha256:manifest",
+            "device_instance_id": "device-1",
+            "owner_domain_id": "owner-1",
+            "owner_domain_generation": 1,
+            "claim_generation": 1,
+            "trust_epoch": 1,
         },
     }
-    ContractRegistry().validate(
-        "external/hub-device-directory-entry.schema.json", document
-    )
+    ContractRegistry().validate("external/hub-device-directory-entry.schema.json", document)
     wire = HubDeviceDirectoryEntryWire.model_validate(document)
     assert wire.owner_scope == "owner-1" and wire.lifecycle_state == "approved"
 
     document["provider_binding"] = "must-not-leak"
     with pytest.raises(ValidationError):
-        ContractRegistry().validate(
-            "external/hub-device-directory-entry.schema.json", document
-        )
+        ContractRegistry().validate("external/hub-device-directory-entry.schema.json", document)
 
-    malformed_manifest = {key: value for key, value in document.items() if key != "provider_binding"}
+    malformed_manifest = {
+        key: value for key, value in document.items() if key != "provider_binding"
+    }
     malformed_manifest["manifest"] = {
         **malformed_manifest["manifest"],
         "actions": [{"name": "missing-required-action-fields"}],
@@ -188,9 +181,7 @@ def test_consumed_system_directory_contract_is_strict_and_machine_scoped() -> No
     assert SystemServiceEndpointWire.model_validate(document).service_id == "hub"
     document["owner_id"] = "must-not-enter-machine-scope"
     with pytest.raises(ValidationError):
-        ContractRegistry().validate(
-            "external/system-service-endpoint.schema.json", document
-        )
+        ContractRegistry().validate("external/system-service-endpoint.schema.json", document)
 
 
 def test_system_directory_producer_and_consumer_contracts_have_identical_shape() -> None:
@@ -202,8 +193,7 @@ def test_system_directory_producer_and_consumer_contracts_have_identical_shape()
     )
     consumer = json.loads(
         (
-            root
-            / "eidolon_kernel/contracts/schemas/external/system-service-endpoint.schema.json"
+            root / "eidolon_kernel/contracts/schemas/external/system-service-endpoint.schema.json"
         ).read_text(encoding="utf-8")
     )
     for keyword in ("type", "additionalProperties", "required", "properties"):

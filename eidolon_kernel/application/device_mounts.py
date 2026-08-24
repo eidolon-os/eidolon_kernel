@@ -118,7 +118,9 @@ class MountDevice:
                 f"expected revision {command.expected_revision}, current revision is {actual_revision}"
             )
         if current is not None and current.active and not command.replace_existing:
-            raise Conflict("device already has an active mount; explicit replace_existing is required")
+            raise Conflict(
+                "device already has an active mount; explicit replace_existing is required"
+            )
 
         now = self.clock.now()
         if current is None:
@@ -361,9 +363,7 @@ class ReconcileClaimEvents:
             raise RevisionConflict("Hub Claim page does not continue the persisted cursor")
         if not page.events:
             if page.high_watermark > cursor.stream_position:
-                raise RevisionConflict(
-                    "Hub Claim page omitted events below its high watermark"
-                )
+                raise RevisionConflict("Hub Claim page omitted events below its high watermark")
             self.store.checkpoint_claim_cursor(
                 requested_after=cursor,
                 next_cursor=page.next_cursor,
@@ -377,15 +377,11 @@ class ReconcileClaimEvents:
         for item in page.events:
             event = item.event
             expected_ref = event.data.device_ref
-            history = self.store.claim_events_for_device(
-                expected_ref.device_instance_id
-            )
+            history = self.store.claim_events_for_device(expected_ref.device_instance_id)
             if history and event.aggregaterev <= max(
                 stored.aggregate_revision for stored in history
             ):
-                raise RevisionConflict(
-                    "Claim aggregate revision is duplicate or out of order"
-                )
+                raise RevisionConflict("Claim aggregate revision is duplicate or out of order")
 
             current = self.store.get(expected_ref.device_instance_id)
             mount = None
@@ -395,8 +391,7 @@ class ReconcileClaimEvents:
             if current is not None:
                 prior_refs.append(self._mount_ref(current))
             if any(
-                str(ref.owner_domain_id) != str(expected_ref.owner_domain_id)
-                for ref in prior_refs
+                str(ref.owner_domain_id) != str(expected_ref.owner_domain_id) for ref in prior_refs
             ):
                 raise RevisionConflict(
                     "Claim event Owner Domain conflicts with persisted device history"
@@ -413,8 +408,7 @@ class ReconcileClaimEvents:
             elif isinstance(event, ClaimActivatedEvent):
                 was_revoked = any(
                     stored.device_ref == expected_ref
-                    and stored.event_type
-                    == "live.eidolon.device.claim-revoked.v1"
+                    and stored.event_type == "live.eidolon.device.claim-revoked.v1"
                     for stored in history
                 )
                 if was_revoked or (
@@ -438,7 +432,7 @@ class ReconcileClaimEvents:
                     if current is None:
                         mount = DeviceMount.first(
                             device_id=expected_ref.device_instance_id,
-                            owner_id=str(expected_ref.owner_domain_id),
+                            owner_id=str(event.data.business_owner_id),
                             device_ref=expected_ref,
                             at=self.clock.now(),
                             request_id=request_id,
@@ -447,7 +441,7 @@ class ReconcileClaimEvents:
                         expected_mount_revision = 0
                     else:
                         mount = current.mounted_as(
-                            owner_id=str(expected_ref.owner_domain_id),
+                            owner_id=str(event.data.business_owner_id),
                             device_ref=expected_ref,
                             at=self.clock.now(),
                             request_id=request_id,
@@ -514,9 +508,7 @@ class ReconcileClaimEvents:
     def _event_mutation_identity(
         event_id: str, operation: str, device_ref: DeviceRef
     ) -> tuple[str, str]:
-        request_id = (
-            "claim-event:" + hashlib.sha256(event_id.encode()).hexdigest()[:48]
-        )
+        request_id = "claim-event:" + hashlib.sha256(event_id.encode()).hexdigest()[:48]
         fingerprint = request_fingerprint(
             operation,
             {

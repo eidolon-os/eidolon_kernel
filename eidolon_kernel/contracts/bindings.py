@@ -101,17 +101,6 @@ class AuditPageWire(ContractModel):
         return tuple(value) if isinstance(value, list) else value
 
 
-class LegacyHubDirectoryDeviceRefWire(ContractModel):
-    """Pre-PH2 Hub directory shape retained outside the Claim-event capability."""
-
-    device_instance_id: str = Field(min_length=1, max_length=128)
-    owner_domain_id: str = Field(min_length=1, max_length=64)
-    owner_domain_generation: int = Field(ge=1)
-    claim_generation: int = Field(ge=1)
-    trust_epoch: int = Field(ge=1)
-    accepted_manifest_digest: str = Field(min_length=1, max_length=128)
-
-
 class HubDeviceDirectoryEntryWire(ContractModel):
     operation: Literal["device.directory-entry"]
     device_id: str = Field(min_length=1, max_length=128)
@@ -123,7 +112,7 @@ class HubDeviceDirectoryEntryWire(ContractModel):
     lifecycle_state: Literal["pending-approval", "approved", "revoked"]
     enrolled_at: datetime
     updated_at: datetime
-    device_ref: LegacyHubDirectoryDeviceRefWire
+    device_ref: DeviceRef
 
 
 class CompanionIdentityWire(ContractModel):

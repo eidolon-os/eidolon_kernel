@@ -133,8 +133,8 @@ def test_partial_or_old_database_is_rejected_without_migration(tmp_path) -> None
         SqliteMountStore(path)
 
 
-def test_precanonical_database_is_rejected_instead_of_inferred(tmp_path) -> None:
-    path = tmp_path / "kernel-v5.sqlite3"
+def test_schema_v6_without_owner_domain_is_rejected_instead_of_inferred(tmp_path) -> None:
+    path = tmp_path / "kernel-v6.sqlite3"
     current = SqliteMountStore(path)
     current.commit(
         mount=sample_mount(),
@@ -146,11 +146,13 @@ def test_precanonical_database_is_rejected_instead_of_inferred(tmp_path) -> None
     current.close()
 
     connection = sqlite3.connect(path)
-    connection.execute("UPDATE kernel_schema_meta SET schema_version = 5")
+    connection.execute("ALTER TABLE kernel_device_mounts DROP COLUMN owner_domain_id")
+    connection.execute("ALTER TABLE kernel_audit_events DROP COLUMN owner_domain_id")
+    connection.execute("UPDATE kernel_schema_meta SET schema_version = 6")
     connection.commit()
     connection.close()
 
-    with pytest.raises(RuntimeError, match="schema version is unsupported"):
+    with pytest.raises(RuntimeError, match="does not match schema v7"):
         SqliteMountStore(path)
 
 
@@ -164,14 +166,14 @@ def _mount_from_claim(item: ClaimEventStreamItem, *, current=None) -> DeviceMoun
     if current is None:
         return DeviceMount.first(
             device_id=ref.device_instance_id,
-            owner_id=str(ref.owner_domain_id),
+            owner_id=str(item.event.data.business_owner_id),
             device_ref=ref,
             at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
             request_id=request_id,
             fingerprint=fingerprint,
         )
     return current.mounted_as(
-        owner_id=str(ref.owner_domain_id),
+        owner_id=str(item.event.data.business_owner_id),
         device_ref=ref,
         at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
         request_id=request_id,

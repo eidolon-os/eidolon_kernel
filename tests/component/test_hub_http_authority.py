@@ -38,6 +38,7 @@ def claim_event_page(**event_overrides):
                 "claim_generation": 1,
                 "trust_epoch": 1,
             },
+            "business_owner_id": "owner_01",
             "manifest_ref": {
                 "manifest_id": "manifest-one",
                 "revision": 1,
@@ -89,7 +90,6 @@ def document(**overrides):
             "owner_domain_generation": 1,
             "claim_generation": 1,
             "trust_epoch": 1,
-            "accepted_manifest_digest": "sha256:manifest",
         },
     }
     value.update(overrides)
@@ -245,9 +245,7 @@ async def test_claim_consumer_fails_closed_on_event_metadata(overrides, match) -
     )
     try:
         with pytest.raises(AuthorityUnavailable, match=match):
-            await adapter.list_claim_events(
-                cursor=ClaimEventCursor(stream_position=0), limit=100
-            )
+            await adapter.list_claim_events(cursor=ClaimEventCursor(stream_position=0), limit=100)
     finally:
         await client.aclose()
 
