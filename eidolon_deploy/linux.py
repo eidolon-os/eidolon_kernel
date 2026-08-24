@@ -405,7 +405,12 @@ class LinuxDeploymentHost:
             if unit in affected:
                 self._stop_unit_if_loaded(unit, operation="service stop")
         self._stop_unit_if_loaded(_MANAGER_UNIT, operation="manager stop")
-        for unit in release.affected_units:
+        # Stop consumers before the services they keep alive.  In particular,
+        # Channel Provider holds a LiveKit participant; stopping LiveKit first
+        # can exhaust TimeoutStopSec and trigger Restart=on-failure, canceling
+        # the release's stop transaction.  Descriptor order is startup order,
+        # so quiesce it in reverse after the manager is gone.
+        for unit in reversed(release.affected_units):
             if unit not in _PRE_MANAGER_UNITS:
                 self._stop_unit_if_loaded(unit, operation="service stop")
 
