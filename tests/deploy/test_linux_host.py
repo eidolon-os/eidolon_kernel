@@ -290,6 +290,31 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
     ]
 
 
+def test_quiesce_retries_only_transient_canceled_systemd_stop(tmp_path: Path) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    original_run = runner.run
+    canceled = {"remaining": 1}
+
+    def transient(*command: str) -> CommandResult:
+        if (
+            command == ("/usr/bin/systemctl", "stop", "eidolon-livekit.service")
+            and canceled["remaining"]
+        ):
+            runner.calls.append(command)
+            canceled["remaining"] -= 1
+            return CommandResult(1, "", "Job for eidolon-livekit.service canceled.")
+        return original_run(*command)
+
+    runner.run = transient  # type: ignore[method-assign]
+
+    host.quiesce(release)
+
+    assert canceled["remaining"] == 0
+    assert runner.calls.count(
+        ("/usr/bin/systemctl", "stop", "eidolon-livekit.service")
+    ) == 2
+
+
 def test_quiesce_skips_units_not_installed_before_first_activation(
     tmp_path: Path,
 ) -> None:

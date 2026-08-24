@@ -33,6 +33,7 @@ from eidolon_deploy.ports import DeploymentSnapshot
 
 _SYSTEMCTL = "/usr/bin/systemctl"
 _SYSTEMD_ANALYZE = "/usr/bin/systemd-analyze"
+_SYSTEMD_STOP_ATTEMPTS = 3
 _MANAGER_UNIT = "eidolond.service"
 _PRE_MANAGER_UNITS = (
     "eidolon-local-api.service",
@@ -848,7 +849,22 @@ class LinuxDeploymentHost:
             return
         if not state:
             raise LinuxDeploymentError(f"systemd returned an empty load state for {unit}")
-        self._checked_command(operation, _SYSTEMCTL, "stop", unit)
+        for attempt in range(_SYSTEMD_STOP_ATTEMPTS):
+            result = self._runner.run(_SYSTEMCTL, "stop", unit)
+            if result.returncode == 0:
+                return
+            detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+            # A manager/reconciler may have queued a competing systemd job just
+            # before it became inactive.  systemd reports that race as a
+            # canceled stop transaction.  Retry the same declarative stop;
+            # never infer success and never broaden the unit set.
+            if "Job for " not in detail or " canceled" not in detail:
+                raise LinuxDeploymentError(f"{operation} failed: {detail}")
+            if attempt + 1 < _SYSTEMD_STOP_ATTEMPTS:
+                time.sleep(0.2)
+        raise LinuxDeploymentError(
+            f"{operation} failed after {_SYSTEMD_STOP_ATTEMPTS} attempts: {detail}"
+        )
 
     @staticmethod
     def _atomic_symlink(target: Path, link: Path) -> None:
