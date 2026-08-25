@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -761,31 +762,69 @@ def test_a_cache_built_at_this_path_is_used_as_it_stands(tmp_path: Path) -> None
     assert (cache / "archive-v0/1saUdiifyR0p9A1c/addict.py").is_file()
 
 
-def test_a_cache_built_somewhere_else_is_rebuilt_here_and_reported(
-    tmp_path: Path,
-) -> None:
+def test_a_moved_cache_is_re_addressed_here_without_re_fetching(tmp_path: Path) -> None:
+    """The files a moved cache's links name moved with it, so nothing is lost.
+
+    This is the whole cost of the bug: 266 entries were addressed at the path
+    the cache used to live at, and the first version of this repair discarded
+    all of them, re-fetching ~1.9 GB that was already sitting on the disk.
+    """
+
     elsewhere = tmp_path / "elsewhere"
     cache = _kept_cache(tmp_path / "kept", recorded_root=elsewhere)
+    entry = cache / "wheels-v6/pypi/addict/2.4.0-py3-none-any"
 
     notes = bundle._bind_kept_cache_to_its_location(cache)
 
-    # Not a refusal: the kept cache is an accelerator, and what a release
-    # installs is fixed by lockfiles the target verifies for itself.
     assert len(notes) == 1
     assert str(elsewhere) in notes[0]
-    assert str(cache) in notes[0]
-    assert [item.name for item in cache.iterdir()] == [".eidolon-cache-root"]
+    assert "1 were re-addressed" in notes[0]
+    assert "0 whose files did not come along" in notes[0]
+    # The payload is untouched and the entry now names the copy that is here.
+    assert entry.is_symlink()
+    assert entry.resolve() == (cache / "archive-v0/1saUdiifyR0p9A1c").resolve()
+    assert (cache / "archive-v0/1saUdiifyR0p9A1c/addict.py").is_file()
     assert (cache / ".eidolon-cache-root").read_text(encoding="utf-8").strip() == str(cache)
 
 
-def test_a_cache_that_never_recorded_a_root_is_rebuilt_here(tmp_path: Path) -> None:
-    cache = _kept_cache(tmp_path / "kept", recorded_root=None)
+def test_a_cache_that_never_recorded_a_root_is_re_addressed_too(tmp_path: Path) -> None:
+    """No marker means no recorded origin, but the layout still says where."""
+
+    cache = _kept_cache(tmp_path / "kept", recorded_root=tmp_path / "gone")
+    (cache / ".eidolon-cache-root").unlink()
 
     notes = bundle._bind_kept_cache_to_its_location(cache)
 
     assert len(notes) == 1
     assert "an unrecorded path" in notes[0]
-    assert not (cache / "wheels-v6").exists()
+    assert (cache / "wheels-v6/pypi/addict/2.4.0-py3-none-any").resolve() == (
+        cache / "archive-v0/1saUdiifyR0p9A1c"
+    ).resolve()
+
+
+def test_an_entry_whose_file_did_not_come_along_is_dropped(tmp_path: Path) -> None:
+    """uv fetches that one entry again; it is not invented and not kept broken."""
+
+    cache = _kept_cache(tmp_path / "kept", recorded_root=tmp_path / "elsewhere")
+    shutil.rmtree(cache / "archive-v0/1saUdiifyR0p9A1c")
+
+    notes = bundle._bind_kept_cache_to_its_location(cache)
+
+    assert "0 were re-addressed" in notes[0]
+    assert "1 whose files did not come along" in notes[0]
+    assert not (cache / "wheels-v6/pypi/addict/2.4.0-py3-none-any").is_symlink()
+
+
+def test_an_entry_addressed_outside_any_cache_layout_is_dropped(tmp_path: Path) -> None:
+    cache = _kept_cache(tmp_path / "kept", recorded_root=tmp_path / "elsewhere")
+    stray = cache / "wheels-v6/pypi/addict/stray"
+    stray.symlink_to(tmp_path / "not-a-cache/payload")
+
+    notes = bundle._bind_kept_cache_to_its_location(cache)
+
+    assert "1 were re-addressed" in notes[0]
+    assert "1 whose files did not come along" in notes[0]
+    assert not stray.is_symlink()
 
 
 def test_an_empty_kept_cache_is_adopted_without_a_note(tmp_path: Path) -> None:

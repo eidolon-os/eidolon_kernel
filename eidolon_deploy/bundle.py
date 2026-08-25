@@ -462,15 +462,25 @@ def _kept_dependency_cache() -> Path | None:
 #: opened.
 _CACHE_ROOT_MARKER = ".eidolon-cache-root"
 
+#: The uv cache subtrees a release carries. Named once because two places now
+#: depend on this layout — what gets packaged, and where a moved entry's file
+#: is found — and a second copy of the list is how they would come apart.
+_CACHE_ROOTS = frozenset({"archive-v0", "wheels-v6", "sdists-v9"})
+
 
 def _bind_kept_cache_to_its_location(cache: Path) -> tuple[str, ...]:
-    """Make the kept cache be this location's cache, discarding a foreign one.
+    """Make the kept cache be this location's cache, repairing a moved one.
 
-    A kept cache is an accelerator and nothing else: what a release installs is
-    fixed by each source's lockfile, whose hashes uv verifies on use. So a cache
-    that belongs to some other path is not a reason to refuse a release — it is
-    a reason to build from the index once and say so. Refusing here would leave
-    an operator holding an unactionable error about an optional cache.
+    A relocated cache is not damaged, only mis-addressed: uv writes the
+    ``wheels-v6`` entries as absolute symlinks into ``archive-v0``, and when the
+    directory moves, the files those links name move with it. So the entries can
+    be pointed back at the copies that are right here, which costs nothing,
+    rather than re-fetched, which costs the whole cache. Only a link whose file
+    did not come along is dropped, and uv fetches that one entry again.
+
+    Nothing here can change what a release installs — that is fixed by each
+    source's lockfile, whose hashes uv verifies on use — so a mis-addressed
+    cache is never a reason to refuse a release.
     """
 
     marker = cache / _CACHE_ROOT_MARKER
@@ -488,24 +498,62 @@ def _bind_kept_cache_to_its_location(cache: Path) -> tuple[str, ...]:
     if not entries:
         marker.write_text(expected + "\n", encoding="utf-8")
         return ()
-    origin = recorded if recorded else "an unrecorded path"
-    shutil.rmtree(cache)
-    cache.mkdir(parents=True)
+    rebased, dropped = _readdress_cache_entries(cache)
     marker.write_text(expected + "\n", encoding="utf-8")
+    if not rebased and not dropped:
+        return ()
+    origin = recorded if recorded else "an unrecorded path"
     return (
-        f"discarded the kept uv cache at {expected}: it was built at {origin}, "
-        "and uv records its wheel entries as absolute symlinks, so every entry "
-        "pointed outside this root. Dependencies were fetched from the index "
-        "and the cache rebuilt here; the release content is unaffected.",
+        f"the kept uv cache at {expected} was built at {origin}: uv records its "
+        f"wheel entries as absolute symlinks, so {rebased + dropped} pointed "
+        f"outside this root. {rebased} were re-addressed to the copies present "
+        f"here and {dropped} whose files did not come along were dropped for uv "
+        "to fetch again; the release content is unaffected.",
     )
 
 
+def _readdress_cache_entries(cache: Path) -> tuple[int, int]:
+    """Point every entry addressed outside this cache at its copy inside it."""
+
+    rebased = 0
+    dropped = 0
+    for path in sorted(cache.rglob("*")):
+        if not path.is_symlink():
+            continue
+        target = Path(os.readlink(path))
+        if not target.is_absolute() or cache == target or cache in target.parents:
+            continue
+        suffix = _cache_relative_suffix(target)
+        landing = None if suffix is None else cache / suffix
+        # A target is only ever replaced with a file that is actually here.
+        # Nothing is invented: an entry whose file is absent is removed, which
+        # is exactly what uv needs to fetch it once.
+        if landing is None or not landing.exists():
+            path.unlink()
+            dropped += 1
+            continue
+        path.unlink()
+        path.symlink_to(landing)
+        rebased += 1
+    return rebased, dropped
+
+
+def _cache_relative_suffix(target: Path) -> Path | None:
+    """Where inside a uv cache an absolute target names, by the cache's layout."""
+
+    parts = target.parts
+    for index in reversed(range(len(parts))):
+        part = parts[index]
+        if part in _CACHE_ROOTS or part.startswith("simple-v"):
+            return Path(*parts[index:])
+    return None
+
+
 def _archive_dependency_cache(cache: Path, destination: Path) -> None:
-    included_roots = {"archive-v0", "wheels-v6", "sdists-v9"}
     with tarfile.open(destination, "w:gz", dereference=False) as archive:
         for path in sorted(cache.rglob("*")):
             relative = path.relative_to(cache)
-            if relative.parts[0] not in included_roots and not relative.parts[0].startswith(
+            if relative.parts[0] not in _CACHE_ROOTS and not relative.parts[0].startswith(
                 "simple-v"
             ):
                 continue
