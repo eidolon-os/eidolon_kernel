@@ -90,6 +90,19 @@ class SourceBundle:
     dependency_cache_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class BuiltBundle:
+    """What was built, and what this workstation had to do to build it.
+
+    ``notes`` describes the build, never the release. Nothing in it can change
+    which bytes a target installs — that is fixed by the manifest — so a note
+    is reported and the release continues.
+    """
+
+    manifest: Path
+    notes: tuple[str, ...]
+
+
 def build_source_bundle(
     *,
     release_id: str,
@@ -99,7 +112,7 @@ def build_source_bundle(
     git: str = "git",
     uv: str = "uv",
     cutover_mode: str = "reversible",
-) -> Path:
+) -> BuiltBundle:
     """Archive exact Git commits without reading working-tree content."""
 
     if _RELEASE_ID.fullmatch(release_id) is None:
@@ -160,7 +173,7 @@ def build_source_bundle(
             )
 
         dependency_cache = temporary / _DEPENDENCY_CACHE_NAME
-        _build_dependency_cache(
+        notes = _build_dependency_cache(
             uv=uv,
             source_dir=source_dir,
             destination=dependency_cache,
@@ -195,7 +208,7 @@ def build_source_bundle(
         _atomic_write_json(temporary / _MANIFEST_NAME, document)
         validate_source_bundle(temporary)
         os.replace(temporary, output)
-        return output / _MANIFEST_NAME
+        return BuiltBundle(manifest=output / _MANIFEST_NAME, notes=notes)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -332,13 +345,16 @@ def validate_source_bundle(path: Path) -> SourceBundle:
 
 def _build_dependency_cache(
     *, uv: str, source_dir: Path, destination: Path, workspace: Path
-) -> None:
+) -> tuple[str, ...]:
     version = _dependency_run((uv, "--version")).stdout.strip()
     if version != f"uv {_UV_VERSION}" and not version.startswith(f"uv {_UV_VERSION} "):
         raise BundleError(f"dependency cache requires uv {_UV_VERSION}, got {version}")
     projects = workspace / ".python-projects"
     environments = workspace / ".python-environments"
     kept = _kept_dependency_cache()
+    notes: tuple[str, ...] = ()
+    if kept is not None:
+        notes = _bind_kept_cache_to_its_location(kept)
     cache = kept if kept is not None else workspace / ".python-dependency-cache"
     cache.mkdir(parents=True, exist_ok=True)
     projects.mkdir()
@@ -403,6 +419,7 @@ def _build_dependency_cache(
         shutil.rmtree(cache)
     shutil.rmtree(projects)
     shutil.rmtree(environments)
+    return notes
 
 
 #: Where this machine keeps the dependencies it has already fetched, so that a
@@ -432,22 +449,81 @@ def _kept_dependency_cache() -> Path | None:
     return cache
 
 
+#: The absolute path a kept cache was built at, recorded inside the cache.
+#:
+#: The comment on ``KEPT_DEPENDENCY_CACHE_ENV`` states the invariant — a uv
+#: cache is bound to the path it was built at — but for a long time nothing
+#: established it. A cache that had been moved or copied from another root
+#: still looked like a cache: every ``wheels-v6`` entry pointed at an
+#: ``archive-v0`` under the *old* absolute root, so the first symptom appeared
+#: hundreds of lines away, while packaging, as a dangling link that could not
+#: name what had actually gone wrong. This file lets the cache say where it
+#: belongs, so a relocated one is recognised as relocated the moment it is
+#: opened.
+_CACHE_ROOT_MARKER = ".eidolon-cache-root"
+
+
+def _bind_kept_cache_to_its_location(cache: Path) -> tuple[str, ...]:
+    """Make the kept cache be this location's cache, discarding a foreign one.
+
+    A kept cache is an accelerator and nothing else: what a release installs is
+    fixed by each source's lockfile, whose hashes uv verifies on use. So a cache
+    that belongs to some other path is not a reason to refuse a release — it is
+    a reason to build from the index once and say so. Refusing here would leave
+    an operator holding an unactionable error about an optional cache.
+    """
+
+    marker = cache / _CACHE_ROOT_MARKER
+    expected = str(cache)
+    if not cache.exists():
+        cache.mkdir(parents=True)
+        marker.write_text(expected + "\n", encoding="utf-8")
+        return ()
+    recorded = None
+    if marker.is_file() and not marker.is_symlink():
+        recorded = marker.read_text(encoding="utf-8").strip()
+    if recorded == expected:
+        return ()
+    entries = [item for item in cache.iterdir() if item.name != _CACHE_ROOT_MARKER]
+    if not entries:
+        marker.write_text(expected + "\n", encoding="utf-8")
+        return ()
+    origin = recorded if recorded else "an unrecorded path"
+    shutil.rmtree(cache)
+    cache.mkdir(parents=True)
+    marker.write_text(expected + "\n", encoding="utf-8")
+    return (
+        f"discarded the kept uv cache at {expected}: it was built at {origin}, "
+        "and uv records its wheel entries as absolute symlinks, so every entry "
+        "pointed outside this root. Dependencies were fetched from the index "
+        "and the cache rebuilt here; the release content is unaffected.",
+    )
+
+
 def _archive_dependency_cache(cache: Path, destination: Path) -> None:
     included_roots = {"archive-v0", "wheels-v6", "sdists-v9"}
     with tarfile.open(destination, "w:gz", dereference=False) as archive:
         for path in sorted(cache.rglob("*")):
             relative = path.relative_to(cache)
-            if (
-                relative.parts[0] not in included_roots
-                and not relative.parts[0].startswith("simple-v")
+            if relative.parts[0] not in included_roots and not relative.parts[0].startswith(
+                "simple-v"
             ):
                 continue
             info = archive.gettarinfo(str(path), arcname=relative.as_posix())
             if info.issym():
+                # Check the link this archive actually ships, not the absolute
+                # target it happens to have on disk. The two differ, and only
+                # the shipped one decides whether extraction can write outside
+                # the target's cache.
                 target = path.resolve(strict=True)
-                if cache != target and cache not in target.parents:
-                    raise BundleError("uv dependency cache symlink escapes its root")
-                info.linkname = os.path.relpath(target, path.parent)
+                linkname = os.path.relpath(target, path.parent)
+                landing = os.path.normpath(os.path.join(str(relative.parent), linkname))
+                if landing == os.pardir or landing.startswith(os.pardir + os.sep):
+                    raise BundleError(
+                        "uv dependency cache entry would extract outside the "
+                        f"cache: {relative.as_posix()} -> {target}"
+                    )
+                info.linkname = linkname
                 archive.addfile(info)
             elif info.isfile():
                 with path.open("rb") as stream:

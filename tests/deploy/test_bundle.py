@@ -31,7 +31,7 @@ _REAL_BUILD_DEPENDENCY_CACHE = bundle._build_dependency_cache
 
 @pytest.fixture(autouse=True)
 def isolated_dependency_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_build(*, uv, source_dir, destination, workspace) -> None:
+    def fake_build(*, uv, source_dir, destination, workspace) -> tuple[str, ...]:
         assert uv
         assert source_dir.is_dir()
         assert workspace.is_dir()
@@ -40,6 +40,7 @@ def isolated_dependency_cache(monkeypatch: pytest.MonkeyPatch) -> None:
             directory.type = tarfile.DIRTYPE
             directory.mode = 0o755
             archive.addfile(directory)
+        return ()
 
     monkeypatch.setattr("eidolon_deploy.bundle._build_dependency_cache", fake_build)
 
@@ -101,7 +102,7 @@ def _build_bundle(tmp_path: Path) -> tuple[Path, ReleaseRevisions]:
         revisions=revisions,
         output=output,
     )
-    assert path == output / "bundle.json"
+    assert path.manifest == output / "bundle.json"
     return output, revisions
 
 
@@ -118,7 +119,7 @@ def test_bundle_archives_exact_commits_and_rejects_byte_drift(tmp_path: Path) ->
     )
 
     bundle = validate_source_bundle(output)
-    assert manifest == output / "bundle.json"
+    assert manifest.manifest == output / "bundle.json"
     assert [source.source_id for source in bundle.sources] == list(repositories)
     with tarfile.open(output / "sources/eidolon_admin.tar", "r:") as archive:
         assert "uncommitted.txt" not in archive.getnames()
@@ -286,9 +287,7 @@ def test_lfs_smudge_reports_invalid_pointer_process_failure_and_spawn_error(
         _smudge_lfs_pointer("git", tmp_path, "model.onnx", b"invalid", tmp_path / "invalid")
 
     pointer = (
-        "version https://git-lfs.github.com/spec/v1\n"
-        f"oid sha256:{'0' * 64}\n"
-        "size 1\n"
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 1\n"
     ).encode()
     monkeypatch.setattr(
         "eidolon_deploy.bundle.subprocess.run",
@@ -308,9 +307,7 @@ def test_lfs_smudge_reports_invalid_pointer_process_failure_and_spawn_error(
 def test_source_archive_validation_rejects_remaining_lfs_pointer(tmp_path: Path) -> None:
     archive_path = tmp_path / "channel.tar"
     pointer = (
-        "version https://git-lfs.github.com/spec/v1\n"
-        f"oid sha256:{'0' * 64}\n"
-        "size 10\n"
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 10\n"
     ).encode()
     with tarfile.open(archive_path, "w:") as archive:
         for relative in {"pyproject.toml", "uv.lock", *_CHANNEL_MODEL_PATHS}:
@@ -736,3 +733,93 @@ def test_without_a_kept_cache_a_build_starts_from_empty_disk(tmp_path, monkeypat
     monkeypatch.delenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, raising=False)
 
     assert _prefetch(tmp_path, source_dir, "clean").is_file()
+
+
+def _kept_cache(root: Path, *, recorded_root: Path | None) -> Path:
+    """A uv-shaped cache: wheel entries are absolute symlinks into archive-v0."""
+
+    root.mkdir(parents=True)
+    stored = root / "archive-v0/1saUdiifyR0p9A1c"
+    stored.mkdir(parents=True)
+    (stored / "addict.py").write_text("x\n", encoding="utf-8")
+    wheel = root / "wheels-v6/pypi/addict"
+    wheel.mkdir(parents=True)
+    absolute = (recorded_root if recorded_root is not None else root) / (
+        "archive-v0/1saUdiifyR0p9A1c"
+    )
+    (wheel / "2.4.0-py3-none-any").symlink_to(absolute)
+    if recorded_root is not None:
+        (root / ".eidolon-cache-root").write_text(str(recorded_root) + "\n", encoding="utf-8")
+    return root
+
+
+def test_a_cache_built_at_this_path_is_used_as_it_stands(tmp_path: Path) -> None:
+    cache = _kept_cache(tmp_path / "kept", recorded_root=tmp_path / "kept")
+
+    assert bundle._bind_kept_cache_to_its_location(cache) == ()
+    assert (cache / "wheels-v6/pypi/addict/2.4.0-py3-none-any").is_symlink()
+    assert (cache / "archive-v0/1saUdiifyR0p9A1c/addict.py").is_file()
+
+
+def test_a_cache_built_somewhere_else_is_rebuilt_here_and_reported(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    cache = _kept_cache(tmp_path / "kept", recorded_root=elsewhere)
+
+    notes = bundle._bind_kept_cache_to_its_location(cache)
+
+    # Not a refusal: the kept cache is an accelerator, and what a release
+    # installs is fixed by lockfiles the target verifies for itself.
+    assert len(notes) == 1
+    assert str(elsewhere) in notes[0]
+    assert str(cache) in notes[0]
+    assert [item.name for item in cache.iterdir()] == [".eidolon-cache-root"]
+    assert (cache / ".eidolon-cache-root").read_text(encoding="utf-8").strip() == str(cache)
+
+
+def test_a_cache_that_never_recorded_a_root_is_rebuilt_here(tmp_path: Path) -> None:
+    cache = _kept_cache(tmp_path / "kept", recorded_root=None)
+
+    notes = bundle._bind_kept_cache_to_its_location(cache)
+
+    assert len(notes) == 1
+    assert "an unrecorded path" in notes[0]
+    assert not (cache / "wheels-v6").exists()
+
+
+def test_an_empty_kept_cache_is_adopted_without_a_note(tmp_path: Path) -> None:
+    cache = tmp_path / "kept"
+    cache.mkdir()
+
+    assert bundle._bind_kept_cache_to_its_location(cache) == ()
+    assert (cache / ".eidolon-cache-root").read_text(encoding="utf-8").strip() == str(cache)
+
+
+def test_an_absolute_link_inside_the_cache_ships_relative(tmp_path: Path) -> None:
+    cache = _kept_cache(tmp_path / "kept", recorded_root=tmp_path / "kept")
+    destination = tmp_path / "cache.tar.gz"
+
+    bundle._archive_dependency_cache(cache, destination)
+
+    with tarfile.open(destination, "r:gz") as archive:
+        entry = archive.getmember("wheels-v6/pypi/addict/2.4.0-py3-none-any")
+    assert entry.issym()
+    assert entry.linkname == "../../../archive-v0/1saUdiifyR0p9A1c"
+
+
+def test_an_entry_that_would_extract_outside_the_cache_is_named(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "payload").write_text("x\n", encoding="utf-8")
+    cache = tmp_path / "kept"
+    wheel = cache / "wheels-v6/pypi/addict"
+    wheel.mkdir(parents=True)
+    (wheel / "2.4.0-py3-none-any").symlink_to(outside / "payload")
+
+    with pytest.raises(BundleError) as raised:
+        bundle._archive_dependency_cache(cache, tmp_path / "cache.tar.gz")
+
+    message = str(raised.value)
+    assert "wheels-v6/pypi/addict/2.4.0-py3-none-any" in message
+    assert str(outside / "payload") in message

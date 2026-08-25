@@ -12,6 +12,7 @@ from eidolon_deploy.activation import (
     ActivationStatus,
     RollbackFailed,
 )
+from eidolon_deploy.bundle import BuiltBundle
 from eidolon_deploy.ports import DeploymentSnapshot
 from tests.deploy.support import release_document, write_release_document
 
@@ -118,54 +119,56 @@ def test_cli_seals_prepared_release(monkeypatch, capsys, tmp_path: Path) -> None
     assert json.loads(capsys.readouterr().out)["status"] == "sealed"
 
 
+def _bundle_argv(tmp_path: Path) -> list[str]:
+    return [
+        "bundle",
+        "20260807-bundle",
+        str(tmp_path / "bundle"),
+        "--kernel-repo",
+        str(tmp_path / "kernel"),
+        "--data-repo",
+        str(tmp_path / "data"),
+        "--hub-repo",
+        str(tmp_path / "hub"),
+        "--admin-repo",
+        str(tmp_path / "admin"),
+        "--agent-repo",
+        str(tmp_path / "agent"),
+        "--channel-repo",
+        str(tmp_path / "channel"),
+        "--memory-repo",
+        str(tmp_path / "memory"),
+        "--sdk-repo",
+        str(tmp_path / "sdk"),
+        "--kernel-revision",
+        "a" * 40,
+        "--data-revision",
+        "b" * 40,
+        "--hub-revision",
+        "d" * 40,
+        "--admin-revision",
+        "e" * 40,
+        "--agent-revision",
+        "f" * 40,
+        "--channel-revision",
+        "1" * 40,
+        "--memory-revision",
+        "2" * 40,
+        "--sdk-revision",
+        "c" * 40,
+    ]
+
+
 def test_cli_builds_commit_pinned_source_bundle(monkeypatch, capsys, tmp_path: Path) -> None:
     manifest = tmp_path / "bundle/bundle.json"
     captured = {}
 
     def fake_build(**arguments):
         captured.update(arguments)
-        return manifest
+        return BuiltBundle(manifest=manifest, notes=())
 
     monkeypatch.setattr(cli, "build_source_bundle", fake_build)
-    result = cli.main(
-        [
-            "bundle",
-            "20260807-bundle",
-            str(tmp_path / "bundle"),
-            "--kernel-repo",
-            str(tmp_path / "kernel"),
-            "--data-repo",
-            str(tmp_path / "data"),
-            "--hub-repo",
-            str(tmp_path / "hub"),
-            "--admin-repo",
-            str(tmp_path / "admin"),
-            "--agent-repo",
-            str(tmp_path / "agent"),
-            "--channel-repo",
-            str(tmp_path / "channel"),
-            "--memory-repo",
-            str(tmp_path / "memory"),
-            "--sdk-repo",
-            str(tmp_path / "sdk"),
-            "--kernel-revision",
-            "a" * 40,
-            "--data-revision",
-            "b" * 40,
-            "--hub-revision",
-            "d" * 40,
-            "--admin-revision",
-            "e" * 40,
-            "--agent-revision",
-            "f" * 40,
-            "--channel-revision",
-            "1" * 40,
-            "--memory-revision",
-            "2" * 40,
-            "--sdk-revision",
-            "c" * 40,
-        ]
-    )
+    result = cli.main(_bundle_argv(tmp_path))
 
     assert result == 0
     assert captured["revisions"].admin == "e" * 40
@@ -173,7 +176,32 @@ def test_cli_builds_commit_pinned_source_bundle(monkeypatch, capsys, tmp_path: P
     assert json.loads(capsys.readouterr().out) == {
         "status": "bundled",
         "manifest": str(manifest),
+        "notes": [],
     }
+
+
+def test_cli_reports_how_the_bundle_was_built(monkeypatch, capsys, tmp_path: Path) -> None:
+    """A note about this workstation must reach the operator, not just the log.
+
+    ops appends this document verbatim into the release phases it records on the
+    Host, so a rebuilt dependency cache stays visible after the fact.
+    """
+
+    manifest = tmp_path / "bundle/bundle.json"
+
+    def fake_build(**arguments):
+        return BuiltBundle(
+            manifest=manifest,
+            notes=("discarded the kept uv cache at /a: it was built at /b",),
+        )
+
+    monkeypatch.setattr(cli, "build_source_bundle", fake_build)
+    result = cli.main(_bundle_argv(tmp_path))
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["notes"] == [
+        "discarded the kept uv cache at /a: it was built at /b"
+    ]
 
 
 def test_cli_dry_run_and_explicit_rollback(monkeypatch, capsys, tmp_path: Path) -> None:

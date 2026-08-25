@@ -45,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 memory=arguments.memory_revision,
                 sdk=arguments.sdk_revision,
             )
-            path = build_source_bundle(
+            built = build_source_bundle(
                 release_id=arguments.release_id,
                 repositories={
                     "eidolon_kernel": arguments.kernel_repo,
@@ -62,7 +62,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 uv=arguments.uv,
                 cutover_mode=arguments.cutover_mode,
             )
-            _print_json({"status": "bundled", "manifest": str(path)})
+            _print_json(
+                {
+                    "status": "bundled",
+                    "manifest": str(built.manifest),
+                    "notes": list(built.notes),
+                }
+            )
             return 0
         if arguments.operation == "seal":
             path = seal_prepared_release(
