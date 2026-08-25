@@ -192,12 +192,9 @@ def _write_runtime_configuration(root: Path, *, hub_port: int, kernel_port: int)
     commissioning_registry.write_text(
         json.dumps(
             {
-                "profile": "eidolon-development-hmac-commissioning-v1",
+                "profile": "eidolon-development-hmac-commissioning-v2",
                 "devices": {
-                    lookup_id: {
-                        "setup_secret": _b64url(SETUP_SECRET),
-                        "hardware_identity_ref": f"hardware-{lookup_id}",
-                    }
+                    lookup_id: {"setup_secret": _b64url(SETUP_SECRET)}
                     for lookup_id in (HARDWARE_LOOKUP_IDS["m2b-a"], HARDWARE_LOOKUP_IDS["m2b-b"])
                 },
             },
