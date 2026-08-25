@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from eidolon_sdk.system.v1 import HostVitalsWire, MeasurementWire
 
 from eidolon_system.adapters.host import vitals as vitals_module
 from eidolon_system.adapters.host.vitals import read_host_vitals
@@ -150,3 +151,8 @@ def test_absence_survives_the_wire(monkeypatch: pytest.MonkeyPatch) -> None:
     assert temperature["unavailable_reason"]
     # Consumers key on this to know the shape they are reading.
     assert document["operation"] == "system.host-vitals"
+
+
+def test_vitals_wire_binding_is_owned_by_the_shared_sdk() -> None:
+    assert HostVitalsWire.__module__.startswith("eidolon_sdk.system.v1")
+    assert MeasurementWire.__module__.startswith("eidolon_sdk.system.v1")

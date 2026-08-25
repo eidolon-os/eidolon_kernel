@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from eidolon_sdk.system.v1 import HostVitalsWire
 from fastapi import APIRouter, HTTPException, Query
 from jsonschema import ValidationError
 
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.contracts.bindings import (
     AuditPageWire,
-    HostVitalsWire,
     EndpointWire,
     MutationRequestWire,
     MutationResultWire,
@@ -17,13 +17,12 @@ from eidolon_system.contracts.bindings import (
 )
 from eidolon_system.contracts.mappers import (
     audit_to_wire,
-    vitals_to_wire,
     endpoint_to_wire,
     mutation_to_wire,
     status_to_wire,
+    vitals_to_wire,
 )
 from eidolon_system.contracts.registry import SystemContractRegistry
-from eidolon_system.ports.runtime import HostVitalsReader
 from eidolon_system.domain.errors import (
     Conflict,
     HostOperationFailed,
@@ -31,6 +30,7 @@ from eidolon_system.domain.errors import (
     NotFound,
     NotReady,
 )
+from eidolon_system.ports.runtime import HostVitalsReader
 
 
 def _document(model) -> dict:
