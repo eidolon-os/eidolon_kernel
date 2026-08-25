@@ -16,6 +16,7 @@ class ActivationStatus(str, Enum):
     ACTIVATED = "activated"
     ROLLED_BACK = "rolled_back"
     RESTORED = "restored"
+    RESTORED_NOT_READY = "restored_not_ready"
     FORWARD_FIX_REQUIRED = "forward_fix_required"
 
 
@@ -59,6 +60,33 @@ class RollbackFailed(RuntimeError):
         )
         self.activation_error = activation_error
         self.rollback_error = rollback_error
+
+
+class RestoredButNotReady(RuntimeError):
+    """Raised by the host adapter: links restored, readiness did not converge.
+
+    Deliberately not a ``LinuxDeploymentError``: a caller that cannot tell the
+    difference must not silently treat this as a failed restore, and one that
+    can needs to catch it by name.
+    """
+
+
+class RestoredNotReady(RuntimeError):
+    """The Host is on the restored release, and that release will not start.
+
+    Distinct from a failed rollback, which leaves the Host in a state nobody
+    has established. Collapsing the two told an operator to go looking for a
+    broken Host when what was broken was the release they had just gone back
+    to — on hardware, an ops-installed config input the rollback could not
+    move back with the code.
+    """
+
+    def __init__(self, receipt: ActivationReceipt) -> None:
+        super().__init__(
+            "release snapshot was restored, but the restored release did not "
+            f"become ready: {receipt.error}"
+        )
+        self.receipt = receipt
 
 
 class ForwardFixRequired(RuntimeError):
@@ -182,7 +210,22 @@ class ReleaseActivator:
                         database_migrations=release.database_migrations,
                     )
                 )
-            self._host.restore(release, snapshot)
+            try:
+                self._host.restore(release, snapshot)
+            except RestoredButNotReady as exc:
+                receipt = ActivationReceipt(
+                    release_id=release.release_id,
+                    status=ActivationStatus.RESTORED_NOT_READY,
+                    transaction_id=snapshot.transaction_id,
+                    previous_targets=MappingProxyType(dict(snapshot.previous_targets)),
+                    error=str(exc),
+                    cutover_mode=release.cutover_mode,
+                    database_migrations=release.database_migrations,
+                )
+                # Written, not discarded: what actually happened is the only
+                # thing that tells the next operator where the Host stands.
+                self._host.write_receipt(receipt)
+                raise RestoredNotReady(receipt) from exc
             receipt = ActivationReceipt(
                 release_id=release.release_id,
                 status=ActivationStatus.RESTORED,

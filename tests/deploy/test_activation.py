@@ -11,6 +11,8 @@ from eidolon_deploy.activation import (
     ActivationStatus,
     ForwardFixRequired,
     ReleaseActivator,
+    RestoredButNotReady,
+    RestoredNotReady,
     RollbackFailed,
 )
 from eidolon_deploy.manifest import release_descriptor_from_document
@@ -22,6 +24,7 @@ from tests.deploy.support import release_document
 class FakeDeploymentHost:
     fail_at: str | None = None
     rollback_fails: bool = False
+    restored_not_ready: bool = False
     calls: list[str] = field(default_factory=list)
     receipts: list[ActivationReceipt] = field(default_factory=list)
 
@@ -72,6 +75,8 @@ class FakeDeploymentHost:
         self.calls.append("restore")
         if self.rollback_fails:
             raise RuntimeError("restore failed")
+        if self.restored_not_ready:
+            raise RestoredButNotReady("readiness timeout: hub, kernel")
 
     def write_receipt(self, receipt: ActivationReceipt) -> None:
         self.receipts.append(receipt)
@@ -210,3 +215,55 @@ def test_explicit_rollback_is_forbidden_for_forward_only_release() -> None:
         ReleaseActivator(host).rollback(forward_descriptor(), snapshot)
 
     assert host.calls == []
+
+
+def _snapshot() -> DeploymentSnapshot:
+    return DeploymentSnapshot(
+        transaction_id="tx-previous",
+        previous_targets={
+            "eidolon_kernel": "/opt/eidolon/releases/old/eidolon_kernel",
+            "eidolon_data": "/opt/eidolon/releases/old/eidolon_data",
+            "eidolon_hub": "/opt/eidolon/releases/old/eidolon_hub",
+            "eidolon_admin": "/opt/eidolon/releases/old/eidolon_admin",
+        },
+        backup_path="/var/lib/eidolon/deployments/tx-previous",
+    )
+
+
+def test_a_restore_that_will_not_start_is_not_a_failed_restore() -> None:
+    """Two Hosts, two next actions, and they were reported the same.
+
+    ``restore`` switches the links and only then waits for readiness, so a
+    readiness timeout arrives with the Host already back on its previous
+    release. Reporting that as "rollback failed" tells an operator the Host is
+    in a state nobody has established, and sends them looking for a broken
+    Host — when what is broken is the release they just went back to. On
+    hardware that was an ops-installed config input the rollback could not move
+    back together with the code, and the Host sat crash-looping while the
+    message pointed elsewhere.
+    """
+
+    host = FakeDeploymentHost()
+    host.restored_not_ready = True
+
+    with pytest.raises(RestoredNotReady) as failure:
+        ReleaseActivator(host).rollback(descriptor(), _snapshot())
+
+    receipt = failure.value.receipt
+    assert receipt.status is ActivationStatus.RESTORED_NOT_READY
+    assert "readiness timeout" in (receipt.error or "")
+    # The receipt is durable: what actually happened is the only thing that
+    # tells the next operator where the Host stands.
+    assert host.receipts == [receipt]
+    assert host.calls == ["restore", "receipt:restored_not_ready"]
+
+
+def test_a_restore_that_actually_failed_still_says_so() -> None:
+    host = FakeDeploymentHost()
+    host.rollback_fails = True
+
+    with pytest.raises(RuntimeError) as failure:
+        ReleaseActivator(host).rollback(descriptor(), _snapshot())
+
+    assert not isinstance(failure.value, RestoredNotReady)
+    assert host.receipts == []

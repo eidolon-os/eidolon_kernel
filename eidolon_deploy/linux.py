@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
-from eidolon_deploy.activation import ActivationReceipt, receipt_to_document
+from eidolon_deploy.activation import (
+    ActivationReceipt,
+    RestoredButNotReady,
+    receipt_to_document,
+)
 from eidolon_deploy.fingerprints import (
     INSTALLED_DISTRIBUTIONS_SCRIPT,
     environment_sha256,
@@ -588,13 +592,22 @@ class LinuxDeploymentHost:
         self.reload_systemd()
         restored_units = self._restored_units(metadata)
         self._start_restored_release(restored_units)
-        self._wait_for_readiness(
-            tuple(
-                check
-                for check in release.readiness_checks
-                if _READINESS_UNITS[check.check_id] in restored_units
+        # The links are back. Whether the release they point at then becomes
+        # ready is a different fact, and collapsing the two made a rollback
+        # that had already restored the Host report "rollback failed" — which
+        # says the Host is in an unknown half state when it is not. An operator
+        # told the truth here looks for why the *old* release will not start;
+        # one told "rollback failed" goes looking for a broken Host.
+        try:
+            self._wait_for_readiness(
+                tuple(
+                    check
+                    for check in release.readiness_checks
+                    if _READINESS_UNITS[check.check_id] in restored_units
+                )
             )
-        )
+        except LinuxDeploymentError as exc:
+            raise RestoredButNotReady(str(exc)) from exc
 
     def write_receipt(self, receipt: ActivationReceipt) -> None:
         if receipt.transaction_id is None:

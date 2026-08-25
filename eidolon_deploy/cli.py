@@ -13,6 +13,7 @@ from eidolon_deploy.activation import (
     ActivationReceipt,
     ForwardFixRequired,
     ReleaseActivator,
+    RestoredNotReady,
     RollbackFailed,
     receipt_to_document,
 )
@@ -108,6 +109,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ForwardFixRequired as exc:
         _print_receipt(exc.receipt, stream=sys.stderr)
         return 4
+    except RestoredNotReady as exc:
+        # Its own code: the Host is on the restored release and that release
+        # will not start. That is a different next action from a rollback that
+        # left the Host somewhere nobody has established.
+        _print_receipt(exc.receipt, stream=sys.stderr)
+        return 5
     except RollbackFailed as exc:
         _print_json(
             {
