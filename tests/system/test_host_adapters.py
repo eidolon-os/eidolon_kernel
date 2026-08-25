@@ -87,9 +87,16 @@ async def test_supervisord_adapter_parses_status_and_surfaces_failure(tmp_path) 
 async def test_supervisord_adapter_supports_inactive_start_and_restart(tmp_path) -> None:
     config = tmp_path / "supervisord.conf"
     config.write_text("[supervisord]\n", encoding="utf-8")
+    # supervisord prints a single-program group under the bare program name when
+    # the group is named after it, which is how the manifest's `agent:agent` and
+    # `channel-provider:channel-provider` targets are declared. This fixture
+    # used to invent `agent:agent STOPPED ...`, a line real supervisorctl never
+    # emits, so an inspector that required the name to be echoed back passed
+    # here and reported both services permanently failed on every Mac Host —
+    # taking Hub and Channel down with them through the dependency graph.
     runner = FakeRunner(
         [
-            CommandResult(3, "agent:agent STOPPED Not started\n", ""),
+            CommandResult(3, "agent                            STOPPED   Not started\n", ""),
             CommandResult(0, "started\n", ""),
             CommandResult(0, "restarted\n", ""),
         ]
@@ -98,6 +105,29 @@ async def test_supervisord_adapter_supports_inactive_start_and_restart(tmp_path)
     assert (await host.inspect("agent:agent")).active is False
     await host.start("agent:agent")
     await host.restart("agent:agent")
+
+
+@pytest.mark.asyncio
+async def test_supervisord_adapter_still_rejects_a_line_about_another_program(
+    tmp_path,
+) -> None:
+    """Tolerating the bare name must not mean tolerating any name.
+
+    A group-qualified target is satisfied by its own bare program name only
+    when the group is named after the program. `hub:hub-api` reported as
+    `data-api` is a different service, and reading it as an observation of Hub
+    is worse than admitting the output was not understood.
+    """
+
+    config = tmp_path / "supervisord.conf"
+    config.write_text("[supervisord]\n", encoding="utf-8")
+    runner = FakeRunner(
+        [CommandResult(0, "data-api                         RUNNING   pid 5, uptime 0:00:10\n", "")]
+    )
+    host = SupervisordHostSupervisor(runner=runner, config_path=config)
+
+    with pytest.raises(HostOperationFailed, match="inspect failed"):
+        await host.inspect("hub:hub-api")
 
 
 @pytest.mark.asyncio
