@@ -94,6 +94,13 @@ _SQLITE_USER_VERSION_SCRIPT = (
     "print(connection.execute('PRAGMA user_version').fetchone()[0]);"
     "connection.close()"
 )
+#: Lowest bootstrap schema version any release can still migrate forward.
+#: Admin walks one ordered ladder indexed from v1, so every stamped version at
+#: or above this has a path to the release's own version and needs no gate
+#: here. Zero is the value that does need one: it means the database file
+#: exists but nothing ever stamped it, and admin would answer that by creating
+#: tables which may already be there. That is a broken host, not a migration.
+_MIGRATABLE_BOOTSTRAP_SCHEMA = 1
 _SNAPSHOT_SCHEMA_VERSION = 2
 _TOPOLOGY_EXPANSION_COMPONENTS = frozenset(
     {
@@ -293,6 +300,12 @@ class LinuxDeploymentHost:
         self._verify_bootstrap_schema_compatibility(
             current_admin=current_admin,
             release_admin=self._host_path(components["eidolon_admin"].release_path),
+            # The sealed descriptor is the only statement of intent that
+            # reaches a host with no network: the operator picks the mode at
+            # bundle time and `seal` writes it here, checksummed. Reading it
+            # rather than assuming "reversible" is the whole difference between
+            # a schema advance that can land and one that cannot.
+            cutover_mode=release.cutover_mode,
         )
         service_sources: list[str] = []
         for asset in release.system_assets:
@@ -798,7 +811,22 @@ class LinuxDeploymentHost:
         *,
         current_admin: Path,
         release_admin: Path,
+        cutover_mode: str,
     ) -> None:
+        """Prove this release can read the bootstrap authority state on disk.
+
+        The two directions are not the same event and must not share an answer.
+        Advancing the schema is what a release carrying a bootstrap migration
+        is *for*; refusing it is how a shipped v6->v7 Grant migration became
+        unshippable, rejected on two consecutive installs — under
+        ``forward-only`` as well — while the migration that would have fixed
+        the "reinstalled phone can never reclaim its Host" dead end sat unused
+        inside the candidate. Going backwards is the direction that actually
+        strands persistent state: admin refuses to open a database stamped
+        above its own version, so the old interpreter would crash-loop after
+        the links had already been switched. That direction stays refused.
+        """
+
         database = self._host_path(_BOOTSTRAP_DATABASE)
         if not database.is_file() or database.is_symlink():
             raise LinuxDeploymentError(
@@ -813,15 +841,27 @@ class LinuxDeploymentHost:
             _SQLITE_USER_VERSION_SCRIPT,
             str(database),
         )
-        if current_version != release_version:
+        if release_version < current_version:
             raise LinuxDeploymentError(
-                "bootstrap schema transition is outside release rollback semantics: "
-                f"current code expects {current_version}, release expects {release_version}"
+                "bootstrap schema rollback would strand persistent authority state: "
+                f"current code expects {current_version}, release expects {release_version}, "
+                f"database is stamped {database_version}. This release cannot migrate the "
+                "authority database downwards; activate a release at schema "
+                f"{current_version} or newer instead"
             )
-        if database_version != release_version:
+        if release_version > current_version and cutover_mode != "forward-only":
             raise LinuxDeploymentError(
-                "bootstrap authority schema does not match the rollback-compatible release: "
-                f"database is {database_version}, code expects {release_version}"
+                "bootstrap schema advance requires a forward-only release: "
+                f"current code expects {current_version}, release expects {release_version}. "
+                "This release migrates the authority database on its first start and no "
+                "snapshot can undo that, so seal and deploy it with "
+                "--cutover-mode forward-only"
+            )
+        if not _MIGRATABLE_BOOTSTRAP_SCHEMA <= database_version <= release_version:
+            raise LinuxDeploymentError(
+                "bootstrap authority database is outside this release's migration ladder: "
+                f"database is {database_version}, release migrates "
+                f"{_MIGRATABLE_BOOTSTRAP_SCHEMA} through {release_version}"
             )
 
     def _bootstrap_code_schema_version(self, admin_root: Path) -> int:

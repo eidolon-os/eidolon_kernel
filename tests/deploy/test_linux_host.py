@@ -234,24 +234,81 @@ def test_preflight_verifies_new_entrypoints_against_the_candidate_release(tmp_pa
     assert str(release.components_by_id["eidolon_admin"].release_path) in rendered
 
 
-def test_preflight_rejects_bootstrap_schema_transition_before_host_mutation(
+def test_preflight_admits_a_bootstrap_schema_advance_declared_forward_only(
     tmp_path: Path,
 ) -> None:
     _, release, host, runner = prepared_release(tmp_path)
-    runner.current_bootstrap_schema_version = 4
+    release = replace(release, cutover_mode="forward-only")
+    runner.current_bootstrap_schema_version = 6
+    runner.release_bootstrap_schema_version = 7
+    runner.bootstrap_database_schema_version = 6
 
-    with pytest.raises(LinuxDeploymentError, match="outside release rollback semantics"):
+    host.preflight(release)
+
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_rejects_a_bootstrap_schema_advance_sealed_as_reversible(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.current_bootstrap_schema_version = 6
+    runner.release_bootstrap_schema_version = 7
+    runner.bootstrap_database_schema_version = 6
+
+    with pytest.raises(LinuxDeploymentError) as failure:
+        host.preflight(release)
+
+    # The rejection has to name the one action that lets this release land.
+    # The refusal it replaced reported only "outside release rollback
+    # semantics", which is a fact about the release and not an instruction to
+    # anyone, and it stalled a shipped v6->v7 bootstrap migration twice.
+    assert "--cutover-mode forward-only" in str(failure.value)
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+@pytest.mark.parametrize("cutover_mode", ("reversible", "forward-only"))
+def test_preflight_rejects_a_bootstrap_schema_rollback_in_every_cutover_mode(
+    tmp_path: Path,
+    cutover_mode: str,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    release = replace(release, cutover_mode=cutover_mode)
+    runner.current_bootstrap_schema_version = 7
+    runner.release_bootstrap_schema_version = 6
+    runner.bootstrap_database_schema_version = 7
+
+    with pytest.raises(LinuxDeploymentError, match="schema rollback"):
         host.preflight(release)
 
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
 
 
-def test_preflight_rejects_bootstrap_database_schema_drift(tmp_path: Path) -> None:
+def test_preflight_rejects_a_bootstrap_database_above_the_release_ladder(
+    tmp_path: Path,
+) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.bootstrap_database_schema_version = 6
+
+    with pytest.raises(LinuxDeploymentError, match="migration ladder"):
+        host.preflight(release)
+
+
+def test_preflight_rejects_an_unstamped_bootstrap_database(tmp_path: Path) -> None:
+    _, release, host, runner = prepared_release(tmp_path)
+    runner.bootstrap_database_schema_version = 0
+
+    with pytest.raises(LinuxDeploymentError, match="migration ladder"):
+        host.preflight(release)
+
+
+def test_preflight_admits_a_database_the_release_has_not_migrated_yet(
+    tmp_path: Path,
+) -> None:
     _, release, host, runner = prepared_release(tmp_path)
     runner.bootstrap_database_schema_version = 4
 
-    with pytest.raises(LinuxDeploymentError, match="authority schema"):
-        host.preflight(release)
+    host.preflight(release)
 
 
 def test_quiesce_and_start_order_prevents_competing_restart_authorities(

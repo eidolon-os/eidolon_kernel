@@ -173,6 +173,13 @@ def test_rejects_relative_entrypoint_and_duplicate_readiness_id(tmp_path: Path) 
             ),
             "system socket",
         ),
+        # Preflight now decides whether a bootstrap schema advance may land by
+        # reading this one word, so an unrecognised spelling must never load as
+        # a plain string that merely happens not to equal "forward-only".
+        (
+            lambda value: value.update({"cutover_mode": "forward_only"}),
+            "is not one of",
+        ),
     ],
 )
 def test_rejects_semantically_unsafe_contract_values(tmp_path: Path, mutate, message: str) -> None:
