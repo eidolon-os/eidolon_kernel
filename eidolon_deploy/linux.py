@@ -94,6 +94,18 @@ _SQLITE_USER_VERSION_SCRIPT = (
     "print(connection.execute('PRAGMA user_version').fetchone()[0]);"
     "connection.close()"
 )
+#: The development commissioning registry is an ops-installed input, not part
+#: of a sealed release, so its format version and the Hub that reads it move
+#: independently. Ask the release's own Hub which format it reads, the same way
+#: the bootstrap gate asks Admin for its schema version.
+_COMMISSIONING_REGISTRY = Path("/etc/eidolon/commissioning-secrets.json")
+_COMMISSIONING_PROFILE_SCRIPT = (
+    "from hub.composition import resources;"
+    "print(resources.DEVELOPMENT_COMMISSIONING_REGISTRY_PROFILE)"
+)
+_COMMISSIONING_FILE_PROFILE_SCRIPT = (
+    "import json,sys;print(json.load(open(sys.argv[1], encoding='utf-8')).get('profile') or '')"
+)
 #: Lowest bootstrap schema version any release can still migrate forward.
 #: Admin walks one ordered ladder indexed from v1, so every stamped version at
 #: or above this has a path to the release's own version and needs no gate
@@ -306,6 +318,9 @@ class LinuxDeploymentHost:
             # rather than assuming "reversible" is the whole difference between
             # a schema advance that can land and one that cannot.
             cutover_mode=release.cutover_mode,
+        )
+        self._verify_commissioning_registry_readable(
+            release_hub=self._host_path(components["eidolon_hub"].release_path),
         )
         service_sources: list[str] = []
         for asset in release.system_assets:
@@ -862,6 +877,57 @@ class LinuxDeploymentHost:
                 "bootstrap authority database is outside this release's migration ladder: "
                 f"database is {database_version}, release migrates "
                 f"{_MIGRATABLE_BOOTSTRAP_SCHEMA} through {release_version}"
+            )
+
+    def _verify_commissioning_registry_readable(self, *, release_hub: Path) -> None:
+        """Prove this release's Hub can read the registry already on disk.
+
+        Unlike the bootstrap database, this file is an ops-installed input: it
+        is replaced by ``install``/``converge-inputs`` and is not part of any
+        sealed release, so the file's format and the Hub that reads it move on
+        separate schedules. Both directions of that gap are the same failure —
+        a Hub that cannot read it exits during application startup, after the
+        links have already been switched, and restarts forever. So this is
+        asked once, before switching anything, and there is nothing to refuse
+        in only one direction: either this release's Hub reads the file that is
+        there, or activation stops here with both profiles named.
+
+        Absence is not a failure. The registry is development-only; a
+        production Host has no file and Hub installs the rejecting verifier.
+        """
+
+        registry = self._host_path(_COMMISSIONING_REGISTRY)
+        if not registry.is_file() or registry.is_symlink():
+            return
+        python = release_hub / ".venv/bin/python"
+        if not python.is_file() or not os.access(python, os.X_OK):
+            raise LinuxDeploymentError(
+                f"commissioning registry probe runtime is unavailable: {python}"
+            )
+        accepted = self._checked_command(
+            "commissioning registry profile inspection",
+            str(python),
+            "-c",
+            _COMMISSIONING_PROFILE_SCRIPT,
+        ).stdout.strip()
+        installed = self._checked_command(
+            "installed commissioning registry inspection",
+            str(python),
+            "-c",
+            _COMMISSIONING_FILE_PROFILE_SCRIPT,
+            str(registry),
+        ).stdout.strip()
+        if not accepted:
+            raise LinuxDeploymentError(
+                "release Hub does not state which commissioning registry profile it reads"
+            )
+        if installed != accepted:
+            raise LinuxDeploymentError(
+                "installed commissioning registry is not one this release's Hub reads: "
+                f"{_COMMISSIONING_REGISTRY} states {installed or 'no profile'}, this "
+                f"release's Hub reads {accepted}. Converge the Host's inputs from a "
+                "workstation registry in that format, or activate a release whose Hub "
+                f"reads {installed or 'that format'}"
             )
 
     def _bootstrap_code_schema_version(self, admin_root: Path) -> int:

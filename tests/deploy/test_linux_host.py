@@ -30,13 +30,13 @@ class FakeRunner:
         self.current_bootstrap_schema_version = 5
         self.release_bootstrap_schema_version = 5
         self.bootstrap_database_schema_version = 5
+        self.release_commissioning_profile = "eidolon-development-hmac-commissioning-v2"
 
     def run(self, *command: str) -> CommandResult:
         self.calls.append(command)
         if command[:2] == ("/usr/bin/systemd-analyze", "verify"):
             self.verified_unit_texts = {
-                Path(path).name: Path(path).read_text(encoding="utf-8")
-                for path in command[2:]
+                Path(path).name: Path(path).read_text(encoding="utf-8") for path in command[2:]
             }
         if self.fail_command and command[: len(self.fail_command)] == self.fail_command:
             return CommandResult(1, "", "injected command failure")
@@ -61,6 +61,15 @@ class FakeRunner:
             return CommandResult(0, f"{version}\n", "")
         if len(command) == 4 and command[1] == "-c" and "PRAGMA user_version" in command[2]:
             return CommandResult(0, f"{self.bootstrap_database_schema_version}\n", "")
+        if (
+            len(command) >= 3
+            and command[1] == "-c"
+            and "DEVELOPMENT_COMMISSIONING_REGISTRY_PROFILE" in command[2]
+        ):
+            return CommandResult(0, f"{self.release_commissioning_profile}\n", "")
+        if len(command) == 4 and command[1] == "-c" and "'profile'" in command[2]:
+            document = json.loads(Path(command[3]).read_text(encoding="utf-8"))
+            return CommandResult(0, f"{document.get('profile') or ''}\n", "")
         return CommandResult(0, "", "")
 
 
@@ -367,9 +376,7 @@ def test_quiesce_retries_only_transient_canceled_systemd_stop(tmp_path: Path) ->
     host.quiesce(release)
 
     assert canceled["remaining"] == 0
-    assert runner.calls.count(
-        ("/usr/bin/systemctl", "stop", "eidolon-livekit.service")
-    ) == 2
+    assert runner.calls.count(("/usr/bin/systemctl", "stop", "eidolon-livekit.service")) == 2
 
 
 def test_quiesce_skips_units_not_installed_before_first_activation(
@@ -1085,3 +1092,85 @@ def test_unix_http_readiness_preserves_query(monkeypatch) -> None:
     )
     check = replace(original, url="http://eidolond/health?detail=1")
     assert LinuxDeploymentHost._probe_readiness(check)
+
+
+_REGISTRY = "/etc/eidolon/commissioning-secrets.json"
+
+
+def _install_registry(root: Path, profile: str) -> Path:
+    path = _host_path(root, _REGISTRY)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"profile": profile, "devices": {}}), encoding="utf-8")
+    return path
+
+
+def test_preflight_admits_a_registry_this_release_reads(tmp_path: Path) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    _install_registry(root, "eidolon-development-hmac-commissioning-v2")
+
+    host.preflight(release)
+
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_admits_a_host_with_no_registry(tmp_path: Path) -> None:
+    """Production Hosts have no such file, and Hub then rejects every proof."""
+
+    _, release, host, runner = prepared_release(tmp_path)
+
+    host.preflight(release)
+
+    assert not any(
+        "DEVELOPMENT_COMMISSIONING_REGISTRY_PROFILE" in part
+        for call in runner.calls
+        for part in call
+    )
+
+
+@pytest.mark.parametrize("cutover_mode", ("reversible", "forward-only"))
+def test_preflight_rejects_a_release_that_cannot_read_the_installed_registry(
+    tmp_path: Path,
+    cutover_mode: str,
+) -> None:
+    """The failure this replaces was a crash loop, not a refusal.
+
+    A rollback moved Hub back across this format boundary while leaving the
+    installed file at the newer profile. Hub exited during application startup
+    — after the links had already been switched — and systemd restarted it 110
+    times, while the rollback that caused it reported only a readiness timeout.
+    Neither direction of the gap is recoverable at runtime, so neither is
+    allowed past preflight in either cutover mode.
+    """
+
+    root, release, host, runner = prepared_release(tmp_path)
+    release = replace(release, cutover_mode=cutover_mode)
+    _install_registry(root, "eidolon-development-hmac-commissioning-v1")
+
+    with pytest.raises(LinuxDeploymentError) as failure:
+        host.preflight(release)
+
+    message = str(failure.value)
+    # Both profiles have to be named: which one is on disk is the only fact
+    # that tells an operator whether to converge inputs or pick a release.
+    assert "eidolon-development-hmac-commissioning-v1" in message
+    assert "eidolon-development-hmac-commissioning-v2" in message
+    assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
+
+
+def test_preflight_rejects_a_registry_stating_no_profile(tmp_path: Path) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    path = _host_path(root, _REGISTRY)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"devices": {}}), encoding="utf-8")
+
+    with pytest.raises(LinuxDeploymentError, match="no profile"):
+        host.preflight(release)
+
+
+def test_preflight_rejects_a_release_hub_that_states_no_profile(tmp_path: Path) -> None:
+    root, release, host, runner = prepared_release(tmp_path)
+    _install_registry(root, "eidolon-development-hmac-commissioning-v2")
+    runner.release_commissioning_profile = ""
+
+    with pytest.raises(LinuxDeploymentError, match="does not state"):
+        host.preflight(release)
