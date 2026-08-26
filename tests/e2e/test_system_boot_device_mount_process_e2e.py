@@ -139,7 +139,7 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
-def _management_token() -> str:
+def _admission_credential() -> str:
     actor = ControllerActorRef(
         principal_id="controller-m2b-e2e",
         owner_domain_id=OWNER_DOMAIN_ID,
@@ -568,7 +568,7 @@ async def _activate_claim(hub: httpx.AsyncClient, *, suffix: str) -> DeviceRef:
     )
     decision_response = await hub.post(
         f"/api/admission/v1/enrollments/{created.enrollment_id}/decisions",
-        headers={"Authorization": _management_token()},
+        headers={"Authorization": _admission_credential()},
         json=decision_body,
     )
     assert decision_response.status_code == 200, decision_response.text
@@ -712,7 +712,10 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                     device_a = (await _activate_claim(hub, suffix="m2b-a")).device_instance_id
                     visible = await hub.get(
                         f"/api/device-management/v1/owners/{BUSINESS_OWNER_ID}/devices/{device_a}",
-                        headers={"Authorization": _management_token()},
+                        # The token Kernel itself presents. This used to send an
+                        # Admission credential, so it proved a route worked with
+                        # a credential Kernel never holds.
+                        headers={"Authorization": f"Bearer {HUB_READER_TOKEN}"},
                     )
                     assert visible.status_code == 200, (
                         f"{visible.status_code}: {visible.text}\n"
