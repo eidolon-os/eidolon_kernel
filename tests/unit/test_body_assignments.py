@@ -390,3 +390,54 @@ async def test_generation_moves_only_when_the_spec_does() -> None:
     assert same.assignment.revision == 2
     assert same.assignment.generation == 1
     assert same.assignment.change_reason == "said-again"
+
+
+@pytest.mark.asyncio
+async def test_no_active_assignment_is_left_naming_an_eidolon_that_is_gone() -> None:
+    """The Phase 5 exit condition, stated where it can actually be checked.
+
+    "No orphan active BodyAssignment" was not a checkable claim while the
+    concept did not exist. It is one now, and it is held up by two things
+    together: the archive workflow releases a Companion's Bodies before its
+    state moves, and this scan converges anything that survived a crash between
+    those two steps. This asserts the second half — the half that has to be true
+    even when nobody was there to run the first.
+    """
+
+    companions = FakeCompanionAuthority()
+    mount, replace, reconcile, endpoints, store, _ = services(companions=companions)
+    for name in ("device-a", "device-b"):
+        device = named_device_instance_id(name)
+        await mount.execute(MountDeviceCommand(f"mount-{name}", device, "owner-1", 0))
+        await replace.execute(
+            ReplaceAssignmentCommand(
+                request_id=f"assign-{name}",
+                owner_id="owner-1",
+                body_endpoint_id=body_endpoint_id(device, "body"),
+                expected_assignment_revision=0,
+                companion_id="companion-1",
+                origin=ASSIGNMENT_ORIGIN_OWNER,
+            )
+        )
+    # The archive crashed after the authority moved and before either Body was
+    # let go: the Companion is gone and two assignments still name it.
+    companions.status = "archived"
+    assert [a.companion_id for a in store.list_assignments()] == [
+        "companion-1",
+        "companion-1",
+    ]
+
+    await reconcile.execute()
+
+    orphans = [
+        assignment
+        for assignment in store.list_assignments()
+        if assignment.companion_id is not None
+    ]
+    assert orphans == []
+    # And it converged rather than forgot: each Body still exists and still says
+    # why it is quiet, so the device can be pointed somewhere again.
+    assert len(store.list_assignments()) == 2
+    assert {a.selection_provenance for a in store.list_assignments()} == {
+        "companion_deleted"
+    }
