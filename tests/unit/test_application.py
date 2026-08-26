@@ -1,14 +1,12 @@
 import asyncio
+import dataclasses
 
 import pytest
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
-from eidolon_kernel.application.device_mounts import (
-    MountDevice,
-    ReconcileMountPrerequisites,
-    UnmountDevice,
-)
+from eidolon_kernel.application.body_assignments import ReconcileAssignments
+from eidolon_kernel.application.device_mounts import MountDevice, UnmountDevice
 from eidolon_kernel.domain.commands import MountDeviceCommand, UnmountDeviceCommand
 from eidolon_kernel.domain.errors import (
     AuthorityRejected,
@@ -18,7 +16,6 @@ from eidolon_kernel.domain.errors import (
     RevisionConflict,
 )
 from tests.support import (
-    FakeCompanionAuthority,
     FakeDeviceAuthority,
     MemoryStore,
     MutableClock,
@@ -99,7 +96,6 @@ async def test_active_mount_requires_explicit_remount_and_cas() -> None:
     )
     assert first.mount.revision == 1
     assert remount.mount.revision == 2
-    assert remount.mount.attached_companion_id is None
 
 
 @pytest.mark.asyncio
@@ -224,7 +220,7 @@ async def test_concurrent_identical_mounts_share_one_stable_outcome() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_does_not_adjudicate_a_claim() -> None:
+async def test_reconciliation_cannot_adjudicate_a_claim_because_it_cannot_ask() -> None:
     """Whether a Claim stands is the Claim stream's answer, not this scan's.
 
     This scan used to ask a second Hub surface and unmount on its answer. That
@@ -232,24 +228,13 @@ async def test_reconciliation_does_not_adjudicate_a_claim() -> None:
     added through Admission was mounted from its ClaimActivated event and
     unmounted seconds later — and could then never be mounted again, because
     the same reference read as terminal.
+
+    It is now unable to make that mistake rather than merely instructed not to:
+    the scan holds no Device authority at all, and it converges assignments
+    rather than mounts. Asserted structurally, because a behavioural test would
+    only be checking that a call nobody can make was not made.
     """
 
-    devices = FakeDeviceAuthority()
-    companions = FakeCompanionAuthority()
-    mount, _, store, projection = handler(devices=devices)
-    await mount.execute(
-        MountDeviceCommand("mount", _DEVICE_1, "owner-1", 0)
-    )
-    devices.status = "revoked"
-
-    result = await ReconcileMountPrerequisites(
-        store,
-        projection,
-        devices,
-        companions,
-        MutableClock(),
-    ).execute()
-
-    assert result.checked == 1
-    assert result.unmounted == result.detached == result.deferred == 0
-    assert store.get(_DEVICE_1).active is True
+    ports = {field.name for field in dataclasses.fields(ReconcileAssignments)}
+    assert "devices" not in ports
+    assert ports == {"store", "projection", "companions", "clock"}

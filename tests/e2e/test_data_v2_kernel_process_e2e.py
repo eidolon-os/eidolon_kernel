@@ -15,6 +15,7 @@ import pytest
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.config import HubSettings
+from eidolon_kernel.domain.body import body_endpoint_id
 
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
@@ -176,13 +177,18 @@ def _mount_body(device_id: str, request_id: str) -> dict[str, object]:
     }
 
 
-def _attach_body(companion_id: str, request_id: str) -> dict[str, object]:
+def _assign_body(companion_id: str, request_id: str) -> dict[str, object]:
     return {
-        "operation": "companion.attach",
+        "operation": "body.replace-assignment",
         "request_id": request_id,
+        "expected_assignment_revision": 0,
         "companion_id": companion_id,
-        "expected_revision": 1,
+        "origin": "owner",
     }
+
+
+def _assignment_path(device_id: str) -> str:
+    return f"/api/kernel/v1/body-endpoints/{body_endpoint_id(device_id, 'body')}/assignment"
 
 
 async def test_real_kernel_process_consumes_real_data_v2_authority(tmp_path) -> None:
@@ -333,20 +339,26 @@ deployment:
             )
             assert mounted.status_code == 200, mounted.text
 
-            attach_path = f"/api/kernel/v1/device-mounts/devices/{_DEVICE_E2E}/attachment"
+            assign_path = _assignment_path(_DEVICE_E2E)
             responses = await asyncio.gather(
                 *(
-                    kernel.post(
-                        attach_path,
+                    kernel.put(
+                        assign_path,
                         headers=OWNER_HEADERS,
-                        json=_attach_body("companion-e2e", "attach-e2e"),
+                        json=_assign_body("companion-e2e", "assign-e2e"),
                     )
                     for _ in range(12)
                 )
             )
+            # Twelve identical replaces, one commit. The eleven others are the
+            # same request arriving again or a stale compare-and-swap whose end
+            # state already holds; both are the state the caller asked for, and
+            # both must read as success rather than as a conflict to re-read.
             assert {response.status_code for response in responses} == {200}
-            assert {response.json()["audit_position"] for response in responses} == {2}
-            assert sum(not response.json()["replayed"] for response in responses) == 1
+            assert {response.json()["assignment"]["revision"] for response in responses} == {1}
+            assert {
+                response.json()["assignment"]["generation"] for response in responses
+            } == {1}
 
             for device_id, request_id in (
                 (_DEVICE_OWNER_MISMATCH, "mount-owner-mismatch"),
@@ -360,24 +372,24 @@ deployment:
                 )
                 assert response.status_code == 200, response.text
 
-            owner_mismatch = await kernel.post(
-                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_OWNER_MISMATCH}/attachment",
+            owner_mismatch = await kernel.put(
+                _assignment_path(_DEVICE_OWNER_MISMATCH),
                 headers=OWNER_HEADERS,
-                json=_attach_body("companion-other", "attach-owner-mismatch"),
+                json=_assign_body("companion-other", "assign-owner-mismatch"),
             )
-            missing = await kernel.post(
-                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_MISSING_COMPANION}/attachment",
+            missing = await kernel.put(
+                _assignment_path(_DEVICE_MISSING_COMPANION),
                 headers=OWNER_HEADERS,
-                json=_attach_body("companion-missing", "attach-missing"),
+                json=_assign_body("companion-missing", "assign-missing"),
             )
             assert owner_mismatch.status_code == missing.status_code == 409
 
             _stop(data_process)
             data_process = None
-            unavailable = await kernel.post(
-                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_DATA_OUTAGE}/attachment",
+            unavailable = await kernel.put(
+                _assignment_path(_DEVICE_DATA_OUTAGE),
                 headers=OWNER_HEADERS,
-                json=_attach_body("companion-e2e", "attach-data-outage"),
+                json=_assign_body("companion-e2e", "assign-data-outage"),
             )
             assert unavailable.status_code == 503
 

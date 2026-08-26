@@ -18,16 +18,23 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
 )
 
+from eidolon_kernel.domain.body import BodyAssignment
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
-from eidolon_kernel.domain.model import AuditEvent, DeviceMount
+from eidolon_kernel.domain.model import (
+    AUDIT_SUBJECT_BODY_ASSIGNMENT,
+    AUDIT_SUBJECT_DEVICE_MOUNT,
+    AuditEvent,
+    DeviceMount,
+)
 from eidolon_kernel.ports.runtime import (
+    AssignmentCommitResult,
     ClaimEventCommitResult,
     CommitResult,
     StoredClaimEvent,
     StoredRequest,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _EXPECTED_COLUMNS = {
     "kernel_schema_meta": {"schema_version"},
@@ -38,13 +45,29 @@ _EXPECTED_COLUMNS = {
         "owner_domain_generation",
         "claim_generation",
         "trust_epoch",
-        "attached_companion_id",
         "revision",
         "created_at",
         "updated_at",
         "request_id",
         "fingerprint",
         "active",
+    },
+    "kernel_body_assignments": {
+        "body_endpoint_id",
+        "device_id",
+        "endpoint_id",
+        "owner_id",
+        "companion_id",
+        "selection_provenance",
+        "change_reason",
+        "mode",
+        "policy_refs_json",
+        "revision",
+        "generation",
+        "created_at",
+        "updated_at",
+        "request_id",
+        "fingerprint",
     },
     "kernel_requests": {
         "request_id",
@@ -60,14 +83,9 @@ _EXPECTED_COLUMNS = {
         "event_type",
         "device_id",
         "owner_id",
-        "owner_domain_id",
-        "owner_domain_generation",
-        "claim_generation",
-        "trust_epoch",
-        "attached_companion_id",
-        "mount_revision",
-        "mount_created_at",
-        "active",
+        "subject",
+        "subject_id",
+        "subject_revision",
         "request_id",
         "fingerprint",
         "occurred_at",
@@ -122,7 +140,6 @@ def _mount_document(mount: DeviceMount) -> dict[str, Any]:
         "owner_domain_generation": mount.owner_domain_generation,
         "claim_generation": mount.claim_generation,
         "trust_epoch": mount.trust_epoch,
-        "attached_companion_id": mount.attached_companion_id,
         "revision": mount.revision,
         "created_at": _timestamp(mount.created_at),
         "updated_at": _timestamp(mount.updated_at),
@@ -140,7 +157,6 @@ def _mount_from_document(document: dict[str, Any]) -> DeviceMount:
         owner_domain_generation=document["owner_domain_generation"],
         claim_generation=document["claim_generation"],
         trust_epoch=document["trust_epoch"],
-        attached_companion_id=document["attached_companion_id"],
         revision=document["revision"],
         created_at=datetime.fromisoformat(document["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(document["updated_at"].replace("Z", "+00:00")),
@@ -158,7 +174,6 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
         owner_domain_generation=row["owner_domain_generation"],
         claim_generation=row["claim_generation"],
         trust_epoch=row["trust_epoch"],
-        attached_companion_id=row["attached_companion_id"],
         revision=row["revision"],
         created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
         updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")),
@@ -166,6 +181,53 @@ def _mount_from_row(row: sqlite3.Row) -> DeviceMount:
         fingerprint=row["fingerprint"],
         active=bool(row["active"]),
     )
+
+_AUDIT_INSERT = """INSERT INTO kernel_audit_events(
+    event_id, event_type, device_id, owner_id, subject, subject_id,
+    subject_revision, request_id, fingerprint, occurred_at, data_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+
+def _audit_data(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _audit_from_row(row: sqlite3.Row) -> AuditEvent:
+    return AuditEvent(
+        position=row["position"],
+        event_id=row["event_id"],
+        event_type=row["event_type"],
+        owner_id=row["owner_id"],
+        device_id=row["device_id"],
+        subject=row["subject"],
+        subject_id=row["subject_id"],
+        subject_revision=row["subject_revision"],
+        request_id=row["request_id"],
+        fingerprint=row["fingerprint"],
+        occurred_at=datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")),
+        data=json.loads(row["data_json"]),
+    )
+
+
+def _assignment_from_row(row: sqlite3.Row) -> BodyAssignment:
+    return BodyAssignment(
+        body_endpoint_id=row["body_endpoint_id"],
+        device_id=row["device_id"],
+        endpoint_id=row["endpoint_id"],
+        owner_id=row["owner_id"],
+        companion_id=row["companion_id"],
+        selection_provenance=row["selection_provenance"],
+        change_reason=row["change_reason"],
+        mode=row["mode"],
+        policy_refs=tuple(json.loads(row["policy_refs_json"])),
+        revision=row["revision"],
+        generation=row["generation"],
+        created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")),
+        request_id=row["request_id"],
+        fingerprint=row["fingerprint"],
+    )
+
 
 
 class SqliteMountStore:
@@ -206,7 +268,7 @@ class SqliteMountStore:
                 CREATE TABLE kernel_schema_meta (
                     schema_version INTEGER NOT NULL
                 );
-                INSERT INTO kernel_schema_meta(schema_version) VALUES (7);
+                INSERT INTO kernel_schema_meta(schema_version) VALUES (8);
                 CREATE TABLE kernel_device_mounts (
                     device_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
@@ -214,7 +276,6 @@ class SqliteMountStore:
                     owner_domain_generation INTEGER NOT NULL CHECK (owner_domain_generation >= 1),
                     claim_generation INTEGER NOT NULL CHECK (claim_generation >= 1),
                     trust_epoch INTEGER NOT NULL CHECK (trust_epoch >= 1),
-                    attached_companion_id TEXT,
                     revision INTEGER NOT NULL CHECK (revision >= 1),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -224,22 +285,35 @@ class SqliteMountStore:
                 );
                 CREATE INDEX ix_kernel_mounts_owner_active
                     ON kernel_device_mounts(owner_id, active, device_id);
-                CREATE INDEX ix_kernel_mounts_companion_active
-                    ON kernel_device_mounts(attached_companion_id, active, device_id);
+                CREATE TABLE kernel_body_assignments (
+                    body_endpoint_id TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL,
+                    endpoint_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    companion_id TEXT,
+                    selection_provenance TEXT NOT NULL,
+                    change_reason TEXT,
+                    mode TEXT NOT NULL CHECK (mode = 'default'),
+                    policy_refs_json TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision >= 1),
+                    generation INTEGER NOT NULL CHECK (generation >= 1),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    UNIQUE(device_id, endpoint_id)
+                );
+                CREATE INDEX ix_kernel_assignments_owner_companion
+                    ON kernel_body_assignments(owner_id, companion_id, body_endpoint_id);
                 CREATE TABLE kernel_audit_events (
                     position INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_id TEXT NOT NULL UNIQUE,
                     event_type TEXT NOT NULL,
                     device_id TEXT NOT NULL,
                     owner_id TEXT NOT NULL,
-                    owner_domain_id TEXT NOT NULL,
-                    owner_domain_generation INTEGER NOT NULL,
-                    claim_generation INTEGER NOT NULL,
-                    trust_epoch INTEGER NOT NULL,
-                    attached_companion_id TEXT,
-                    mount_revision INTEGER NOT NULL,
-                    mount_created_at TEXT NOT NULL,
-                    active INTEGER NOT NULL,
+                    subject TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    subject_revision INTEGER NOT NULL,
                     request_id TEXT NOT NULL UNIQUE,
                     fingerprint TEXT NOT NULL,
                     occurred_at TEXT NOT NULL,
@@ -401,7 +475,6 @@ class SqliteMountStore:
                     mount.owner_domain_generation,
                     mount.claim_generation,
                     mount.trust_epoch,
-                    mount.attached_companion_id,
                     mount.revision,
                     _timestamp(mount.created_at),
                     _timestamp(mount.updated_at),
@@ -414,9 +487,9 @@ class SqliteMountStore:
                         """INSERT INTO kernel_device_mounts(
                             device_id, owner_id, owner_domain_id, owner_domain_generation,
                             claim_generation, trust_epoch,
-                            attached_companion_id, revision, created_at, updated_at,
+                            revision, created_at, updated_at,
                             request_id, fingerprint, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         values,
                     )
                 else:
@@ -424,7 +497,7 @@ class SqliteMountStore:
                         """UPDATE kernel_device_mounts SET
                             owner_domain_id=?, owner_domain_generation=?,
                             claim_generation=?, trust_epoch=?,
-                            attached_companion_id=?, revision=?, created_at=?, updated_at=?, request_id=?,
+                            revision=?, created_at=?, updated_at=?, request_id=?,
                             fingerprint=?, active=?
                         WHERE device_id=? AND owner_id=? AND revision=?""",
                         (
@@ -432,7 +505,6 @@ class SqliteMountStore:
                             mount.owner_domain_generation,
                             mount.claim_generation,
                             mount.trust_epoch,
-                            mount.attached_companion_id,
                             mount.revision,
                             _timestamp(mount.created_at),
                             _timestamp(mount.updated_at),
@@ -448,30 +520,19 @@ class SqliteMountStore:
                         raise RevisionConflict("mount revision changed during commit")
                 event_id = f"kernel:{mount.request_id}:{mount.revision}"
                 cursor = self._connection.execute(
-                    """INSERT INTO kernel_audit_events(
-                        event_id, event_type, device_id, owner_id, owner_domain_id,
-                        owner_domain_generation,
-                        claim_generation,
-                        trust_epoch, attached_companion_id, mount_revision,
-                        mount_created_at, active, request_id, fingerprint, occurred_at, data_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    _AUDIT_INSERT,
                     (
                         event_id,
                         event_type,
                         mount.device_id,
                         mount.owner_id,
-                        mount.owner_domain_id,
-                        mount.owner_domain_generation,
-                        mount.claim_generation,
-                        mount.trust_epoch,
-                        mount.attached_companion_id,
+                        AUDIT_SUBJECT_DEVICE_MOUNT,
+                        mount.device_id,
                         mount.revision,
-                        _timestamp(mount.created_at),
-                        int(mount.active),
                         mount.request_id,
                         mount.fingerprint,
                         _timestamp(mount.updated_at),
-                        json.dumps(event_data, sort_keys=True, separators=(",", ":")),
+                        _audit_data({**event_data, "active": mount.active}),
                     ),
                 )
                 position = int(cursor.lastrowid)
@@ -512,34 +573,140 @@ class SqliteMountStore:
         values: list[Any] = [after_position, owner_id, limit]
         with self._mutex:
             rows = self._connection.execute(sql, values).fetchall()
-        events = []
-        for row in rows:
-            document = {
-                "device_id": row["device_id"],
-                "owner_id": row["owner_id"],
-                "owner_domain_id": row["owner_domain_id"],
-                "owner_domain_generation": row["owner_domain_generation"],
-                "claim_generation": row["claim_generation"],
-                "trust_epoch": row["trust_epoch"],
-                "attached_companion_id": row["attached_companion_id"],
-                "revision": row["mount_revision"],
-                "created_at": row["mount_created_at"],
-                "updated_at": row["occurred_at"],
-                "active": bool(row["active"]),
-                "request_id": row["request_id"],
-                "fingerprint": row["fingerprint"],
-            }
-            events.append(
-                AuditEvent(
-                    position=row["position"],
-                    event_id=row["event_id"],
-                    event_type=row["event_type"],
-                    mount=_mount_from_document(document),
-                    occurred_at=datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")),
-                    data=json.loads(row["data_json"]),
+        return tuple(_audit_from_row(row) for row in rows)
+
+    def get_assignment(self, body_endpoint_id: str) -> BodyAssignment | None:
+        with self._mutex:
+            row = self._connection.execute(
+                "SELECT * FROM kernel_body_assignments WHERE body_endpoint_id = ?",
+                (body_endpoint_id,),
+            ).fetchone()
+        return _assignment_from_row(row) if row is not None else None
+
+    def list_assignments(self) -> tuple[BodyAssignment, ...]:
+        with self._mutex:
+            rows = self._connection.execute(
+                "SELECT * FROM kernel_body_assignments ORDER BY body_endpoint_id"
+            ).fetchall()
+        return tuple(_assignment_from_row(row) for row in rows)
+
+    def commit_assignment(
+        self,
+        *,
+        assignment: BodyAssignment,
+        expected_revision: int,
+        mount_revision: int,
+        event_type: str,
+        event_data: dict[str, Any],
+    ) -> AssignmentCommitResult:
+        """Replace one Body's assignment under compare-and-swap.
+
+        The audit row's ``request_id`` is unique across the whole stream, which
+        is what makes a replayed request detectable here rather than only in the
+        caller. The caller checks first because it can answer without opening a
+        transaction; this check is the one that holds under a race.
+        """
+
+        with self._mutex:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._connection.execute(
+                    "SELECT * FROM kernel_body_assignments WHERE body_endpoint_id = ?",
+                    (assignment.body_endpoint_id,),
+                ).fetchone()
+                if current is not None and current["request_id"] == assignment.request_id:
+                    if current["fingerprint"] != assignment.fingerprint:
+                        raise IdempotencyConflict(
+                            "request_id already belongs to a different mutation"
+                        )
+                    stored = _assignment_from_row(current)
+                    position = self._connection.execute(
+                        "SELECT position FROM kernel_audit_events WHERE request_id = ?",
+                        (assignment.request_id,),
+                    ).fetchone()
+                    self._connection.execute("COMMIT")
+                    return AssignmentCommitResult(
+                        assignment=stored,
+                        audit_position=int(position["position"]) if position else 0,
+                        replayed=True,
+                    )
+                actual_revision = current["revision"] if current is not None else 0
+                if actual_revision != expected_revision:
+                    raise RevisionConflict(
+                        f"expected assignment revision {expected_revision}, "
+                        f"current revision is {actual_revision}"
+                    )
+                if current is not None and current["owner_id"] != assignment.owner_id:
+                    raise RevisionConflict("body assignment owner namespace cannot change")
+                values = (
+                    assignment.body_endpoint_id,
+                    assignment.device_id,
+                    assignment.endpoint_id,
+                    assignment.owner_id,
+                    assignment.companion_id,
+                    assignment.selection_provenance,
+                    assignment.change_reason,
+                    assignment.mode,
+                    json.dumps(list(assignment.policy_refs), separators=(",", ":")),
+                    assignment.revision,
+                    assignment.generation,
+                    _timestamp(assignment.created_at),
+                    _timestamp(assignment.updated_at),
+                    assignment.request_id,
+                    assignment.fingerprint,
                 )
-            )
-        return tuple(events)
+                if current is None:
+                    self._connection.execute(
+                        """INSERT INTO kernel_body_assignments(
+                            body_endpoint_id, device_id, endpoint_id, owner_id, companion_id,
+                            selection_provenance, change_reason, mode, policy_refs_json,
+                            revision, generation, created_at, updated_at, request_id, fingerprint
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        values,
+                    )
+                else:
+                    cursor = self._connection.execute(
+                        """UPDATE kernel_body_assignments SET
+                            device_id=?, endpoint_id=?, owner_id=?, companion_id=?,
+                            selection_provenance=?, change_reason=?, mode=?, policy_refs_json=?,
+                            revision=?, generation=?, created_at=?, updated_at=?,
+                            request_id=?, fingerprint=?
+                        WHERE body_endpoint_id=? AND revision=?""",
+                        (*values[1:], assignment.body_endpoint_id, expected_revision),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RevisionConflict("assignment revision changed during commit")
+                cursor = self._connection.execute(
+                    _AUDIT_INSERT,
+                    (
+                        f"kernel:{assignment.request_id}:{assignment.revision}",
+                        event_type,
+                        assignment.device_id,
+                        assignment.owner_id,
+                        AUDIT_SUBJECT_BODY_ASSIGNMENT,
+                        assignment.body_endpoint_id,
+                        assignment.revision,
+                        assignment.request_id,
+                        assignment.fingerprint,
+                        _timestamp(assignment.updated_at),
+                        _audit_data(
+                            {
+                                **event_data,
+                                "generation": assignment.generation,
+                                "mount_revision": mount_revision,
+                            }
+                        ),
+                    ),
+                )
+                position = int(cursor.lastrowid)
+                self._connection.execute("COMMIT")
+                return AssignmentCommitResult(
+                    assignment=assignment, audit_position=position, replayed=False
+                )
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
 
     def claim_event_cursor(self) -> ClaimEventCursor:
         with self._mutex:
@@ -670,7 +837,6 @@ class SqliteMountStore:
                         mount.owner_domain_generation,
                         mount.claim_generation,
                         mount.trust_epoch,
-                        mount.attached_companion_id,
                         mount.revision,
                         _timestamp(mount.created_at),
                         _timestamp(mount.updated_at),
@@ -683,9 +849,9 @@ class SqliteMountStore:
                             """INSERT INTO kernel_device_mounts(
                                 device_id, owner_id, owner_domain_id,
                                 owner_domain_generation, claim_generation,
-                                trust_epoch, attached_companion_id, revision, created_at,
+                                trust_epoch, revision, created_at,
                                 updated_at, request_id, fingerprint, active
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             values,
                         )
                     else:
@@ -699,7 +865,7 @@ class SqliteMountStore:
                             """UPDATE kernel_device_mounts SET
                                 owner_domain_id=?, owner_domain_generation=?,
                                 claim_generation=?, trust_epoch=?,
-                                attached_companion_id=?, revision=?, created_at=?, updated_at=?,
+                                revision=?, created_at=?, updated_at=?,
                                 request_id=?, fingerprint=?, active=?
                             WHERE device_id=? AND owner_id=? AND revision=?""",
                             (
@@ -707,7 +873,6 @@ class SqliteMountStore:
                                 mount.owner_domain_generation,
                                 mount.claim_generation,
                                 mount.trust_epoch,
-                                mount.attached_companion_id,
                                 mount.revision,
                                 _timestamp(mount.created_at),
                                 _timestamp(mount.updated_at),
@@ -722,12 +887,7 @@ class SqliteMountStore:
                         if cursor.rowcount != 1:
                             raise RevisionConflict("Claim event Mount CAS failed")
                     self._connection.execute(
-                        """INSERT INTO kernel_audit_events(
-                            event_id, event_type, device_id, owner_id, owner_domain_id,
-                            owner_domain_generation,
-                            claim_generation, trust_epoch, attached_companion_id, mount_revision,
-                            mount_created_at, active, request_id, fingerprint, occurred_at, data_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        _AUDIT_INSERT,
                         (
                             f"kernel:{mount.request_id}:{mount.revision}",
                             (
@@ -737,27 +897,21 @@ class SqliteMountStore:
                             ),
                             mount.device_id,
                             mount.owner_id,
-                            mount.owner_domain_id,
-                            mount.owner_domain_generation,
-                            mount.claim_generation,
-                            mount.trust_epoch,
-                            mount.attached_companion_id,
+                            AUDIT_SUBJECT_DEVICE_MOUNT,
+                            mount.device_id,
                             mount.revision,
-                            _timestamp(mount.created_at),
-                            int(mount.active),
                             mount.request_id,
                             mount.fingerprint,
                             _timestamp(mount.updated_at),
-                            json.dumps(
+                            _audit_data(
                                 {
                                     "claim_event_id": event.id,
                                     "claim_event_source": event.source,
                                     "claim_event_position": item.stream_position,
                                     "claim_aggregate_revision": event.aggregaterev,
                                     "previous_revision": expected_mount_revision,
-                                },
-                                sort_keys=True,
-                                separators=(",", ":"),
+                                    "active": mount.active,
+                                }
                             ),
                         ),
                     )

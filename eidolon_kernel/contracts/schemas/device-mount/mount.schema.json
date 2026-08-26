@@ -4,29 +4,90 @@
   "title": "Device Mount Fact",
   "type": "object",
   "additionalProperties": false,
-  "required": ["operation", "device_id", "owner_id", "device_ref", "attached_companion_id", "revision", "created_at", "updated_at", "request_id", "fingerprint", "active"],
+  "required": [
+    "operation",
+    "device_id",
+    "owner_id",
+    "device_ref",
+    "revision",
+    "created_at",
+    "updated_at",
+    "request_id",
+    "fingerprint",
+    "active"
+  ],
   "properties": {
-    "operation": {"const": "kernel.device-mount"},
-    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
-    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "operation": {
+      "const": "kernel.device-mount"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "owner_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "device_ref": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["device_instance_id", "owner_domain_id", "owner_domain_generation", "claim_generation", "trust_epoch"],
+      "required": [
+        "device_instance_id",
+        "owner_domain_id",
+        "owner_domain_generation",
+        "claim_generation",
+        "trust_epoch"
+      ],
       "properties": {
-        "device_instance_id": {"type": "string", "minLength": 1, "maxLength": 128},
-        "owner_domain_id": {"type": "string", "minLength": 1, "maxLength": 64},
-        "owner_domain_generation": {"type": "integer", "minimum": 1},
-        "claim_generation": {"type": "integer", "minimum": 1},
-        "trust_epoch": {"type": "integer", "minimum": 1}
+        "device_instance_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "owner_domain_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "owner_domain_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trust_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
-    "attached_companion_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
-    "revision": {"type": "integer", "minimum": 1},
-    "created_at": {"type": "string", "format": "date-time"},
-    "updated_at": {"type": "string", "format": "date-time"},
-    "request_id": {"type": "string", "minLength": 1, "maxLength": 96},
-    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "active": {"type": "boolean"}
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "active": {
+      "type": "boolean"
+    }
   }
 }

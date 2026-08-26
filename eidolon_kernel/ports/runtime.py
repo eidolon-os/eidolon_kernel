@@ -12,6 +12,7 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
 )
 
+from eidolon_kernel.domain.body import BodyAssignment
 from eidolon_kernel.domain.model import AuditEvent, DeviceMount
 
 
@@ -45,6 +46,22 @@ class StoredClaimEvent:
     device_ref: DeviceRef
     aggregate_revision: int
     outcome: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssignmentCommitResult:
+    """What a replace committed, and whether it had already been committed.
+
+    ``replayed`` covers both ways a repeat lands here: the identical request
+    arriving twice, and a caller whose compare-and-swap is stale but whose
+    requested end state is already the committed one. Both are "what you asked
+    for is true", and answering a conflict to either would make re-reading the
+    only safe thing a client could ever do after a lost response.
+    """
+
+    assignment: BodyAssignment
+    audit_position: int
+    replayed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +111,20 @@ class MountStore(Protocol):
         processed_at: datetime,
     ) -> ClaimEventCommitResult: ...
 
+    def get_assignment(self, body_endpoint_id: str) -> BodyAssignment | None: ...
+
+    def list_assignments(self) -> tuple[BodyAssignment, ...]: ...
+
+    def commit_assignment(
+        self,
+        *,
+        assignment: BodyAssignment,
+        expected_revision: int,
+        mount_revision: int,
+        event_type: str,
+        event_data: dict[str, Any],
+    ) -> AssignmentCommitResult: ...
+
     def checkpoint_claim_cursor(
         self,
         *,
@@ -115,7 +146,6 @@ class MountProjection(Protocol):
         self,
         *,
         owner_id: str,
-        companion_id: str | None,
         active_only: bool,
         after_device_id: str | None,
         limit: int,

@@ -18,7 +18,6 @@ class DeviceMountWire(ContractModel):
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
     device_ref: DeviceRef
-    attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
@@ -35,17 +34,85 @@ class MountDeviceRequestWire(ContractModel):
     replace_existing: bool = Field(strict=True)
 
 
-class AttachCompanionRequestWire(ContractModel):
-    operation: Literal["companion.attach"]
+class ReplaceAssignmentRequestWire(ContractModel):
+    """Point one Body at one Companion, or at nobody.
+
+    ``origin`` names the act, not the provenance: an Owner choosing on this
+    Body, or a coordinator releasing it because the Eidolon it answered as is
+    being put away. The authority derives ``selection_provenance`` from it, so
+    no caller can assert why something happened.
+
+    ``policy_refs`` is deliberately absent from this request. Nothing on this
+    Host defines or evaluates a resource policy, and a field a client could fill
+    with names no evaluator reads would look like a constraint while enforcing
+    nothing. When a policy authority exists, this is where it arrives — and that
+    is a review, not an omission.
+    """
+
+    operation: Literal["body.replace-assignment"]
     request_id: str = Field(min_length=1, max_length=96)
-    companion_id: str = Field(min_length=1, max_length=64)
-    expected_revision: int = Field(ge=1, strict=True)
+    expected_assignment_revision: int = Field(ge=0, strict=True)
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    origin: Literal["owner", "companion-lifecycle"]
+    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
 
 
-class DetachCompanionRequestWire(ContractModel):
-    operation: Literal["companion.detach"]
-    request_id: str = Field(min_length=1, max_length=96)
-    expected_revision: int = Field(ge=1, strict=True)
+class BodyAssignmentWire(ContractModel):
+    """What is committed for one Body, in the canonical result's shape plus the
+    facts a consumer needs to address it again."""
+
+    operation: Literal["kernel.body-assignment"] = "kernel.body-assignment"
+    assignment_id: str = Field(min_length=1, max_length=160)
+    body_endpoint_id: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    endpoint_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    selection_provenance: Literal[
+        "user_selected", "user_cleared", "companion_deleted", "policy_reconciled"
+    ]
+    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
+    mode: Literal["default"] = "default"
+    policy_refs: tuple[str, ...] = Field(default=(), max_length=16)
+    revision: int = Field(ge=1)
+    generation: int = Field(ge=1)
+    updated_at: datetime
+    #: The canonical result's ``status``: observed generation, the Companion
+    #: actually answering, and the conditions this authority can state.
+    status: dict[str, Any]
+
+    @field_validator("policy_refs", mode="before")
+    @classmethod
+    def _arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
+
+
+class BodyEndpointWire(ContractModel):
+    operation: Literal["kernel.body-endpoint"] = "kernel.body-endpoint"
+    body_endpoint_id: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    endpoint_id: str = Field(min_length=1, max_length=64)
+    roles: tuple[str, ...] = Field(min_length=1, max_length=8)
+    assignment_policy: Literal["required", "optional", "forbidden"]
+    risk_class: Literal["safe", "sensitive", "hazardous"]
+    concurrency: Literal["shared", "exclusive", "leased"]
+    #: ``derived`` says this Host filled in for a Manifest vocabulary that
+    #: declares no endpoints. A consumer that shows capability detail must not
+    #: present a derived declaration as the device's own word.
+    source: Literal["derived", "manifest"]
+    present: bool
+    assignment: BodyAssignmentWire | None = None
+
+
+class BodyEndpointPageWire(ContractModel):
+    operation: Literal["kernel.body-endpoint-page"] = "kernel.body-endpoint-page"
+    endpoints: tuple[BodyEndpointWire, ...] = Field(default=(), max_length=100)
+
+    @field_validator("endpoints", mode="before")
+    @classmethod
+    def _arrays(cls, value):
+        return tuple(value) if isinstance(value, list) else value
 
 
 class UnmountDeviceRequestWire(ContractModel):
@@ -81,9 +148,9 @@ class AuditEventWire(ContractModel):
     event_type: str = Field(min_length=1, max_length=255)
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
-    attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    mount_revision: int = Field(ge=1)
-    active: bool
+    subject: Literal["device-mount", "body-assignment"]
+    subject_id: str = Field(min_length=1, max_length=128)
+    subject_revision: int = Field(ge=1)
     request_id: str = Field(min_length=1, max_length=96)
     fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     occurred_at: datetime

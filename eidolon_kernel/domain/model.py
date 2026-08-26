@@ -55,7 +55,6 @@ class DeviceMount:
     owner_domain_id: str
     claim_generation: int
     trust_epoch: int
-    attached_companion_id: str | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -81,12 +80,6 @@ class DeviceMount:
             < 1
         ):
             raise InvalidRequest("mount Owner, Claim and trust generations must be positive")
-        if self.attached_companion_id is not None:
-            object.__setattr__(
-                self,
-                "attached_companion_id",
-                require_identifier("attached_companion_id", self.attached_companion_id, 64),
-            )
         object.__setattr__(
             self, "request_id", require_identifier("request_id", self.request_id, 96)
         )
@@ -130,7 +123,6 @@ class DeviceMount:
             owner_domain_id=str(device_ref.owner_domain_id),
             claim_generation=device_ref.claim_generation,
             trust_epoch=device_ref.trust_epoch,
-            attached_companion_id=None,
             revision=1,
             created_at=at,
             updated_at=at,
@@ -164,7 +156,6 @@ class DeviceMount:
             owner_domain_id=self.owner_domain_id,
             claim_generation=device_ref.claim_generation,
             trust_epoch=device_ref.trust_epoch,
-            attached_companion_id=None,
             revision=self.revision + 1,
             created_at=at,
             updated_at=at,
@@ -174,50 +165,12 @@ class DeviceMount:
             owner_domain_generation=device_ref.owner_domain_generation,
         )
 
-    def attached(
-        self,
-        *,
-        companion_id: str,
-        at: datetime,
-        request_id: str,
-        fingerprint: str,
-    ) -> DeviceMount:
-        at = require_utc("attached_at", at)
-        if at < self.updated_at:
-            raise InvalidRequest("attachment transition time cannot move backwards")
-        if not self.active:
-            raise InvalidRequest("cannot attach a companion to an inactive device mount")
-        return replace(
-            self,
-            attached_companion_id=require_identifier("companion_id", companion_id, 64),
-            revision=self.revision + 1,
-            updated_at=at,
-            request_id=request_id,
-            fingerprint=fingerprint,
-        )
-
-    def detached(self, *, at: datetime, request_id: str, fingerprint: str) -> DeviceMount:
-        at = require_utc("detached_at", at)
-        if at < self.updated_at:
-            raise InvalidRequest("attachment transition time cannot move backwards")
-        if not self.active:
-            raise InvalidRequest("cannot detach a companion from an inactive device mount")
-        return replace(
-            self,
-            attached_companion_id=None,
-            revision=self.revision + 1,
-            updated_at=at,
-            request_id=request_id,
-            fingerprint=fingerprint,
-        )
-
     def unmounted(self, *, at: datetime, request_id: str, fingerprint: str) -> DeviceMount:
         at = require_utc("unmounted_at", at)
         if at < self.updated_at:
             raise InvalidRequest("mount transition time cannot move backwards")
         return replace(
             self,
-            attached_companion_id=None,
             revision=self.revision + 1,
             updated_at=at,
             request_id=request_id,
@@ -226,12 +179,37 @@ class DeviceMount:
         )
 
 
+#: What an audit row is about. Two kinds of fact live in this Owner's namespace
+#: now — whether a device is mounted, and which Companion answers through one of
+#: its Bodies — and they move independently. A stream that could only describe
+#: the first would have to leave the second unrecorded or pretend an assignment
+#: change was a mount change.
+AUDIT_SUBJECT_DEVICE_MOUNT = "device-mount"
+AUDIT_SUBJECT_BODY_ASSIGNMENT = "body-assignment"
+
+AUDIT_SUBJECTS = (AUDIT_SUBJECT_DEVICE_MOUNT, AUDIT_SUBJECT_BODY_ASSIGNMENT)
+
+
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
+    """One committed change in this Owner's namespace.
+
+    ``device_id`` is present on every row including assignment ones: a Body
+    belongs to a device, and "what happened to this speaker" is the question
+    anyone reading this stream is actually asking.
+    """
+
     position: int
     event_id: str
     event_type: str
-    mount: DeviceMount
+    owner_id: str
+    device_id: str
+    subject: str
+    #: The device for a mount, the Body endpoint for an assignment.
+    subject_id: str
+    subject_revision: int
+    request_id: str
+    fingerprint: str
     occurred_at: datetime
     data: dict[str, Any]
 
@@ -242,9 +220,21 @@ class AuditEvent:
         object.__setattr__(
             self, "event_type", require_identifier("event_type", self.event_type, 255)
         )
+        object.__setattr__(self, "owner_id", require_identifier("owner_id", self.owner_id, 64))
+        object.__setattr__(self, "device_id", require_identifier("device_id", self.device_id))
+        if self.subject not in AUDIT_SUBJECTS:
+            raise InvalidRequest("audit subject is not one this Kernel writes")
+        object.__setattr__(
+            self, "subject_id", require_identifier("subject_id", self.subject_id)
+        )
+        if self.subject_revision < 1:
+            raise InvalidRequest("audit subject revision must be positive")
+        object.__setattr__(
+            self, "request_id", require_identifier("request_id", self.request_id, 96)
+        )
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", self.fingerprint) is None:
+            raise InvalidRequest("fingerprint must be a sha256 digest")
         object.__setattr__(self, "occurred_at", require_utc("occurred_at", self.occurred_at))
-        if self.occurred_at != self.mount.updated_at:
-            raise InvalidRequest("audit occurrence time must match mount update time")
 
 
 def request_fingerprint(operation: str, values: dict[str, Any]) -> str:

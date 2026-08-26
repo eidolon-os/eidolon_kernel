@@ -13,6 +13,7 @@ from eidolon_kernel.composition.app import (
     build_services,
     create_http_app,
 )
+from eidolon_kernel.domain.body import body_endpoint_id
 from tests.support import (
     FakeCompanionAuthority,
     FakeDeviceAuthority,
@@ -26,6 +27,7 @@ from tests.support import (
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
 _DEVICE_1 = named_device_instance_id("device-1")
+_BODY_1 = body_endpoint_id(_DEVICE_1, "body")
 
 
 def app(*, companions=None, devices=None, readiness_checks=None):
@@ -73,7 +75,6 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         )
         assert mounted.status_code == 200, mounted.text
         assert mounted.json()["mount"]["revision"] == 1
-        assert mounted.json()["mount"]["attached_companion_id"] is None
 
         replay = await client.post(
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
@@ -85,47 +86,55 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             f"/api/kernel/v1/device-mounts/resolve/{_DEVICE_1}",
             headers=headers(),
         )
-        unattached_page = await client.get(
-            "/api/kernel/v1/device-mounts",
+        unassigned_page = await client.get(
+            "/api/kernel/v1/body-endpoints",
             params={"companion_id": "companion-1"},
             headers=headers(),
         )
-        attached = await client.post(
-            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment",
+        assigned = await client.put(
+            f"/api/kernel/v1/body-endpoints/{_BODY_1}/assignment",
             headers=headers(),
             json={
-                "operation": "companion.attach",
-                "request_id": "attach-1",
+                "operation": "body.replace-assignment",
+                "request_id": "assign-1",
+                "expected_assignment_revision": 0,
                 "companion_id": "companion-1",
-                "expected_revision": 1,
+                "origin": "owner",
             },
         )
         current = await client.get(
             f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}", headers=headers()
         )
-        attached_page = await client.get(
-            "/api/kernel/v1/device-mounts",
+        assigned_page = await client.get(
+            "/api/kernel/v1/body-endpoints",
             params={"companion_id": "companion-1"},
             headers=headers(),
         )
-        assert resolved.status_code == unattached_page.status_code == 200
-        assert unattached_page.json()["mounts"] == []
-        assert attached.status_code == current.status_code == attached_page.status_code == 200
-        assert attached.json()["mount"]["revision"] == 2
-        assert attached_page.json()["mounts"][0]["device_id"] == _DEVICE_1
+        assert resolved.status_code == unassigned_page.status_code == 200
+        assert unassigned_page.json()["endpoints"] == []
+        assert assigned.status_code == current.status_code == assigned_page.status_code == 200
+        # Pointing a Body at an Eidolon does not move the mount's revision: two
+        # facts, two compare-and-swap tokens.
+        assert current.json()["revision"] == 1
+        assert assigned.json()["assignment"]["revision"] == 1
+        assert assigned.json()["assignment"]["status"]["conditions"] == ["Realized"]
+        assert assigned_page.json()["endpoints"][0]["device_id"] == _DEVICE_1
 
-        detached = await client.post(
-            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment/detach",
+        cleared = await client.put(
+            f"/api/kernel/v1/body-endpoints/{_BODY_1}/assignment",
             headers=headers(),
             json={
-                "operation": "companion.detach",
-                "request_id": "detach-1",
-                "expected_revision": 2,
+                "operation": "body.replace-assignment",
+                "request_id": "clear-1",
+                "expected_assignment_revision": 1,
+                "companion_id": None,
+                "origin": "owner",
             },
         )
-        assert detached.status_code == 200
-        assert detached.json()["mount"]["attached_companion_id"] is None
-        assert detached.json()["mount"]["revision"] == 3
+        assert cleared.status_code == 200
+        assert cleared.json()["assignment"]["companion_id"] is None
+        assert cleared.json()["assignment"]["selection_provenance"] == "user_cleared"
+        assert cleared.json()["assignment"]["revision"] == 2
 
         unmounted = await client.post(
             f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/unmount",
@@ -133,18 +142,12 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             json={
                 "operation": "device.unmount",
                 "request_id": "unmount-1",
-                "expected_revision": 3,
+                "expected_revision": 1,
             },
         )
         assert unmounted.status_code == 200
-        assert unmounted.json()["mount"] == {
-            **detached.json()["mount"],
-            "revision": 4,
-            "updated_at": "2026-08-04T08:00:03Z",
-            "request_id": "unmount-1",
-            "fingerprint": unmounted.json()["mount"]["fingerprint"],
-            "active": False,
-        }
+        assert unmounted.json()["mount"]["active"] is False
+        assert unmounted.json()["mount"]["revision"] == 2
 
         no_resolution = await client.get(
             f"/api/kernel/v1/device-mounts/resolve/{_DEVICE_1}",
@@ -162,6 +165,12 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         assert no_resolution.status_code == 404
         assert inactive.status_code == 200 and inactive.json()["active"] is False
         assert [event["position"] for event in audit.json()["events"]] == [1, 2, 3, 4]
+        assert [event["subject"] for event in audit.json()["events"]] == [
+            "device-mount",
+            "body-assignment",
+            "body-assignment",
+            "device-mount",
+        ]
 
 
 @pytest.mark.asyncio
@@ -174,14 +183,15 @@ async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> 
         mounted = await client.post(
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
         )
-        unavailable = await client.post(
-            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment",
+        unavailable = await client.put(
+            f"/api/kernel/v1/body-endpoints/{_BODY_1}/assignment",
             headers=headers(),
             json={
-                "operation": "companion.attach",
-                "request_id": "attach",
+                "operation": "body.replace-assignment",
+                "request_id": "assign",
+                "expected_assignment_revision": 0,
                 "companion_id": "companion-1",
-                "expected_revision": 1,
+                "origin": "owner",
             },
         )
         invalid = await client.post(

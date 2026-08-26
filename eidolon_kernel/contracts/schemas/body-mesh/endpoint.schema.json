@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/body-mesh/endpoint.schema.json",
+  "title": "Body Endpoint Fact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "body_endpoint_id",
+    "device_id",
+    "owner_id",
+    "endpoint_id",
+    "roles",
+    "assignment_policy",
+    "risk_class",
+    "concurrency",
+    "source",
+    "present",
+    "assignment"
+  ],
+  "properties": {
+    "operation": {
+      "const": "kernel.body-endpoint"
+    },
+    "body_endpoint_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "owner_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "endpoint_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "body",
+          "sensor",
+          "actuator",
+          "gateway",
+          "controller"
+        ]
+      }
+    },
+    "assignment_policy": {
+      "enum": [
+        "required",
+        "optional",
+        "forbidden"
+      ]
+    },
+    "risk_class": {
+      "enum": [
+        "safe",
+        "sensitive",
+        "hazardous"
+      ]
+    },
+    "concurrency": {
+      "enum": [
+        "shared",
+        "exclusive",
+        "leased"
+      ]
+    },
+    "source": {
+      "enum": [
+        "derived",
+        "manifest"
+      ]
+    },
+    "present": {
+      "type": "boolean"
+    },
+    "assignment": {
+      "oneOf": [
+        {
+          "$ref": "assignment.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

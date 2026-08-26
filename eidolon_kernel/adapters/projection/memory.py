@@ -30,21 +30,19 @@ class InMemoryMountProjection:
         self,
         *,
         owner_id: str,
-        companion_id: str | None,
         active_only: bool,
         after_device_id: str | None,
         limit: int,
     ) -> tuple[DeviceMount, ...]:
+        # No Companion filter. Which Eidolon answers through a device is an
+        # assignment fact now, and answering it from a mount projection would be
+        # a second copy of it — kept in step by hand, wrong at the first race.
         with self._mutex:
             values = tuple(self._mounts.values())
         return tuple(
             mount
             for mount in sorted(values, key=lambda item: item.device_id)
             if mount.owner_id == owner_id
-            and (
-                companion_id is None
-                or mount.attached_companion_id == companion_id
-            )
             and (not active_only or mount.active)
             and (after_device_id is None or mount.device_id > after_device_id)
         )[:limit]

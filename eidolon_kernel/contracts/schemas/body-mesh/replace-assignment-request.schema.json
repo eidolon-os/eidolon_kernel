@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.dev/kernel/contracts/v1/body-mesh/replace-assignment-request.schema.json",
+  "title": "Replace Assignment Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "request_id",
+    "expected_assignment_revision",
+    "companion_id",
+    "origin"
+  ],
+  "properties": {
+    "operation": {
+      "const": "body.replace-assignment"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "expected_assignment_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "companion_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "origin": {
+      "enum": [
+        "owner",
+        "companion-lifecycle"
+      ]
+    },
+    "change_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 256
+    }
+  }
+}

@@ -10,6 +10,7 @@ from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.persistence.sqlite import SqliteMountStore
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
+from eidolon_kernel.domain.body import BodyAssignment, derived_endpoint
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
 from eidolon_kernel.domain.model import DeviceMount, request_fingerprint
 from tests.support import claim_event_item, sample_mount
@@ -49,8 +50,9 @@ def test_sqlite_atomically_commits_mount_request_and_ordered_audit(tmp_path) -> 
         assert replay.replayed is True
         assert second.audit_position == 2
         assert [event.position for event in events] == [1, 2]
-        assert events[0].mount.revision == 1 and events[0].mount.active
-        assert events[1].mount.revision == 2 and not events[1].mount.active
+        assert events[0].subject_revision == 1 and events[0].data["active"] is True
+        assert events[1].subject_revision == 2 and events[1].data["active"] is False
+        assert {event.subject for event in events} == {"device-mount"}
         assert store.get_request("request-2").mount == inactive
         assert store.list_audit(after_position=2, limit=1, owner_id="owner-1") == ()
         assert store.list_audit(after_position=0, limit=1, owner_id="other") == ()
@@ -105,7 +107,7 @@ def test_restart_rebuilds_projection_from_only_authoritative_table(tmp_path) -> 
     path = tmp_path / "kernel.sqlite3"
     first = SqliteMountStore(path)
     first.commit(
-        mount=sample_mount(attached_companion_id="companion-1"),
+        mount=sample_mount(),
         expected_revision=0,
         operation="device.mount",
         event_type="mounted",
@@ -120,7 +122,6 @@ def test_restart_rebuilds_projection_from_only_authoritative_table(tmp_path) -> 
         assert projection.get(_DEVICE_1) == restarted.get(_DEVICE_1)
         assert projection.list(
             owner_id="owner-1",
-            companion_id="companion-1",
             active_only=True,
             after_device_id=None,
             limit=10,
@@ -138,8 +139,19 @@ def test_partial_or_old_database_is_rejected_without_migration(tmp_path) -> None
         SqliteMountStore(path)
 
 
-def test_schema_v6_without_owner_domain_is_rejected_instead_of_inferred(tmp_path) -> None:
-    path = tmp_path / "kernel-v6.sqlite3"
+def test_a_database_predating_body_assignments_is_rejected_instead_of_inferred(
+    tmp_path,
+) -> None:
+    """Migrations are unsupported here on purpose, so the refusal has to be loud.
+
+    Named for the newest thing a stale file is missing rather than for a version
+    number, because that is what the next person will actually be holding: a
+    Host whose Kernel database was created before Bodies could be assigned has
+    no table to put them in, and a Kernel that started anyway would answer "no
+    Eidolon answers through this" to every device.
+    """
+
+    path = tmp_path / "kernel-old.sqlite3"
     current = SqliteMountStore(path)
     current.commit(
         mount=sample_mount(),
@@ -151,13 +163,22 @@ def test_schema_v6_without_owner_domain_is_rejected_instead_of_inferred(tmp_path
     current.close()
 
     connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE kernel_device_mounts DROP COLUMN owner_domain_id")
-    connection.execute("ALTER TABLE kernel_audit_events DROP COLUMN owner_domain_id")
-    connection.execute("UPDATE kernel_schema_meta SET schema_version = 6")
+    connection.execute("DROP TABLE kernel_body_assignments")
+    connection.execute("UPDATE kernel_schema_meta SET schema_version = 7")
     connection.commit()
     connection.close()
 
-    with pytest.raises(RuntimeError, match="does not match schema v7"):
+    with pytest.raises(RuntimeError, match="partial or unknown"):
+        SqliteMountStore(path)
+
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE kernel_body_assignments(body_endpoint_id TEXT PRIMARY KEY)"
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="does not match schema v8"):
         SqliteMountStore(path)
 
 
@@ -309,5 +330,126 @@ def test_claim_cursor_and_high_watermark_survive_restart(tmp_path) -> None:
                 processed_at=datetime(2026, 8, 4, 9, 2, tzinfo=UTC),
             )
         assert restarted.claim_event_high_watermark() == 9
+    finally:
+        restarted.close()
+
+
+def _assignment(revision: int = 1, *, companion_id: str | None, request_id: str):
+    mount = sample_mount()
+    endpoint = derived_endpoint(mount)
+    at = datetime(2026, 8, 4, 8, 0, tzinfo=UTC)
+    first = BodyAssignment.first(
+        endpoint=endpoint,
+        companion_id=companion_id,
+        selection_provenance=("user_selected" if companion_id else "user_cleared"),
+        change_reason=None,
+        policy_refs=(),
+        at=at,
+        request_id=request_id,
+        fingerprint=request_fingerprint("body.replace-assignment", {"r": request_id}),
+    )
+    return endpoint, replace(first, revision=revision, generation=revision)
+
+
+def test_sqlite_commits_an_assignment_under_its_own_cas_and_audits_it(tmp_path) -> None:
+    """The Body's revision, not the device's.
+
+    Two facts with two compare-and-swap tokens is the whole reason this is a
+    resource: mounting a device and choosing who answers through it used to
+    contend over one row, so a remount silently discarded a choice.
+    """
+
+    store = SqliteMountStore(tmp_path / "kernel.sqlite3")
+    try:
+        store.commit(
+            mount=sample_mount(),
+            expected_revision=0,
+            operation="device.mount",
+            event_type="mounted",
+            event_data={},
+        )
+        endpoint, assignment = _assignment(companion_id="companion-1", request_id="assign-1")
+        committed = store.commit_assignment(
+            assignment=assignment,
+            expected_revision=0,
+            mount_revision=1,
+            event_type="eidolon.kernel.body-assignment-created.v1",
+            event_data={"previous_revision": 0},
+        )
+
+        assert committed.replayed is False
+        assert store.get_assignment(endpoint.body_endpoint_id) == assignment
+        assert store.get(_DEVICE_1).revision == 1
+
+        events = store.list_audit(after_position=0, limit=100, owner_id="owner-1")
+        assert [event.subject for event in events] == ["device-mount", "body-assignment"]
+        assert events[1].subject_id == endpoint.body_endpoint_id
+        assert events[1].device_id == _DEVICE_1
+        assert events[1].data["mount_revision"] == 1
+    finally:
+        store.close()
+
+
+def test_sqlite_replays_the_same_request_and_refuses_a_stale_one(tmp_path) -> None:
+    store = SqliteMountStore(tmp_path / "kernel.sqlite3")
+    try:
+        _, assignment = _assignment(companion_id="companion-1", request_id="assign-1")
+        store.commit_assignment(
+            assignment=assignment,
+            expected_revision=0,
+            mount_revision=1,
+            event_type="eidolon.kernel.body-assignment-created.v1",
+            event_data={},
+        )
+        replay = store.commit_assignment(
+            assignment=assignment,
+            expected_revision=0,
+            mount_revision=1,
+            event_type="eidolon.kernel.body-assignment-created.v1",
+            event_data={},
+        )
+        assert replay.replayed is True
+        assert replay.audit_position == 1
+
+        _, other = _assignment(companion_id="companion-2", request_id="assign-2")
+        with pytest.raises(RevisionConflict):
+            store.commit_assignment(
+                assignment=other,
+                expected_revision=0,
+                mount_revision=1,
+                event_type="eidolon.kernel.body-assignment-replaced.v1",
+                event_data={},
+            )
+
+        reused = replace(other, request_id="assign-1")
+        with pytest.raises(IdempotencyConflict):
+            store.commit_assignment(
+                assignment=reused,
+                expected_revision=1,
+                mount_revision=1,
+                event_type="eidolon.kernel.body-assignment-replaced.v1",
+                event_data={},
+            )
+    finally:
+        store.close()
+
+
+def test_an_assignment_survives_restart_because_it_is_keyed_to_the_body(tmp_path) -> None:
+    path = tmp_path / "kernel.sqlite3"
+    first = SqliteMountStore(path)
+    endpoint, assignment = _assignment(companion_id="companion-1", request_id="assign-1")
+    first.commit_assignment(
+        assignment=assignment,
+        expected_revision=0,
+        mount_revision=1,
+        event_type="eidolon.kernel.body-assignment-created.v1",
+        event_data={},
+    )
+    first.close()
+
+    restarted = SqliteMountStore(path)
+    try:
+        assert restarted.get_assignment(endpoint.body_endpoint_id) == assignment
+        assert restarted.list_assignments() == (assignment,)
     finally:
         restarted.close()

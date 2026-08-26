@@ -21,7 +21,6 @@ def test_get_resolve_and_scoped_list_query_projection() -> None:
     assert queries.resolve(owner_id="owner-1", device_id=_DEVICE_1).active
     assert queries.list(
         owner_id="owner-1",
-        companion_id=None,
         active_only=True,
         after_device_id=None,
         limit=10,
@@ -41,18 +40,11 @@ def test_get_resolve_and_scoped_list_query_projection() -> None:
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"owner_id": None, "companion_id": None, "limit": 1},
-        {"owner_id": None, "companion_id": "companion", "limit": 1},
-        {"owner_id": "owner", "companion_id": None, "limit": 0},
-        {"owner_id": "owner", "companion_id": None, "limit": 101},
-        {"owner_id": "", "companion_id": None, "limit": 1},
-        {"owner_id": "owner", "companion_id": "", "limit": 1},
-        {
-            "owner_id": "owner",
-            "companion_id": None,
-            "after_device_id": "",
-            "limit": 1,
-        },
+        {"owner_id": None, "limit": 1},
+        {"owner_id": "owner", "limit": 0},
+        {"owner_id": "owner", "limit": 101},
+        {"owner_id": "", "limit": 1},
+        {"owner_id": "owner", "after_device_id": "", "limit": 1},
     ],
 )
 def test_list_query_rejects_unscoped_or_unbounded_requests(arguments) -> None:

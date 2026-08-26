@@ -10,10 +10,10 @@ from jsonschema import Draft202012Validator, ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
 from eidolon_kernel.contracts.bindings import (
-    AttachCompanionRequestWire,
     CompanionIdentityWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
+    ReplaceAssignmentRequestWire,
     SystemServiceEndpointWire,
 )
 from eidolon_kernel.contracts.mappers import commit_to_wire
@@ -32,7 +32,7 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 12
+    assert len(files) == len(registry.schema_names) == 14
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
@@ -66,15 +66,16 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
     result = commit_to_wire(CommitResult(mount, 1, False))
     registry.validate("device-mount/mutation-result.schema.json", result.model_dump(mode="json"))
 
-    attachment = AttachCompanionRequestWire(
-        operation="companion.attach",
-        request_id="attach-1",
+    assignment = ReplaceAssignmentRequestWire(
+        operation="body.replace-assignment",
+        request_id="assign-1",
+        expected_assignment_revision=0,
         companion_id="companion-1",
-        expected_revision=1,
+        origin="owner",
     )
     registry.validate(
-        "device-mount/attach-request.schema.json",
-        attachment.model_dump(mode="json"),
+        "body-mesh/replace-assignment-request.schema.json",
+        assignment.model_dump(mode="json"),
     )
 
 

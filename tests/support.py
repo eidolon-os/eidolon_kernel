@@ -17,18 +17,22 @@ from eidolon_sdk.device_foundation.v1 import (
 )
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
+from eidolon_kernel.domain.body import BodyAssignment
 from eidolon_kernel.domain.errors import (
     AuthorityUnavailable,
     IdempotencyConflict,
     RevisionConflict,
 )
 from eidolon_kernel.domain.model import (
+    AUDIT_SUBJECT_BODY_ASSIGNMENT,
+    AUDIT_SUBJECT_DEVICE_MOUNT,
     AuditEvent,
     CompanionIdentity,
     DeviceAdmission,
     DeviceMount,
 )
 from eidolon_kernel.ports.runtime import (
+    AssignmentCommitResult,
     ClaimEventCommitResult,
     CommitResult,
     StoredClaimEvent,
@@ -124,6 +128,7 @@ class MemoryStore:
     )
     claim_cursor_position: int = 0
     claim_high_watermark: int = 0
+    assignments: dict[str, BodyAssignment] = field(default_factory=dict)
 
     def get(self, device_id: str) -> DeviceMount | None:
         return self.mounts.get(device_id)
@@ -154,9 +159,15 @@ class MemoryStore:
             position=position,
             event_id=f"event-{position}",
             event_type=event_type,
-            mount=mount,
+            owner_id=mount.owner_id,
+            device_id=mount.device_id,
+            subject=AUDIT_SUBJECT_DEVICE_MOUNT,
+            subject_id=mount.device_id,
+            subject_revision=mount.revision,
+            request_id=mount.request_id,
+            fingerprint=mount.fingerprint,
             occurred_at=mount.updated_at,
-            data=event_data,
+            data={**event_data, "active": mount.active},
         )
         self.mounts[mount.device_id] = mount
         self.events.append(event)
@@ -174,8 +185,57 @@ class MemoryStore:
         return tuple(
             event
             for event in self.events
-            if event.position > after_position and event.mount.owner_id == owner_id
+            if event.position > after_position and event.owner_id == owner_id
         )[:limit]
+
+    def get_assignment(self, body_endpoint_id: str) -> BodyAssignment | None:
+        return self.assignments.get(body_endpoint_id)
+
+    def list_assignments(self) -> tuple[BodyAssignment, ...]:
+        return tuple(
+            sorted(self.assignments.values(), key=lambda item: item.body_endpoint_id)
+        )
+
+    def commit_assignment(
+        self,
+        *,
+        assignment: BodyAssignment,
+        expected_revision: int,
+        mount_revision: int,
+        event_type: str,
+        event_data: dict[str, Any],
+    ) -> AssignmentCommitResult:
+        current = self.assignments.get(assignment.body_endpoint_id)
+        if current is not None and current.request_id == assignment.request_id:
+            if current.fingerprint != assignment.fingerprint:
+                raise IdempotencyConflict
+            return AssignmentCommitResult(current, 0, True)
+        actual = current.revision if current else 0
+        if actual != expected_revision:
+            raise RevisionConflict
+        position = len(self.events) + 1
+        self.assignments[assignment.body_endpoint_id] = assignment
+        self.events.append(
+            AuditEvent(
+                position=position,
+                event_id=f"event-{position}",
+                event_type=event_type,
+                owner_id=assignment.owner_id,
+                device_id=assignment.device_id,
+                subject=AUDIT_SUBJECT_BODY_ASSIGNMENT,
+                subject_id=assignment.body_endpoint_id,
+                subject_revision=assignment.revision,
+                request_id=assignment.request_id,
+                fingerprint=assignment.fingerprint,
+                occurred_at=assignment.updated_at,
+                data={
+                    **event_data,
+                    "generation": assignment.generation,
+                    "mount_revision": mount_revision,
+                },
+            )
+        )
+        return AssignmentCommitResult(assignment, position, False)
 
     def claim_event_cursor(self) -> ClaimEventCursor:
         return ClaimEventCursor(stream_position=self.claim_cursor_position)
@@ -259,9 +319,15 @@ class MemoryStore:
                         if mount.active
                         else "eidolon.kernel.device-unmounted-by-claim-event.v1"
                     ),
-                    mount=mount,
+                    owner_id=mount.owner_id,
+                    device_id=mount.device_id,
+                    subject=AUDIT_SUBJECT_DEVICE_MOUNT,
+                    subject_id=mount.device_id,
+                    subject_revision=mount.revision,
+                    request_id=mount.request_id,
+                    fingerprint=mount.fingerprint,
                     occurred_at=mount.updated_at,
-                    data={"claim_event_id": event.id},
+                    data={"claim_event_id": event.id, "active": mount.active},
                 )
             )
         self.claim_inbox[key] = (item, outcome, fingerprint)
@@ -353,7 +419,6 @@ def sample_mount(
     *,
     request_id: str = "request-1",
     active: bool = True,
-    attached_companion_id: str | None = None,
 ) -> DeviceMount:
     now = datetime(2026, 8, 4, 8, 0, tzinfo=UTC) + timedelta(seconds=revision)
     return DeviceMount(
@@ -362,7 +427,6 @@ def sample_mount(
         owner_domain_id="owner-1",
         claim_generation=1,
         trust_epoch=1,
-        attached_companion_id=attached_companion_id,
         revision=revision,
         created_at=datetime(2026, 8, 4, 8, 0, tzinfo=UTC),
         updated_at=now,

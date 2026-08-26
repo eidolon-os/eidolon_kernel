@@ -5,21 +5,22 @@ from __future__ import annotations
 from eidolon_sdk.device_foundation.v1 import DeviceRef
 
 from eidolon_kernel.contracts.bindings import (
-    AttachCompanionRequestWire,
     AuditEventWire,
+    BodyAssignmentWire,
+    BodyEndpointWire,
     CompanionIdentityWire,
-    DetachCompanionRequestWire,
     DeviceMountWire,
     HubDeviceDirectoryEntryWire,
     MountDeviceRequestWire,
     MutationResultWire,
+    ReplaceAssignmentRequestWire,
     SystemServiceEndpointWire,
     UnmountDeviceRequestWire,
 )
+from eidolon_kernel.domain.body import BodyAssignment, BodyEndpoint
 from eidolon_kernel.domain.commands import (
-    AttachCompanionCommand,
-    DetachCompanionCommand,
     MountDeviceCommand,
+    ReplaceAssignmentCommand,
     UnmountDeviceCommand,
 )
 from eidolon_kernel.domain.model import (
@@ -44,26 +45,20 @@ def mount_request_to_domain(
     )
 
 
-def attach_request_to_domain(
-    wire: AttachCompanionRequestWire, *, device_id: str, owner_id: str
-) -> AttachCompanionCommand:
-    return AttachCompanionCommand(
+def replace_assignment_request_to_domain(
+    wire: ReplaceAssignmentRequestWire, *, body_endpoint_id: str, owner_id: str
+) -> ReplaceAssignmentCommand:
+    return ReplaceAssignmentCommand(
         request_id=wire.request_id,
-        device_id=device_id,
         owner_id=owner_id,
+        body_endpoint_id=body_endpoint_id,
+        expected_assignment_revision=wire.expected_assignment_revision,
         companion_id=wire.companion_id,
-        expected_revision=wire.expected_revision,
-    )
-
-
-def detach_request_to_domain(
-    wire: DetachCompanionRequestWire, *, device_id: str, owner_id: str
-) -> DetachCompanionCommand:
-    return DetachCompanionCommand(
-        request_id=wire.request_id,
-        device_id=device_id,
-        owner_id=owner_id,
-        expected_revision=wire.expected_revision,
+        origin=wire.origin,
+        change_reason=wire.change_reason,
+        # Not from the caller. Nothing on this Host defines a resource policy, so
+        # the only honest value is none, and the request has no field for one.
+        policy_refs=(),
     )
 
 
@@ -83,7 +78,6 @@ def mount_to_wire(mount: DeviceMount) -> DeviceMountWire:
         device_id=mount.device_id,
         owner_id=mount.owner_id,
         device_ref=mount.device_ref,
-        attached_companion_id=mount.attached_companion_id,
         revision=mount.revision,
         created_at=mount.created_at,
         updated_at=mount.updated_at,
@@ -101,19 +95,59 @@ def commit_to_wire(result: CommitResult) -> MutationResultWire:
     )
 
 
+def assignment_to_wire(
+    assignment: BodyAssignment, *, endpoint: BodyEndpoint | None
+) -> BodyAssignmentWire:
+    return BodyAssignmentWire(
+        assignment_id=assignment.assignment_id,
+        body_endpoint_id=assignment.body_endpoint_id,
+        device_id=assignment.device_id,
+        endpoint_id=assignment.endpoint_id,
+        owner_id=assignment.owner_id,
+        companion_id=assignment.companion_id,
+        selection_provenance=assignment.selection_provenance,
+        change_reason=assignment.change_reason,
+        mode=assignment.mode,
+        policy_refs=assignment.policy_refs,
+        revision=assignment.revision,
+        generation=assignment.generation,
+        updated_at=assignment.updated_at,
+        status=assignment.status(endpoint=endpoint),
+    )
+
+
+def endpoint_to_wire(
+    endpoint: BodyEndpoint, assignment: BodyAssignment | None
+) -> BodyEndpointWire:
+    return BodyEndpointWire(
+        body_endpoint_id=endpoint.body_endpoint_id,
+        device_id=endpoint.device_id,
+        owner_id=endpoint.owner_id,
+        endpoint_id=endpoint.endpoint_id,
+        roles=endpoint.roles,
+        assignment_policy=endpoint.assignment_policy,
+        risk_class=endpoint.risk_class,
+        concurrency=endpoint.concurrency,
+        source=endpoint.source,
+        present=endpoint.present,
+        assignment=(
+            None if assignment is None else assignment_to_wire(assignment, endpoint=endpoint)
+        ),
+    )
+
+
 def audit_to_wire(event: AuditEvent) -> AuditEventWire:
-    mount = event.mount
     return AuditEventWire(
         position=event.position,
         event_id=event.event_id,
         event_type=event.event_type,
-        device_id=mount.device_id,
-        owner_id=mount.owner_id,
-        attached_companion_id=mount.attached_companion_id,
-        mount_revision=mount.revision,
-        active=mount.active,
-        request_id=mount.request_id,
-        fingerprint=mount.fingerprint,
+        device_id=event.device_id,
+        owner_id=event.owner_id,
+        subject=event.subject,
+        subject_id=event.subject_id,
+        subject_revision=event.subject_revision,
+        request_id=event.request_id,
+        fingerprint=event.fingerprint,
         occurred_at=event.occurred_at,
         data=event.data,
     )

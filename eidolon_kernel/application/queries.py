@@ -30,7 +30,6 @@ class DeviceMountQueries:
         self,
         *,
         owner_id: str,
-        companion_id: str | None,
         active_only: bool,
         after_device_id: str | None,
         limit: int,
@@ -38,15 +37,12 @@ class DeviceMountQueries:
         if owner_id is None:
             raise InvalidRequest("owner_id scope is required")
         owner_id = require_identifier("owner_id", owner_id, 64)
-        if companion_id is not None:
-            companion_id = require_identifier("companion_id", companion_id, 64)
         if after_device_id is not None:
             after_device_id = require_identifier("after_device_id", after_device_id)
         if not 1 <= limit <= 100:
             raise InvalidRequest("list limit must be between 1 and 100")
         return self.projection.list(
             owner_id=owner_id,
-            companion_id=companion_id,
             active_only=active_only,
             after_device_id=after_device_id,
             limit=limit,

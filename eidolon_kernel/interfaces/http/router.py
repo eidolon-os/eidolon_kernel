@@ -7,30 +7,27 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Header, HTTPException, Query
 from jsonschema import ValidationError
 
-from eidolon_kernel.application.device_mounts import (
-    AttachCompanion,
-    DetachCompanion,
-    MountDevice,
-    UnmountDevice,
-)
+from eidolon_kernel.application.body_assignments import BodyEndpoints, ReplaceAssignment
+from eidolon_kernel.application.device_mounts import MountDevice, UnmountDevice
 from eidolon_kernel.application.queries import AuditQueries, DeviceMountQueries
 from eidolon_kernel.contracts.bindings import (
-    AttachCompanionRequestWire,
     AuditPageWire,
-    DetachCompanionRequestWire,
+    BodyEndpointPageWire,
+    BodyEndpointWire,
     DeviceMountPageWire,
     DeviceMountWire,
     MountDeviceRequestWire,
     MutationResultWire,
+    ReplaceAssignmentRequestWire,
     UnmountDeviceRequestWire,
 )
 from eidolon_kernel.contracts.mappers import (
-    attach_request_to_domain,
     audit_to_wire,
     commit_to_wire,
-    detach_request_to_domain,
+    endpoint_to_wire,
     mount_request_to_domain,
     mount_to_wire,
+    replace_assignment_request_to_domain,
     unmount_request_to_domain,
 )
 from eidolon_kernel.contracts.registry import ContractRegistry
@@ -48,10 +45,10 @@ from eidolon_kernel.ports.authorities import OwnerAuthorizer
 @dataclass(frozen=True, slots=True)
 class KernelHttpServices:
     mount_device: MountDevice
-    attach_companion: AttachCompanion
-    detach_companion: DetachCompanion
+    replace_assignment: ReplaceAssignment
     unmount_device: UnmountDevice
     mounts: DeviceMountQueries
+    body_endpoints: BodyEndpoints
     audit: AuditQueries
     authorizer: OwnerAuthorizer
     contracts: ContractRegistry
@@ -171,7 +168,6 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
 
     @router.get("/device-mounts", response_model=DeviceMountPageWire)
     async def list_mounts(
-        companion_id: str | None = Query(default=None, min_length=1, max_length=64),
         active_only: bool = True,
         after_device_id: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=50, ge=1, le=100),
@@ -186,7 +182,6 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
             )
             mounts = services.mounts.list(
                 owner_id=owner_id,
-                companion_id=companion_id,
                 active_only=active_only,
                 after_device_id=after_device_id,
                 limit=limit,
@@ -200,66 +195,101 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
         except Exception as exc:
             _raise_http(exc)
 
-    @router.post(
-        "/device-mounts/devices/{device_id}/attachment",
-        response_model=MutationResultWire,
-    )
-    async def attach_companion(
-        device_id: str,
-        payload: AttachCompanionRequestWire,
+    @router.get("/body-endpoints", response_model=BodyEndpointPageWire)
+    async def list_body_endpoints(
+        companion_id: str | None = Query(default=None, min_length=1, max_length=64),
         authorization: str | None = Header(default=None, alias="Authorization"),
         owner_id_hint: str | None = Header(default=None, alias="X-Eidolon-Owner"),
-    ) -> MutationResultWire:
+    ) -> BodyEndpointPageWire:
+        """Every Body in this Owner's namespace, with what each is assigned to.
+
+        Endpoints for inactive mounts are listed too, and say so: an assignment
+        that outlived its device is exactly the thing an Owner needs to be able
+        to see and clear.
+        """
+
         try:
-            services.contracts.validate(
-                "device-mount/attach-request.schema.json", _document(payload)
-            )
             owner_id = await authorize_owner(
-                action="device-mount:write",
+                action="device-mount:read",
                 authorization=authorization,
                 owner_id_hint=owner_id_hint,
             )
-            result = await services.attach_companion.execute(
-                attach_request_to_domain(
-                    payload, device_id=device_id, owner_id=owner_id
+            wire = BodyEndpointPageWire(
+                endpoints=tuple(
+                    endpoint_to_wire(endpoint, assignment)
+                    for endpoint, assignment in services.body_endpoints.list(
+                        owner_id=owner_id, companion_id=companion_id
+                    )
                 )
             )
-            wire = commit_to_wire(result)
-            services.contracts.validate(
-                "device-mount/mutation-result.schema.json", _document(wire)
-            )
+            services.contracts.validate("body-mesh/page.schema.json", _document(wire))
             return wire
         except Exception as exc:
             _raise_http(exc)
 
-    @router.post(
-        "/device-mounts/devices/{device_id}/attachment/detach",
-        response_model=MutationResultWire,
+    @router.get(
+        "/body-endpoints/{body_endpoint_id}", response_model=BodyEndpointWire
     )
-    async def detach_companion(
-        device_id: str,
-        payload: DetachCompanionRequestWire,
+    async def get_body_endpoint(
+        body_endpoint_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
         owner_id_hint: str | None = Header(default=None, alias="X-Eidolon-Owner"),
-    ) -> MutationResultWire:
+    ) -> BodyEndpointWire:
+        try:
+            owner_id = await authorize_owner(
+                action="device-mount:read",
+                authorization=authorization,
+                owner_id_hint=owner_id_hint,
+            )
+            endpoint = services.body_endpoints.resolve(
+                owner_id=owner_id, body_endpoint_id=body_endpoint_id
+            )
+            wire = endpoint_to_wire(
+                endpoint, services.body_endpoints.assignment(endpoint)
+            )
+            services.contracts.validate("body-mesh/endpoint.schema.json", _document(wire))
+            return wire
+        except Exception as exc:
+            _raise_http(exc)
+
+    @router.put(
+        "/body-endpoints/{body_endpoint_id}/assignment",
+        response_model=BodyEndpointWire,
+    )
+    async def replace_assignment(
+        body_endpoint_id: str,
+        payload: ReplaceAssignmentRequestWire,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        owner_id_hint: str | None = Header(default=None, alias="X-Eidolon-Owner"),
+    ) -> BodyEndpointWire:
+        """The canonical ``ReplaceAssignment``, stated as the Body's whole new state.
+
+        A ``PUT`` because the request says what should be true, not what to do —
+        which is what makes it safe to send again when the answer was lost. The
+        compare-and-swap is on the assignment's own revision; a stale one whose
+        end state already holds is answered as success, because the alternative
+        makes re-reading the only safe move after any timeout.
+        """
+
         try:
             services.contracts.validate(
-                "device-mount/detach-request.schema.json", _document(payload)
+                "body-mesh/replace-assignment-request.schema.json", _document(payload)
             )
             owner_id = await authorize_owner(
                 action="device-mount:write",
                 authorization=authorization,
                 owner_id_hint=owner_id_hint,
             )
-            result = services.detach_companion.execute(
-                detach_request_to_domain(
-                    payload, device_id=device_id, owner_id=owner_id
+            result = await services.replace_assignment.execute(
+                replace_assignment_request_to_domain(
+                    payload, body_endpoint_id=body_endpoint_id, owner_id=owner_id
                 )
             )
-            wire = commit_to_wire(result)
-            services.contracts.validate(
-                "device-mount/mutation-result.schema.json", _document(wire)
+            endpoint = services.body_endpoints.resolve(
+                owner_id=owner_id, body_endpoint_id=body_endpoint_id
             )
+            wire = endpoint_to_wire(endpoint, result.assignment)
+            services.contracts.validate("body-mesh/endpoint.schema.json", _document(wire))
             return wire
         except Exception as exc:
             _raise_http(exc)

@@ -48,7 +48,6 @@ def test_projection_ignores_stale_updates_and_filters_scopes() -> None:
     assert projection.get(_DEVICE_1) == current
     assert projection.list(
         owner_id="owner-1",
-        companion_id=None,
         active_only=True,
         after_device_id=None,
         limit=10,

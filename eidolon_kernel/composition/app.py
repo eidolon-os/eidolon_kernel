@@ -25,12 +25,14 @@ from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuth
 from eidolon_kernel.adapters.service_directory.eidolond_http import (
     EidolondHttpServiceDirectory,
 )
+from eidolon_kernel.application.body_assignments import (
+    BodyEndpoints,
+    ReconcileAssignments,
+    ReplaceAssignment,
+)
 from eidolon_kernel.application.device_mounts import (
-    AttachCompanion,
-    DetachCompanion,
     MountDevice,
     ReconcileClaimEvents,
-    ReconcileMountPrerequisites,
     UnmountDevice,
 )
 from eidolon_kernel.application.queries import AuditQueries, DeviceMountQueries
@@ -77,10 +79,10 @@ def build_services(
     projection.rebuild(store.list_all())
     return KernelHttpServices(
         mount_device=MountDevice(store, projection, devices, clock),
-        attach_companion=AttachCompanion(store, projection, companions, clock),
-        detach_companion=DetachCompanion(store, projection, clock),
+        replace_assignment=ReplaceAssignment(store, projection, companions, clock),
         unmount_device=UnmountDevice(store, projection, clock),
         mounts=DeviceMountQueries(projection),
+        body_endpoints=BodyEndpoints(projection=projection, store=store),
         audit=AuditQueries(store),
         authorizer=authorizer,
         contracts=contracts,
@@ -176,10 +178,9 @@ def create_production_app(settings: KernelSettings | None = None) -> KernelRunti
         clock=SystemClock(),
         contracts=contracts,
     )
-    reconciliation = ReconcileMountPrerequisites(
+    reconciliation = ReconcileAssignments(
         store=store,
         projection=projection,
-        devices=devices,
         companions=companions,
         clock=SystemClock(),
     )

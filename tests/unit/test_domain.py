@@ -4,8 +4,9 @@ import pytest
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.domain.commands import (
-    AttachCompanionCommand,
+    ASSIGNMENT_ORIGIN_OWNER,
     MountDeviceCommand,
+    ReplaceAssignmentCommand,
     UnmountDeviceCommand,
 )
 from eidolon_kernel.domain.errors import InvalidRequest
@@ -46,32 +47,20 @@ def test_mount_aggregate_transitions_preserve_monotonic_revision() -> None:
         fingerprint=FP,
     )
     assert first.device_ref == _ref()
-    attached = first.attached(
-        companion_id="companion-1",
-        at=NOW,
-        request_id="request-2",
-        fingerprint=FP,
-    )
-    detached = attached.detached(at=NOW, request_id="request-3", fingerprint=FP)
-    inactive = detached.unmounted(at=NOW, request_id="request-4", fingerprint=FP)
+    inactive = first.unmounted(at=NOW, request_id="request-2", fingerprint=FP)
     mounted = inactive.mounted_as(
         owner_id="owner-1",
         device_ref=_ref(),
         at=NOW,
-        request_id="request-5",
+        request_id="request-3",
         fingerprint=FP,
     )
-    assert (
-        first.revision,
-        attached.revision,
-        detached.revision,
-        inactive.revision,
-        mounted.revision,
-    ) == (1, 2, 3, 4, 5)
+    assert (first.revision, inactive.revision, mounted.revision) == (1, 2, 3)
     assert first.active and not inactive.active and mounted.active
-    assert attached.attached_companion_id == "companion-1"
-    assert detached.attached_companion_id is None
-    assert mounted.attached_companion_id is None
+    # A mount says whether a device belongs here and at which generation, and
+    # nothing about which Eidolon answers through it. That fact moved to a Body
+    # assignment precisely so remounting could stop erasing it.
+    assert not hasattr(mounted, "attached_companion_id")
 
 
 def test_command_fingerprint_is_canonical_and_sensitive() -> None:
@@ -89,7 +78,14 @@ def test_command_fingerprint_is_canonical_and_sensitive() -> None:
     "factory",
     [
         lambda: MountDeviceCommand("r", "d", "o", -1),
-        lambda: AttachCompanionCommand("r", "d", "o", "c", 0),
+        lambda: ReplaceAssignmentCommand(
+            request_id="r",
+            owner_id="o",
+            body_endpoint_id="d:body",
+            expected_assignment_revision=-1,
+            companion_id="c",
+            origin=ASSIGNMENT_ORIGIN_OWNER,
+        ),
         lambda: UnmountDeviceCommand("r", "d", "o", 0),
         lambda: DeviceMount.first(
             device_id=_DEV,
