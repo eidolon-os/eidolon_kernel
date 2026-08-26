@@ -124,6 +124,8 @@ def endpoint_to_wire(
         device_id=endpoint.device_id,
         owner_id=endpoint.owner_id,
         endpoint_id=endpoint.endpoint_id,
+        device_ref=endpoint.device_ref,
+        mount_revision=endpoint.mount_revision,
         roles=endpoint.roles,
         assignment_policy=endpoint.assignment_policy,
         risk_class=endpoint.risk_class,

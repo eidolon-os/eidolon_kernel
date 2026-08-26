@@ -10,6 +10,8 @@
     "device_id",
     "owner_id",
     "endpoint_id",
+    "device_ref",
+    "mount_revision",
     "roles",
     "assignment_policy",
     "risk_class",
@@ -95,6 +97,45 @@
           "type": "null"
         }
       ]
+    },
+    "device_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_instance_id",
+        "owner_domain_id",
+        "owner_domain_generation",
+        "claim_generation",
+        "trust_epoch"
+      ],
+      "properties": {
+        "device_instance_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "owner_domain_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "owner_domain_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trust_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "mount_revision": {
+      "type": "integer",
+      "minimum": 1
     }
   }
 }

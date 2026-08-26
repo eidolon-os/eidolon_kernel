@@ -93,6 +93,8 @@ class BodyEndpointWire(ContractModel):
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
     endpoint_id: str = Field(min_length=1, max_length=64)
+    device_ref: DeviceRef
+    mount_revision: int = Field(ge=1)
     roles: tuple[str, ...] = Field(min_length=1, max_length=8)
     assignment_policy: Literal["required", "optional", "forbidden"]
     risk_class: Literal["safe", "sensitive", "hazardous"]

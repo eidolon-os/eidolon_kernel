@@ -46,6 +46,7 @@ from typing import Any
 from eidolon_sdk.device_foundation.v1 import (
     AssignmentCondition,
     AssignmentMode,
+    DeviceRef,
     SelectionProvenance,
 )
 
@@ -111,6 +112,12 @@ class BodyEndpoint:
     device_id: str
     owner_id: str
     endpoint_id: str
+    #: The device this Body is derived from, at the generation it was derived
+    #: at. Carried so a runtime resolving a Body needs one read rather than two:
+    #: it is not a second copy of the mount, it is which mount this endpoint
+    #: currently *is*, and a fence for anything that acts on the answer later.
+    device_ref: DeviceRef
+    mount_revision: int
     roles: tuple[str, ...]
     assignment_policy: str
     risk_class: str
@@ -131,6 +138,8 @@ def derived_endpoint(mount: DeviceMount) -> BodyEndpoint:
         device_id=mount.device_id,
         owner_id=mount.owner_id,
         endpoint_id=DERIVED_ENDPOINT_ID,
+        device_ref=mount.device_ref,
+        mount_revision=mount.revision,
         roles=("body",),
         assignment_policy="optional",
         risk_class="safe",
