@@ -44,6 +44,7 @@ from eidolon_sdk.device_foundation.v1 import (
     OperationalPublicKey,
     derive_device_instance_id,
 )
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 ROOT = Path(__file__).resolve().parents[2]
 HUB_ROOT = ROOT.parent / "eidolon_hub"
@@ -794,7 +795,7 @@ async def test_real_single_host_boot_directory_fault_and_mount_recovery() -> Non
                     failed_mount = await kernel.post(
                         "/api/kernel/v1/device-mounts",
                         headers=OWNER_HEADERS,
-                        json=_mount_body("device-instance-" + "b" * 64, "mount-m2b-b"),
+                        json=_mount_body(named_device_instance_id("m2b-b-unmounted"), "mount-m2b-b"),
                     )
                     assert failed_mount.status_code == 503
 
