@@ -12,8 +12,16 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.config import HubSettings
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_E2E = named_device_instance_id("device-e2e")
+_DEVICE_OWNER_MISMATCH = named_device_instance_id("device-owner-mismatch")
+_DEVICE_MISSING_COMPANION = named_device_instance_id("device-missing-companion")
+_DEVICE_DATA_OUTAGE = named_device_instance_id("device-data-outage")
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path(
@@ -321,11 +329,11 @@ deployment:
             mounted = await kernel.post(
                 "/api/kernel/v1/device-mounts",
                 headers=OWNER_HEADERS,
-                json=_mount_body("device-e2e", "mount-e2e"),
+                json=_mount_body(_DEVICE_E2E, "mount-e2e"),
             )
             assert mounted.status_code == 200, mounted.text
 
-            attach_path = "/api/kernel/v1/device-mounts/devices/device-e2e/attachment"
+            attach_path = f"/api/kernel/v1/device-mounts/devices/{_DEVICE_E2E}/attachment"
             responses = await asyncio.gather(
                 *(
                     kernel.post(
@@ -341,9 +349,9 @@ deployment:
             assert sum(not response.json()["replayed"] for response in responses) == 1
 
             for device_id, request_id in (
-                ("device-owner-mismatch", "mount-owner-mismatch"),
-                ("device-missing-companion", "mount-missing-companion"),
-                ("device-data-outage", "mount-data-outage"),
+                (_DEVICE_OWNER_MISMATCH, "mount-owner-mismatch"),
+                (_DEVICE_MISSING_COMPANION, "mount-missing-companion"),
+                (_DEVICE_DATA_OUTAGE, "mount-data-outage"),
             ):
                 response = await kernel.post(
                     "/api/kernel/v1/device-mounts",
@@ -353,12 +361,12 @@ deployment:
                 assert response.status_code == 200, response.text
 
             owner_mismatch = await kernel.post(
-                "/api/kernel/v1/device-mounts/devices/device-owner-mismatch/attachment",
+                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_OWNER_MISMATCH}/attachment",
                 headers=OWNER_HEADERS,
                 json=_attach_body("companion-other", "attach-owner-mismatch"),
             )
             missing = await kernel.post(
-                "/api/kernel/v1/device-mounts/devices/device-missing-companion/attachment",
+                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_MISSING_COMPANION}/attachment",
                 headers=OWNER_HEADERS,
                 json=_attach_body("companion-missing", "attach-missing"),
             )
@@ -367,7 +375,7 @@ deployment:
             _stop(data_process)
             data_process = None
             unavailable = await kernel.post(
-                "/api/kernel/v1/device-mounts/devices/device-data-outage/attachment",
+                f"/api/kernel/v1/device-mounts/devices/{_DEVICE_DATA_OUTAGE}/attachment",
                 headers=OWNER_HEADERS,
                 json=_attach_body("companion-e2e", "attach-data-outage"),
             )

@@ -8,6 +8,7 @@ from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.composition.app import build_services, create_http_app
 from tests.support import (
+    DEVICE_1,
     FakeCompanionAuthority,
     FakeDeviceAuthority,
     MutableClock,
@@ -48,11 +49,11 @@ async def test_device_mount_survives_restart_then_attaches_and_unmounts(tmp_path
         base_url="http://kernel.test",
     ) as client:
         restored = await client.get(
-            "/api/kernel/v1/device-mounts/resolve/device-1",
+            f"/api/kernel/v1/device-mounts/resolve/{DEVICE_1}",
             headers=headers(),
         )
         attached = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
+            f"/api/kernel/v1/device-mounts/devices/{DEVICE_1}/attachment",
             headers=headers(),
             json={
                 "operation": "companion.attach",
@@ -62,7 +63,7 @@ async def test_device_mount_survives_restart_then_attaches_and_unmounts(tmp_path
             },
         )
         unmounted = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/unmount",
+            f"/api/kernel/v1/device-mounts/devices/{DEVICE_1}/unmount",
             headers=headers(),
             json={
                 "operation": "device.unmount",

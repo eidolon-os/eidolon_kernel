@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 from jsonschema import Draft202012Validator, ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
@@ -19,6 +20,10 @@ from eidolon_kernel.contracts.mappers import commit_to_wire
 from eidolon_kernel.contracts.registry import ContractRegistry
 from eidolon_kernel.domain.model import DeviceMount, DeviceRef
 from eidolon_kernel.ports.runtime import CommitResult
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
@@ -37,7 +42,7 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
     request = MountDeviceRequestWire(
         operation="device.mount",
         request_id="request-1",
-        device_id="device-1",
+        device_id=_DEVICE_1,
         expected_revision=0,
         replace_existing=False,
     )
@@ -45,10 +50,10 @@ def test_runtime_request_and_result_bindings_conform_to_schema_sources() -> None
 
     now = datetime(2026, 8, 4, tzinfo=UTC)
     mount = DeviceMount.first(
-        device_id="device-1",
+        device_id=_DEVICE_1,
         owner_id="owner-1",
         device_ref=DeviceRef(
-            device_instance_id="device-1",
+            device_instance_id=_DEVICE_1,
             owner_domain_id="owner-1",
             owner_domain_generation=1,
             claim_generation=1,
@@ -106,7 +111,7 @@ def test_mount_request_cannot_select_a_target_owner() -> None:
 def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> None:
     document = {
         "operation": "device.directory-entry",
-        "device_id": "device-1",
+        "device_id": _DEVICE_1,
         "owner_scope": "owner-1",
         "display_name": "Desk",
         "device_kind": "desktop",
@@ -123,7 +128,7 @@ def test_consumed_hub_contract_accepts_only_documented_device_entry_shape() -> N
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
         "device_ref": {
-            "device_instance_id": "device-1",
+            "device_instance_id": _DEVICE_1,
             "owner_domain_id": "owner-1",
             "owner_domain_generation": 1,
             "claim_generation": 1,

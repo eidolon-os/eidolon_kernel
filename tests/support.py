@@ -15,6 +15,7 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
     ManifestRef,
 )
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.domain.errors import (
     AuthorityUnavailable,
@@ -33,6 +34,10 @@ from eidolon_kernel.ports.runtime import (
     StoredClaimEvent,
     StoredRequest,
 )
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+DEVICE_1 = named_device_instance_id("device-1")
 
 
 @dataclass
@@ -295,7 +300,7 @@ def claim_event_item(
     reason: str = "owner-removed",
 ) -> ClaimEventStreamItem:
     device_ref = DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=DEVICE_1,
         owner_domain_id=owner_domain_id,
         owner_domain_generation=owner_domain_generation,
         claim_generation=claim_generation,
@@ -305,7 +310,7 @@ def claim_event_item(
     if event_type == "activated":
         event = ClaimActivatedEvent(
             id=event_id or f"claim-activated-{position}",
-            subject="device-instances/device-1",
+            subject=f"device-instances/{DEVICE_1}",
             time=at,
             ownerdomainid=owner_domain_id,
             aggregaterev=aggregate_revision,
@@ -326,7 +331,7 @@ def claim_event_item(
     elif event_type == "revoked":
         event = ClaimRevokedEvent(
             id=event_id or f"claim-revoked-{position}",
-            subject="device-instances/device-1",
+            subject=f"device-instances/{DEVICE_1}",
             time=at,
             ownerdomainid=owner_domain_id,
             aggregaterev=aggregate_revision,
@@ -352,7 +357,7 @@ def sample_mount(
 ) -> DeviceMount:
     now = datetime(2026, 8, 4, 8, 0, tzinfo=UTC) + timedelta(seconds=revision)
     return DeviceMount(
-        device_id="device-1",
+        device_id=DEVICE_1,
         owner_id="owner-1",
         owner_domain_id="owner-1",
         claim_generation=1,
@@ -371,7 +376,7 @@ def mount_body(**overrides) -> dict[str, object]:
     value: dict[str, object] = {
         "operation": "device.mount",
         "request_id": "mount-1",
-        "device_id": "device-1",
+        "device_id": DEVICE_1,
         "expected_revision": 0,
         "replace_existing": False,
     }

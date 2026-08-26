@@ -42,6 +42,7 @@ from eidolon_sdk.device_foundation.v1 import (
     ManifestDocument,
     ManifestRef,
     OperationalPublicKey,
+    derive_device_instance_id,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -398,7 +399,9 @@ def _instance_id(key: ec.EllipticCurvePrivateKey) -> str:
     der = key.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    return "device-instance-" + hashlib.sha256(der).hexdigest()
+    return derive_device_instance_id(
+        base64.urlsafe_b64encode(der).rstrip(b"=").decode()
+    )
 
 
 def _p256_spki(key: ec.EllipticCurvePrivateKey) -> str:

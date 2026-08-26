@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 from eidolon_sdk.device_foundation.v1 import ClaimEventCursor
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.device_registry.hub_http import HubHttpDeviceAuthority
 from eidolon_kernel.contracts.registry import ContractRegistry
@@ -11,6 +12,12 @@ from eidolon_kernel.domain.errors import (
     AuthorityUnavailable,
     ClaimCursorGap,
 )
+
+_DEVICE = named_device_instance_id("device")
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_ONE = named_device_instance_id("device-one")
 
 HUB_READER_TOKEN = "hub-device-registry-reader-token-0001"
 
@@ -21,7 +28,7 @@ def claim_event_page(**event_overrides):
         "id": "claim-event-1",
         "source": "urn:eidolon:authority:admission",
         "type": "live.eidolon.device.claim-activated.v1",
-        "subject": "device-instances/device-one",
+        "subject": f"device-instances/{_DEVICE_ONE}",
         "time": "2026-08-04T08:00:00Z",
         "datacontenttype": "application/json",
         "dataschema": "https://contracts.eidolon.live/device-foundation/v1/events/claim-activated-data.schema.json",
@@ -32,7 +39,7 @@ def claim_event_page(**event_overrides):
         "causationid": "grant-ack-one",
         "data": {
             "device_ref": {
-                "device_instance_id": "device-one",
+                "device_instance_id": _DEVICE_ONE,
                 "owner_domain_id": "owner-one",
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
@@ -68,7 +75,7 @@ def claim_event_page(**event_overrides):
 def document(**overrides):
     value = {
         "operation": "device.directory-entry",
-        "device_id": "device-one",
+        "device_id": _DEVICE_ONE,
         "owner_scope": "owner-one",
         "display_name": "Desk",
         "device_kind": "desktop",
@@ -85,7 +92,7 @@ def document(**overrides):
         "enrolled_at": "2026-08-04T08:00:00Z",
         "updated_at": "2026-08-04T08:00:00Z",
         "device_ref": {
-            "device_instance_id": "device-one",
+            "device_instance_id": _DEVICE_ONE,
             "owner_domain_id": "owner-one",
             "owner_domain_generation": 1,
             "claim_generation": 1,
@@ -113,7 +120,7 @@ def test_hub_adapter_rejects_invalid_configuration(arguments) -> None:
 async def test_hub_adapter_consumes_only_owner_scoped_device_get() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.raw_path == (
-            b"/api/device-management/v1/owners/owner-one/devices/device-one"
+            f"/api/device-management/v1/owners/owner-one/devices/{_DEVICE_ONE}".encode()
         )
         assert request.headers["Authorization"] == f"Bearer {HUB_READER_TOKEN}"
         return httpx.Response(200, json=document())
@@ -126,7 +133,7 @@ async def test_hub_adapter_consumes_only_owner_scoped_device_get() -> None:
         client=client,
     )
     try:
-        admission = await adapter.get_device(owner_id="owner-one", device_id="device-one")
+        admission = await adapter.get_device(owner_id="owner-one", device_id=_DEVICE_ONE)
         assert admission.owner_id == "owner-one"
         assert admission.status == "approved"
     finally:
@@ -156,7 +163,7 @@ async def test_hub_adapter_maps_policy_and_contract_failures(status, body, error
     )
     try:
         with pytest.raises(error):
-            await adapter.get_device(owner_id="owner", device_id="device")
+            await adapter.get_device(owner_id="owner", device_id=_DEVICE)
     finally:
         await client.aclose()
 
@@ -174,7 +181,7 @@ async def test_hub_adapter_maps_transport_and_non_object_json_failures() -> None
         client=client,
     )
     with pytest.raises(AuthorityUnavailable, match="unreachable"):
-        await adapter.get_device(owner_id="owner", device_id="device")
+        await adapter.get_device(owner_id="owner", device_id=_DEVICE)
     await client.aclose()
 
     client = httpx.AsyncClient(
@@ -187,7 +194,7 @@ async def test_hub_adapter_maps_transport_and_non_object_json_failures() -> None
         client=client,
     )
     with pytest.raises(AuthorityUnavailable, match="violated"):
-        await adapter.get_device(owner_id="owner", device_id="device")
+        await adapter.get_device(owner_id="owner", device_id=_DEVICE)
     await client.aclose()
 
 

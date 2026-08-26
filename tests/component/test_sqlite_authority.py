@@ -6,12 +6,17 @@ from datetime import UTC, datetime
 
 import pytest
 from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventStreamItem
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.persistence.sqlite import SqliteMountStore
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
 from eidolon_kernel.domain.model import DeviceMount, request_fingerprint
 from tests.support import claim_event_item, sample_mount
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
 
 
 def test_sqlite_atomically_commits_mount_request_and_ordered_audit(tmp_path) -> None:
@@ -112,14 +117,14 @@ def test_restart_rebuilds_projection_from_only_authoritative_table(tmp_path) -> 
     try:
         projection = InMemoryMountProjection()
         projection.rebuild(restarted.list_all())
-        assert projection.get("device-1") == restarted.get("device-1")
+        assert projection.get(_DEVICE_1) == restarted.get(_DEVICE_1)
         assert projection.list(
             owner_id="owner-1",
             companion_id="companion-1",
             active_only=True,
             after_device_id=None,
             limit=10,
-        )[0].device_id == "device-1"
+        )[0].device_id == _DEVICE_1
     finally:
         restarted.close()
 
@@ -197,10 +202,10 @@ def test_claim_inbox_mount_and_cursor_checkpoint_are_one_transaction(tmp_path) -
             processed_at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
         )
         assert result.mount == mount
-        assert store.get("device-1") == mount
+        assert store.get(_DEVICE_1) == mount
         assert store.claim_event_cursor().stream_position == 1
         assert store.claim_event_high_watermark() == 4
-        stored = store.claim_events_for_device("device-1")
+        stored = store.claim_events_for_device(_DEVICE_1)
         assert stored[0].device_ref == item.event.data.device_ref
         row = store._connection.execute(
             "SELECT manifest_id, manifest_revision, manifest_digest "
@@ -231,8 +236,8 @@ def test_claim_checkpoint_failure_rolls_back_mount_inbox_and_audit(tmp_path) -> 
                 expected_mount_revision=0,
                 processed_at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
             )
-        assert store.get("device-1") is None
-        assert store.claim_events_for_device("device-1") == ()
+        assert store.get(_DEVICE_1) is None
+        assert store.claim_events_for_device(_DEVICE_1) == ()
         assert store.claim_event_cursor().stream_position == 0
         assert store.list_audit(after_position=0, limit=10, owner_id="owner-1") == ()
     finally:

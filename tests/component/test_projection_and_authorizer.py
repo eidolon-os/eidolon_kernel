@@ -1,9 +1,14 @@
 import pytest
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
 from eidolon_kernel.domain.errors import AuthorityUnavailable, AuthorizationDenied
 from tests.support import OfflineCompanionAuthority, sample_mount
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
 
 
 @pytest.mark.asyncio
@@ -40,7 +45,7 @@ def test_projection_ignores_stale_updates_and_filters_scopes() -> None:
     current = sample_mount(2, request_id="r2", active=False)
     projection.rebuild((current,))
     projection.put(sample_mount(1))
-    assert projection.get("device-1") == current
+    assert projection.get(_DEVICE_1) == current
     assert projection.list(
         owner_id="owner-1",
         companion_id=None,

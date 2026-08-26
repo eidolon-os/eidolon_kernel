@@ -13,11 +13,16 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
     ManifestRef,
 )
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.application.device_mounts import ReconcileClaimEvents
 from eidolon_kernel.domain.errors import RevisionConflict
 from tests.support import FakeDeviceAuthority, MemoryStore, MutableClock, sample_mount
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
 
 NOW = datetime(2026, 8, 4, 8, 0, tzinfo=UTC)
 MANIFEST = ManifestRef(
@@ -29,7 +34,7 @@ MANIFEST = ManifestRef(
 
 def _ref(*, generation: int = 1, owner_generation: int = 1, owner: str = "owner-1") -> DeviceRef:
     return DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id=owner,
         owner_domain_generation=owner_generation,
         claim_generation=generation,
@@ -51,7 +56,7 @@ def _activated(
         stream_position=position,
         event=ClaimActivatedEvent(
             id=f"claim-activated-{position}",
-            subject="device-instances/device-1",
+            subject=f"device-instances/{_DEVICE_1}",
             time=at,
             ownerdomainid=owner,
             aggregaterev=aggregate_revision,
@@ -82,7 +87,7 @@ def _revoked(
         stream_position=position,
         event=ClaimRevokedEvent(
             id=f"claim-revoked-{position}",
-            subject="device-instances/device-1",
+            subject=f"device-instances/{_DEVICE_1}",
             time=at,
             ownerdomainid=owner,
             aggregaterev=aggregate_revision,
@@ -119,10 +124,10 @@ async def test_claim_activated_mounts_distinct_business_owner_and_owner_domain()
     assert first.mounted == first.consumed == 1
     assert replay.consumed == 0
     assert store.claim_event_cursor().stream_position == 1
-    assert store.get("device-1").active is True
-    assert store.get("device-1").owner_id == "owner_01"
-    assert store.get("device-1").owner_domain_id == "owner-1"
-    assert store.get("device-1").claim_generation == 1
+    assert store.get(_DEVICE_1).active is True
+    assert store.get(_DEVICE_1).owner_id == "owner_01"
+    assert store.get(_DEVICE_1).owner_domain_id == "owner-1"
+    assert store.get(_DEVICE_1).claim_generation == 1
 
 
 @pytest.mark.asyncio
@@ -134,7 +139,7 @@ async def test_matching_claim_revoked_unmounts_once() -> None:
     result = await reconciler.execute()
 
     assert result.unmounted == result.consumed == 1
-    assert store.get("device-1").active is False
+    assert store.get(_DEVICE_1).active is False
     assert store.events[-1].event_type == ("eidolon.kernel.device-unmounted-by-claim-event.v1")
 
 
@@ -152,7 +157,7 @@ async def test_old_generation_event_cannot_unmount_new_mount(mount) -> None:
     result = await _reconciler(store, _revoked(position=1, aggregate_revision=6)).execute()
 
     assert result.ignored == result.consumed == 1
-    assert store.get("device-1").active is True
+    assert store.get(_DEVICE_1).active is True
 
 
 @pytest.mark.asyncio
@@ -169,7 +174,7 @@ async def test_revoked_generation_is_terminal_and_cannot_be_reactivated() -> Non
 
     assert result.unmounted == 1
     assert result.ignored == 1
-    assert store.get("device-1").active is False
+    assert store.get(_DEVICE_1).active is False
 
 
 @pytest.mark.asyncio
@@ -185,8 +190,8 @@ async def test_new_claim_generation_can_mount_after_old_generation_revocation() 
     result = await reconciler.execute()
 
     assert result.unmounted == result.mounted == 1
-    assert store.get("device-1").active is True
-    assert store.get("device-1").claim_generation == 2
+    assert store.get(_DEVICE_1).active is True
+    assert store.get(_DEVICE_1).claim_generation == 2
 
 
 @pytest.mark.asyncio
@@ -203,7 +208,7 @@ async def test_aggregate_out_of_order_fails_closed_without_advancing_cursor() ->
         await second.execute()
 
     assert store.claim_event_cursor().stream_position == 1
-    assert store.get("device-1").active is True
+    assert store.get(_DEVICE_1).active is True
 
 
 @pytest.mark.asyncio
@@ -223,7 +228,7 @@ async def test_owner_domain_change_for_same_device_fails_closed() -> None:
         ).execute()
 
     assert store.claim_event_cursor().stream_position == 1
-    assert store.get("device-1").active is True
+    assert store.get(_DEVICE_1).active is True
 
 
 @pytest.mark.asyncio

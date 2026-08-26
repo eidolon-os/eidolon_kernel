@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.adapters.security.trusted_local import TrustedLocalOwnerAuthorizer
@@ -21,6 +22,10 @@ from tests.support import (
     headers,
     mount_body,
 )
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
 
 
 def app(*, companions=None, devices=None, readiness_checks=None):
@@ -77,7 +82,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         assert replay.json()["audit_position"] == 1
 
         resolved = await client.get(
-            "/api/kernel/v1/device-mounts/resolve/device-1",
+            f"/api/kernel/v1/device-mounts/resolve/{_DEVICE_1}",
             headers=headers(),
         )
         unattached_page = await client.get(
@@ -86,7 +91,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             headers=headers(),
         )
         attached = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment",
             headers=headers(),
             json={
                 "operation": "companion.attach",
@@ -96,7 +101,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
             },
         )
         current = await client.get(
-            "/api/kernel/v1/device-mounts/devices/device-1", headers=headers()
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}", headers=headers()
         )
         attached_page = await client.get(
             "/api/kernel/v1/device-mounts",
@@ -107,10 +112,10 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         assert unattached_page.json()["mounts"] == []
         assert attached.status_code == current.status_code == attached_page.status_code == 200
         assert attached.json()["mount"]["revision"] == 2
-        assert attached_page.json()["mounts"][0]["device_id"] == "device-1"
+        assert attached_page.json()["mounts"][0]["device_id"] == _DEVICE_1
 
         detached = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/attachment/detach",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment/detach",
             headers=headers(),
             json={
                 "operation": "companion.detach",
@@ -123,7 +128,7 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         assert detached.json()["mount"]["revision"] == 3
 
         unmounted = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/unmount",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/unmount",
             headers=headers(),
             json={
                 "operation": "device.unmount",
@@ -142,11 +147,11 @@ async def test_http_mount_resolve_list_unmount_and_audit_flow() -> None:
         }
 
         no_resolution = await client.get(
-            "/api/kernel/v1/device-mounts/resolve/device-1",
+            f"/api/kernel/v1/device-mounts/resolve/{_DEVICE_1}",
             headers=headers(),
         )
         inactive = await client.get(
-            "/api/kernel/v1/device-mounts/devices/device-1",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}",
             headers=headers(),
         )
         audit = await client.get(
@@ -170,7 +175,7 @@ async def test_http_boundary_fails_closed_for_identity_authorities_and_cas() -> 
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
         )
         unavailable = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/attachment",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/attachment",
             headers=headers(),
             json={
                 "operation": "companion.attach",
@@ -211,17 +216,17 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
     ) as client:
         await client.post("/api/kernel/v1/device-mounts", headers=headers(), json=mount_body())
         hidden = await client.get(
-            "/api/kernel/v1/device-mounts/devices/device-1",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}",
             headers=headers("owner-2"),
         )
         unresolved = await client.get(
-            "/api/kernel/v1/device-mounts/resolve/device-1",
+            f"/api/kernel/v1/device-mounts/resolve/{_DEVICE_1}",
             headers=headers("owner-2"),
         )
         empty_list = await client.get("/api/kernel/v1/device-mounts", headers=headers("owner-2"))
         empty_audit = await client.get("/api/kernel/v1/audit/events", headers=headers("owner-2"))
         denied_unmount = await client.post(
-            "/api/kernel/v1/device-mounts/devices/device-1/unmount",
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}/unmount",
             headers=headers("owner-2"),
             json={
                 "operation": "device.unmount",

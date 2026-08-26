@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.companion.directory_routed import (
     DirectoryRoutedEidolonDataCompanionAuthority,
@@ -36,6 +37,8 @@ from tests.component.test_companion_http_authority import (
 )
 from tests.component.test_hub_http_authority import HUB_READER_TOKEN, document
 from tests.system.support import FakeHostSupervisor, FakeReadinessProbe, FixedClock
+
+_DEVICE = named_device_instance_id("device")
 
 HUB_CONTRACT = "eidolon.hub.device-directory.v1"
 DATA_COMPANION_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
@@ -331,7 +334,7 @@ async def test_directory_routed_hub_authority_maps_directory_failure() -> None:
         client=client,
     )
     with pytest.raises(AuthorityUnavailable, match="Service Directory"):
-        await authority.get_device(owner_id="owner", device_id="device")
+        await authority.get_device(owner_id="owner", device_id=_DEVICE)
     assert await authority.is_available() is False
     await authority.close()
     await client.aclose()
