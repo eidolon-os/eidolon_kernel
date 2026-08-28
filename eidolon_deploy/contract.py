@@ -19,7 +19,7 @@ TOOL_ID = "eidolon-release"
 CLI_CONTRACT_VERSION = 1
 
 #: Wire formats an operator tool has to agree on to interoperate with a release.
-BUNDLE_SCHEMA_VERSION = 2
+BUNDLE_SCHEMA_VERSION = 3
 DESCRIPTOR_SCHEMA_VERSION = 2
 SNAPSHOT_SCHEMA_VERSION = 2
 

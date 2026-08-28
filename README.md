@@ -281,7 +281,8 @@ Bootstrap/Admin 服务或 Hub 源码。
 构建阶段先在目标 `linux/aarch64` 上准备原生 Kernel、Data、Hub、Admin、Agent、Channel、Memory
 venv 及 SDK support source；随后 `eidolon-release seal` 生成严格的 `release.json` 与 SHA-256
 sidecar。SDK 是固定构建输入，不是系统服务；7 个 service component 与 22 个 allowlist 产品系统
-资产在同一事务中切换。Channel bundle 额外拒绝未 hydration 的 Git LFS 模型指针。
+资产在同一事务中切换。Channel bundle 额外拒绝未 hydration 的 Git LFS 模型指针，并把 8 个模型与
+Linux/aarch64 依赖缓存作为 SHA-256 内容寻址对象；source archive 只保留 digest/size 指针。
 
 激活顺序固定为：排他 host lock → 完整预检 → snapshot 当前 symlink/系统资产 → 停止外部入口、
 Bootstrap、`eidolond` 与 children → 安装 allowlist 资产 → 原子切换 7 个 symlink → daemon-reload →
@@ -301,7 +302,9 @@ backup/forward/rollback 语义，不能把不可逆迁移塞进现有 symlink ro
 [ADR-0013](docs/adr/0013-unified-host-release-v2.md)。
 
 已 provision Pi 的 source staging 由 commit-pinned bundle 和 standalone target preparer 完成；Mac
-按 frozen lock 预取并哈希 Linux/aarch64 依赖，Pi 只做离线环境构建。工作站 driver 默认只传输、原生
+按 frozen lock 预取并哈希 Linux/aarch64 依赖，Pi 只做离线环境构建。Mac 与 Pi 都持久保存已校验的
+内容寻址对象，后续 release 只需传输目标缺失的 digest；每个 release 仍创建独立 venv，不跨 release
+复用环境。工作站 driver 默认只传输、原生
 构建、seal 和 dry-run，必须显式 `--resume --activate` 才切换并 doctor。它不会
 读取 working-tree 修改，也不接管 first-install identity/secret/Data baseline。详见
 [ADR-0014](docs/adr/0014-commit-pinned-pi-release-bundle.md)。

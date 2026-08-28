@@ -20,7 +20,8 @@ App 二进制不在本 release descriptor 内；手机 App 通过 Bootstrap/Loca
 
 所有 revision 都必须是完整 40-hex commit ID。工具对每个仓库执行 `git archive <commit>`，不会读取
 working tree。Channel 的 8 个模型允许在 commit 中保存标准 Git LFS pointer；builder 把 pointer bytes
-直接交给 `git lfs smudge`，再按 pointer 的 SHA-256/size 复核导出对象并写入 archive。它不读取 Channel
+直接交给 `git lfs smudge`，再按 pointer 的 SHA-256/size 复核导出对象并写入 SHA-256 内容寻址存储；
+source archive 中只写入绑定 digest/size 的小指针。它不读取 Channel
 working tree；LFS object 缺失、下载失败、digest 不符或导出后仍是 pointer 都会 fail closed。
 
 ```bash
@@ -36,9 +37,11 @@ working tree；LFS object 缺失、下载失败、digest 不符或导出后仍�
   --uv /path/to/pinned/uv-0.11.15
 ```
 
-Bundle 固定 source 顺序、目标 `linux/aarch64`、archive 路径和 SHA-256。Mac 用同一批 frozen lock
-为 Python 3.13 的 `aarch64-manylinux_2_40` ABI 预取依赖，并把压缩 uv cache、公开 index URL、固定 uv/build-tool 版本及整包摘要
-写入 manifest。摘要只检测传输/磁盘损坏，不是发布签名或来源认证。
+Bundle schema v3 固定 source 顺序、目标 `linux/aarch64`、archive 路径和 SHA-256。Mac 用同一批 frozen
+lock 为 Python 3.13 的 `aarch64-manylinux_2_40` ABI 预取依赖。确定性压缩的 uv cache 与 8 个模型都以
+digest/size 写入 `artifacts` manifest；设置 `EIDOLON_RELEASE_ARTIFACT_STORE` 后，相同 lock 输入直接复用
+已校验对象。Ops 上传时先询问 Pi 的 durable CAS，只传缺失对象。摘要只检测传输/磁盘损坏，不是发布
+签名或来源认证。
 
 ## Target-native prepare 与 seal
 
@@ -47,13 +50,16 @@ sudo python3 /path/to/bundle/prepare_target.py /path/to/bundle \
   --uv /usr/local/bin/uv
 ```
 
-Preparer 只依赖 Python 标准库。它在非阻塞 preparation lock 下重新校验所有字节，拒绝绝对路径、
+Preparer 只依赖 Python 标准库。它在非阻塞 preparation lock 下重新校验 source、manifest 与 CAS 对象，
+把完整 bundle 中的新对象原子导入 `/var/cache/eidolon/release-artifacts-v1/sha256`，或要求 thin bundle 的
+全部对象已在该目录中；随后按 manifest 还原 Channel 模型。它拒绝绝对路径、
 `..`、越界 symlink/device 等 unsafe tar member，在
 `/opt/eidolon/releases/<release_id>/` 提取 8 棵 source，并用
 `uv sync --frozen --no-dev --no-editable --offline --python-platform aarch64-manylinux_2_40`
 从已校验 cache 为 7 个运行组件建立 Pi 原生环境。预取与安装使用同一 platform selector，避免目标机
 glibc 比通用 Linux 预取基线更新时选择另一个未缓存 wheel URL。
-Data 明确安装 `api` extra。Pi prepare 阶段不访问 Python index；任一步失败删除本次新建的 release 与
+Data 明确安装 `api` extra。每个 release 仍建立新的 7 个 venv；CAS 不复用 venv。Pi prepare 阶段不
+访问 Python index；任一步失败删除本次新建的 release 与
 临时 cache，current link、secret 和数据库不变。
 
 ## Activation 状态机

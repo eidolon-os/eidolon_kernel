@@ -25,7 +25,8 @@ NATS/LiveKit 是受 systemd 管理的固定版本外部二进制；Memory、Agen
 Channel 的公开契约依赖。没有服务通过部署工具直连兄弟数据库。
 
 Channel 的 8 个 commit-pinned Git LFS pointer 由 bundle builder 直接通过 `git lfs smudge` 导出，不读取
-working tree；输出必须匹配 pointer 的 SHA-256 与 size，随后才写入 source archive。缺失 LFS object、
+working tree；输出必须匹配 pointer 的 SHA-256 与 size，随后才写入内容寻址对象，source archive 只保存
+绑定同一 SHA-256/size 的指针。缺失 LFS object、
 网络失败、digest drift 或未 hydration pointer 都被 gate 拒绝。
 Readiness 类型扩展为 TCP、generic HTTP 2xx 和 systemd active，避免用假的 JSON 健康语义包装外部服务。
 

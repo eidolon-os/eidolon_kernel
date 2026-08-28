@@ -131,6 +131,153 @@ def test_bundle_archives_exact_commits_and_rejects_byte_drift(tmp_path: Path) ->
         validate_source_bundle(output)
 
 
+def test_unchanged_locked_inputs_reuse_one_dependency_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories")
+    store = tmp_path / "artifact-store"
+    monkeypatch.setenv(bundle._ARTIFACT_STORE_ENV, str(store))
+    calls = 0
+
+    def fake_build(*, uv, source_dir, destination, workspace) -> tuple[str, ...]:
+        nonlocal calls
+        calls += 1
+        with tarfile.open(destination, "w:") as archive:
+            info = tarfile.TarInfo("archive-v0/wheel")
+            payload = b"locked-wheel"
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        return ()
+
+    monkeypatch.setattr(bundle, "_build_dependency_cache", fake_build)
+    outputs = []
+    for release_id in ("r1", "r2"):
+        output = tmp_path / release_id
+        build_source_bundle(
+            release_id=release_id,
+            repositories=repositories,
+            revisions=revisions,
+            output=output,
+        )
+        outputs.append(json.loads((output / "bundle.json").read_text(encoding="utf-8")))
+
+    assert calls == 1
+    first = next(
+        item for item in outputs[0]["artifacts"] if item["kind"] == "dependency-cache"
+    )
+    second = next(
+        item for item in outputs[1]["artifacts"] if item["kind"] == "dependency-cache"
+    )
+    assert first["sha256"] == second["sha256"]
+    assert (store / "sha256" / first["sha256"]).is_file()
+
+
+def test_target_warm_cache_prepares_a_thin_bundle_without_carried_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories")
+    bundles = []
+    for release_id in ("cold", "warm"):
+        output = tmp_path / f"bundle-{release_id}"
+        build_source_bundle(
+            release_id=release_id,
+            repositories=repositories,
+            revisions=revisions,
+            output=output,
+        )
+        bundles.append(output)
+    root = tmp_path / "host"
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\n", encoding="utf-8")
+    uv.chmod(0o755)
+
+    def fake_run(operation: str, *command: str) -> None:
+        if operation == "native environment preparation" and command[-1].endswith(
+            "eidolon_kernel"
+        ):
+            release_root = Path(command[-1]).parent
+            sealer = release_root / "eidolon_kernel/.venv/bin/eidolon-release"
+            sealer.parent.mkdir(parents=True, exist_ok=True)
+            sealer.write_text("#!/bin/sh\n", encoding="utf-8")
+            sealer.chmod(0o755)
+        if operation == "release sealing":
+            release_root = Path(command[0]).parents[3]
+            (release_root / "release.json").write_text("{}\n", encoding="utf-8")
+            (release_root / "release.json.sha256").write_text("test\n", encoding="utf-8")
+
+    monkeypatch.setattr(prepare_target, "_run", fake_run)
+    prepare_target_release(
+        bundles[0],
+        uv=uv,
+        host_root=root,
+        system="linux",
+        machine="aarch64",
+        require_root=False,
+    )
+    shutil.rmtree(bundles[1] / "artifacts")
+    prepare_target_release(
+        bundles[1],
+        uv=uv,
+        host_root=root,
+        system="linux",
+        machine="aarch64",
+        require_root=False,
+    )
+
+    model = next(iter(_CHANNEL_MODEL_PATHS))
+    assert (root / "opt/eidolon/releases/warm/eidolon_channel" / model).stat().st_size > 1024
+
+
+def test_thin_bundle_fails_before_release_visibility_when_cas_object_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output, _ = _build_bundle(tmp_path)
+    document = json.loads((output / "bundle.json").read_text(encoding="utf-8"))
+    shutil.rmtree(output / "artifacts")
+    root = tmp_path / "host"
+    store = root / "var/cache/eidolon/release-artifacts-v1/sha256"
+    store.mkdir(parents=True)
+    # Seed every object except one, exactly as a partially warm Host would.
+    missing = document["artifacts"][0]["sha256"]
+    # The original object bytes are gone with the thin bundle, so synthesize
+    # only the objects whose digest is known from a second identical build.
+    repositories, revisions = _repositories(tmp_path / "second-repositories")
+    second = tmp_path / "second"
+    build_source_bundle(
+        release_id="second",
+        repositories=repositories,
+        revisions=revisions,
+        output=second,
+    )
+    second_by_id = {
+        item["artifact_id"]: item
+        for item in json.loads((second / "bundle.json").read_text(encoding="utf-8"))["artifacts"]
+    }
+    for item in document["artifacts"]:
+        if item["sha256"] == missing:
+            continue
+        candidate = second_by_id[item["artifact_id"]]
+        source = second / candidate["bundle_path"]
+        # Fixture repositories produce the same model bytes and dependency tar.
+        if hashlib.sha256(source.read_bytes()).hexdigest() == item["sha256"]:
+            shutil.copyfile(source, store / item["sha256"])
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\n", encoding="utf-8")
+    uv.chmod(0o755)
+    monkeypatch.setattr(prepare_target, "_run", lambda *_args: None)
+
+    with pytest.raises(TargetPreparationError, match="required artifact is absent"):
+        prepare_target_release(
+            output,
+            uv=uv,
+            host_root=root,
+            system="linux",
+            machine="aarch64",
+            require_root=False,
+        )
+    assert not (root / "opt/eidolon/releases/20260807-bundle-test").exists()
+
+
 def test_bundle_rejects_unmanifested_transfer_bytes(tmp_path: Path) -> None:
     output, _ = _build_bundle(tmp_path)
     (output / ".python-dependency-cache").mkdir()
@@ -250,7 +397,13 @@ def test_bundle_hydrates_exact_commit_lfs_models_without_working_tree(
     with tarfile.open(output / "sources/eidolon_channel.tar", "r:") as archive:
         stream = archive.extractfile(relative)
         assert stream is not None
-        assert stream.read() == hydrated
+        pointer_bytes = stream.read()
+        assert hashlib.sha256(hydrated).hexdigest().encode() in pointer_bytes
+    document = json.loads((output / "bundle.json").read_text(encoding="utf-8"))
+    record = next(
+        item for item in document["artifacts"] if item["install_path"] == relative
+    )
+    assert (output / record["bundle_path"]).read_bytes() == hydrated
 
 
 def test_lfs_smudge_verifies_pointer_digest(monkeypatch, tmp_path: Path) -> None:
