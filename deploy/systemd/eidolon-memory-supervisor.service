@@ -15,7 +15,9 @@ Environment=EIDOLON_MEMORY_DOTENV_MODE=environment
 Environment=EIDOLON_MEMORY_SETTINGS_YAML=/etc/eidolon/memory.yaml
 Environment=EIDOLON_MEMORY_LOG_DIR=/var/log/eidolon/memory
 Environment=EIDOLON_MEMORY_RUN_DIR=/run/eidolon/memory
-Environment=EIDOLON_MEMORY_PALACES_ROOT=/var/lib/eidolon/memory/mempalaces
+# MemPalace 3.8 deliberately starts a new storage epoch. The former
+# `mempalaces` directory remains untouched for operator-controlled rollback.
+Environment=EIDOLON_MEMORY_PALACES_ROOT=/var/lib/eidolon/memory/mempalaces-v3.8
 Environment=EIDOLON_ADMIN_API_URL=http://127.0.0.1:9000
 Environment=PATH=/opt/eidolon/current/eidolon_memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/opt/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-supervisor
