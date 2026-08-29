@@ -255,3 +255,16 @@ def test_memory_supervisor_can_be_reloaded_without_stopping_realms() -> None:
     service = _unit("eidolon-memory-supervisor.service")["Service"]
     assert service["ExecReload"] == "/bin/kill -HUP $MAINPID"
     assert service["KillSignal"] == "SIGTERM"
+
+
+def test_memory_38_uses_a_fresh_storage_epoch() -> None:
+    unit = (SYSTEMD / "eidolon-memory-supervisor.service").read_text(encoding="utf-8")
+
+    assert (
+        "Environment=EIDOLON_MEMORY_PALACES_ROOT="
+        "/var/lib/eidolon/memory/mempalaces-v3.8" in unit
+    )
+    assert (
+        "Environment=EIDOLON_MEMORY_PALACES_ROOT=/var/lib/eidolon/memory/mempalaces\n"
+        not in unit
+    )
