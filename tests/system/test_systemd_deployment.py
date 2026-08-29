@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import re
 from pathlib import Path
 
 import yaml
@@ -126,15 +127,26 @@ def test_livekit_does_not_offer_devices_an_address_off_their_link() -> None:
 
 def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
     policy = POLKIT.read_text(encoding="utf-8")
+    document = yaml.safe_load(
+        (ROOT / "config/system-services.yaml").read_text(encoding="utf-8")
+    )
+    managed_targets = {
+        item["host_targets"]["systemd"]
+        for item in document["services"]
+        if item["host_targets"]["systemd"] != "external"
+    }
+    allowlist = policy.split("var allowedUnits = [", 1)[1].split("];", 1)[0]
+    allowed_targets = set(re.findall(r'"([a-z0-9.-]+\.service)"', allowlist))
 
     assert 'action.id !== "org.freedesktop.systemd1.manage-units"' in policy
     assert 'subject.user !== "eidolon"' in policy
     assert 'subject.system_unit !== "eidolond.service"' in policy
     assert "!subject.no_new_privileges" in policy
-    assert '"eidolon-hub.service"' in policy
-    assert '"eidolon-data.service"' in policy
-    assert '"eidolon-data-workspace.service"' in policy
-    assert '"eidolon-kernel.service"' in policy
+    # The service catalog and privilege boundary are one contract. A catalogued
+    # target missing here is accepted by every static release check but cannot
+    # be started by the unprivileged eidolond process; an extra target silently
+    # broadens its authority.
+    assert allowed_targets == managed_targets
     assert 'var allowedVerbs = ["start", "stop", "restart"]' in policy
     assert "manage-unit-files" not in policy
     assert "daemon-reload" not in policy
