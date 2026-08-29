@@ -1,7 +1,7 @@
 [Unit]
 Description=Eidolon Memory realm supervisor
-After=local-fs.target eidolon-nats.service eidolon-admin.service
-Wants=eidolon-nats.service eidolon-admin.service
+After=local-fs.target eidolon-nats.service eidolon-admin.service eidolon-memory-embedder.service
+Wants=eidolon-nats.service eidolon-admin.service eidolon-memory-embedder.service
 StartLimitIntervalSec=0
 
 [Service]

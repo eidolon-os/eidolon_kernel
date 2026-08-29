@@ -38,6 +38,7 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-channel-provider"),
     ),
     "eidolon_memory": (
+        Path(".venv/bin/eidolon-memory-embedder"),
         Path(".venv/bin/eidolon-memory-supervisor"),
         Path(".venv/bin/eidolon-memory-discovery"),
     ),
@@ -127,6 +128,10 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-memory-supervisor.service"),
     ),
+    Path("/etc/systemd/system/eidolon-memory-embedder.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-memory-embedder.service"),
+    ),
     Path("/etc/systemd/system/eidolon-memory-discovery.service"): (
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-memory-discovery.service"),
@@ -172,6 +177,7 @@ V2_AFFECTED_UNITS = (
     "eidolon-kernel.service",
     "eidolon-nats.service",
     "eidolon-livekit.service",
+    "eidolon-memory-embedder.service",
     "eidolon-memory-supervisor.service",
     "eidolon-memory-discovery.service",
     "eidolon-agent.service",
@@ -199,6 +205,12 @@ V2_READINESS = {
     ),
     "nats": ("http", "http://127.0.0.1:8222/healthz", None, "ok"),
     "livekit": ("tcp", "tcp://127.0.0.1:7880", None, "open"),
+    "memory-embedder": (
+        "http",
+        "http://127.0.0.1:8760/v1/health",
+        None,
+        "ok",
+    ),
     "memory": (
         "http",
         "http://127.0.0.1:8020/api/discovery/agent-routing",

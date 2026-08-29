@@ -166,6 +166,7 @@ def test_service_set_is_the_full_product_topology() -> None:
         "kernel",
         "livekit",
         "memory-discovery",
+        "memory-embedder",
         "memory-supervisor",
         "nats",
     ]

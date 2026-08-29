@@ -94,6 +94,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "lock_sha256": "5" * 64,
                 "environment_sha256": "6" * 64,
                 "required_entrypoints": [
+                    ".venv/bin/eidolon-memory-embedder",
                     ".venv/bin/eidolon-memory-supervisor",
                     ".venv/bin/eidolon-memory-discovery",
                 ],
@@ -220,6 +221,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
+                    "deploy/systemd/eidolon-memory-embedder.service",
+                    "/etc/systemd/system/eidolon-memory-embedder.service",
+                    "9",
+                ),
+                (
+                    "eidolon_kernel",
                     "deploy/systemd/eidolon-memory-supervisor.service",
                     "/etc/systemd/system/eidolon-memory-supervisor.service",
                     "3",
@@ -283,6 +290,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             "eidolon-kernel.service",
             "eidolon-nats.service",
             "eidolon-livekit.service",
+            "eidolon-memory-embedder.service",
             "eidolon-memory-supervisor.service",
             "eidolon-memory-discovery.service",
             "eidolon-agent.service",
@@ -350,6 +358,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "kind": "tcp",
                 "url": "tcp://127.0.0.1:7880",
                 "expected_status": "open",
+            },
+            {
+                "check_id": "memory-embedder",
+                "kind": "http",
+                "url": "http://127.0.0.1:8760/v1/health",
+                "expected_status": "ok",
             },
             {
                 "check_id": "memory",

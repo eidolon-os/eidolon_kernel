@@ -223,8 +223,9 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
     } == {
         "nats": "external",
         "livekit": "livekit:livekit-server",
-        "memory-supervisor": "memory:memory-supervisor",
-        "memory-discovery": "memory:memory-discovery",
+            "memory-supervisor": "memory:memory-supervisor",
+            "memory-embedder": "memory:memory-embedder",
+            "memory-discovery": "memory:memory-discovery",
         "data": "data:data-api",
         "data-workspace": "data:data-workspace-api",
         "hub": "hub:hub-api",

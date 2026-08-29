@@ -1,0 +1,38 @@
+[Unit]
+Description=Eidolon Memory shared embedding service
+After=local-fs.target
+Before=eidolon-memory-supervisor.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eidolon
+Group=eidolon
+UMask=0007
+EnvironmentFile=/etc/eidolon/memory.env
+EnvironmentFile=/etc/eidolon/host.env
+Environment=EIDOLON_MEMORY_DOTENV_MODE=environment
+Environment=EIDOLON_MEMORY_SETTINGS_YAML=/etc/eidolon/memory.yaml
+Environment=PATH=/opt/eidolon/current/eidolon_memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/eidolon/current/eidolon_memory/.venv/bin/eidolon-memory-embedder --host 127.0.0.1 --port 8760
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+StateDirectory=eidolon/memory
+StateDirectoryMode=0750
+RuntimeDirectory=eidolon/memory
+RuntimeDirectoryMode=0750
+LogsDirectory=eidolon/memory
+LogsDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

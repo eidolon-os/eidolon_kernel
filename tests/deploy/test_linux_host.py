@@ -208,7 +208,7 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
     verify_call = next(
         call for call in runner.calls if call[:2] == ("/usr/bin/systemd-analyze", "verify")
     )
-    assert len(verify_call[2:]) == 16
+    assert len(verify_call[2:]) == 17
     assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
 
@@ -342,6 +342,7 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
         ("stop", "eidolon-agent.service"),
         ("stop", "eidolon-memory-discovery.service"),
         ("stop", "eidolon-memory-supervisor.service"),
+        ("stop", "eidolon-memory-embedder.service"),
         ("stop", "eidolon-livekit.service"),
         ("stop", "eidolon-nats.service"),
         ("stop", "eidolon-kernel.service"),
@@ -419,7 +420,7 @@ def test_doctor_requires_the_sealed_release_to_be_active(tmp_path: Path) -> None
     active_checks = [
         call for call in runner.calls if call[:3] == ("/usr/bin/systemctl", "is-active", "--quiet")
     ]
-    assert len(active_checks) == 16
+    assert len(active_checks) == 17
 
 
 def test_preflight_fails_closed_on_source_or_secret_drift(tmp_path: Path) -> None:
@@ -684,8 +685,9 @@ def test_first_install_rollback_restores_only_previous_units_and_readiness(
         "lifecycle-workflow",
         "local-api",
         "nats",
-        "livekit",
-        "memory",
+            "livekit",
+            "memory-embedder",
+            "memory",
         "agent",
         "channel-provider",
         "channel",

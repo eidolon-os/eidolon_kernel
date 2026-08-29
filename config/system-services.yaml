@@ -52,11 +52,25 @@ services:
     description: Memory Realm process reconciliation owner
     required: true
     enabled_by_default: true
-    dependencies: [nats]
+    dependencies: [nats, memory-embedder]
     host_targets:
       systemd: eidolon-memory-supervisor.service
       supervisord: memory:memory-supervisor
     endpoints: []
+  - service_id: memory-embedder
+    description: Shared loopback BGE encoder for all Memory Realms
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-memory-embedder.service
+      supervisord: memory:memory-embedder
+    endpoints:
+      - endpoint_id: memory-embedding.http
+        protocol: http
+        address: http://127.0.0.1:8760/v1
+        contract: openai.embeddings.v1
+        health_url: http://127.0.0.1:8760/v1/health
   - service_id: memory-discovery
     description: Owner-scoped Memory routing discovery
     required: true

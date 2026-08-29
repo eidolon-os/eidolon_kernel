@@ -48,7 +48,7 @@
     "system_assets": {
       "type": "array",
       "minItems": 23,
-      "maxItems": 23,
+      "maxItems": 24,
       "items": {"$ref": "#/$defs/systemAsset"}
     },
     "required_secrets": {
@@ -59,8 +59,8 @@
     },
     "affected_units": {
       "type": "array",
-      "minItems": 15,
-      "maxItems": 15,
+      "minItems": 16,
+      "maxItems": 16,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -74,6 +74,7 @@
           "eidolon-kernel.service",
           "eidolon-nats.service",
           "eidolon-livekit.service",
+          "eidolon-memory-embedder.service",
           "eidolon-memory-supervisor.service",
           "eidolon-memory-discovery.service",
           "eidolon-agent.service",
@@ -84,8 +85,8 @@
     },
     "readiness_checks": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 15,
+      "maxItems": 15,
       "items": {"$ref": "#/$defs/readinessCheck"}
     },
     "database_migrations": {
