@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 
-from eidolon_system.domain.errors import Conflict, HostOperationFailed
+from eidolon_system.domain.errors import Conflict, HostOperationFailed, NotFound
 from eidolon_system.domain.model import (
     ServiceCatalog,
     ServiceDefinition,
@@ -20,6 +21,9 @@ from eidolon_system.ports.runtime import (
     ServiceDirectory,
     SystemStateStore,
 )
+
+
+_log = logging.getLogger(__name__)
 
 
 def _fingerprint(operation: str, service_id: str, expected_revision: int) -> str:
@@ -62,7 +66,7 @@ class ServiceManager:
             now = self.clock.now()
             self.store.ensure_services(self.catalog.definitions, now=now)
             for definition in self.catalog.definitions:
-                self.directory.put(
+                self._publish(
                     ServiceStatus(
                         service_id=definition.service_id,
                         required=definition.required,
@@ -100,7 +104,7 @@ class ServiceManager:
                 for dependency in definition.dependencies
             )
             if not dependencies_ready:
-                self.directory.put(
+                self._publish(
                     ServiceStatus(
                         service_id=definition.service_id,
                         required=definition.required,
@@ -119,7 +123,7 @@ class ServiceManager:
             # Desired state says off and the thing that could turn it off is
             # not this Host's driver. Reporting "inactive" would claim a stop
             # that never happened, so the gap is published as what it is.
-            self.directory.put(
+            self._publish(
                 ServiceStatus(
                     service_id=definition.service_id,
                     required=definition.required,
@@ -140,7 +144,7 @@ class ServiceManager:
         except HostOperationFailed as exc:
             runtime_state = "failed"
             detail = str(exc)
-        self.directory.put(
+        self._publish(
             ServiceStatus(
                 service_id=definition.service_id,
                 required=definition.required,
@@ -149,6 +153,39 @@ class ServiceManager:
                 detail=detail,
                 observed_at=self.clock.now(),
             )
+        )
+
+
+    def _publish(self, status: ServiceStatus) -> None:
+        """Record a status, and say so when it changed.
+
+        Every status the reconciler produces goes through here, which is also
+        the only place that can tell a new observation from a repeated one.
+        That distinction is the whole point: reconciliation runs every few
+        seconds, so logging each observation would bury the one that matters,
+        and logging none — which is what happened before — leaves an operator
+        with "readiness timeout: nats, kernel, ..." and no way to learn that
+        every start was refused by polkit. The reason was already here, in
+        detail, published to a directory nothing durable read.
+        """
+
+        try:
+            previous = self.directory.get(status.service_id)
+        except NotFound:
+            previous = None
+        self.directory.put(status)
+        unchanged = previous is not None and (
+            previous.runtime_state,
+            previous.detail,
+        ) == (status.runtime_state, status.detail)
+        if unchanged:
+            return
+        _log.log(
+            logging.ERROR if status.runtime_state == "failed" else logging.INFO,
+            "service %s: %s%s",
+            status.service_id,
+            status.runtime_state,
+            f" ({status.detail})" if status.detail else "",
         )
 
     async def _start_or_observe(self, definition: ServiceDefinition, state) -> None:
@@ -195,7 +232,7 @@ class ServiceManager:
                 detail=str(exc),
                 observed_at=self.clock.now(),
             )
-        self.directory.put(status)
+        self._publish(status)
 
     async def _observe_external(self, definition: ServiceDefinition, state) -> None:
         """Publish an unmanaged service from its own health, not from a target.
@@ -208,7 +245,7 @@ class ServiceManager:
 
         health_urls = self._health_urls(definition)
         if not health_urls:
-            self.directory.put(
+            self._publish(
                 ServiceStatus(
                     service_id=definition.service_id,
                     required=definition.required,
@@ -221,7 +258,7 @@ class ServiceManager:
             return
         checks = await asyncio.gather(*(self.readiness.check(url) for url in health_urls))
         ready = all(checks)
-        self.directory.put(
+        self._publish(
             ServiceStatus(
                 service_id=definition.service_id,
                 required=definition.required,
