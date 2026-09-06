@@ -664,3 +664,62 @@ def test_a_file_this_kernel_cannot_read_at_all_is_not_reported_as_acceptable(
 
     assert absent["accepted"] is None
     assert absent["unreadable"] is not None
+
+
+def test_the_refusal_names_a_command_that_matches_this_databases_state(tmp_path) -> None:
+    """A bare ``--apply`` is not one command; it is three.
+
+    The first version of this named ``--apply`` in every state, including the
+    two where the repair needs an acknowledgement ``--apply`` alone does not
+    carry. On a database one schema version behind — the most likely one there
+    is, and the first one anybody pointed this at — that printed an instruction
+    which always refused back.
+
+    Which is this change's own defect committed one layer up: a path that reads
+    as available and is not. So the sentence names the command for the state the
+    database is actually in, and ``eidolon_ops`` holds the matching assertion
+    that every command named here is one its gate accepts.
+    """
+
+    empty = tmp_path / "empty.sqlite3"
+    SqliteMountStore(empty).close()
+    assert selection_census(empty).remediation().endswith("--apply")
+
+    loaded = tmp_path / "loaded.sqlite3"
+    store = SqliteMountStore(loaded)
+    try:
+        for index, companion in enumerate(("companion-1", "companion-2"), start=1):
+            _, assignment = _assignment(companion_id=companion, request_id=f"assign-{index}")
+            store.commit_assignment(
+                assignment=replace(
+                    assignment, body_endpoint_id=f"body-{index}", device_id=f"device-{index}"
+                ),
+                expected_revision=0,
+                mount_revision=1,
+                event_type="eidolon.kernel.body-assignment-created.v1",
+                event_data={"previous_revision": 0},
+            )
+    finally:
+        store.close()
+    assert selection_census(loaded).remediation().endswith("--apply --forget-selections 2")
+    assert "--forget-selections 2" in _stale(loaded)
+
+    # The shape that exposed this: no assignment table at all to count.
+    older = tmp_path / "older.sqlite3"
+    connection = sqlite3.connect(older)
+    connection.execute("CREATE TABLE kernel_device_mounts(device_id TEXT PRIMARY KEY)")
+    connection.commit()
+    connection.close()
+    with pytest.raises(RuntimeError) as raised:
+        SqliteMountStore(older)
+    assert "--apply --forget-uncounted-selections" in str(raised.value)
+
+
+def test_a_database_this_kernel_could_not_read_is_promised_no_command(tmp_path) -> None:
+    """Prescribing an ending for a file it never opened is a guess in a sentence."""
+
+    census = selection_census(tmp_path / "absent.sqlite3")
+
+    assert census.remediation() is None
+    assert "kernel-schema-reset" not in census.notice()
+    assert "this Kernel cannot tell you what is in it" in census.notice()

@@ -185,6 +185,7 @@ class SelectionCensus:
             "selection_column": SELECTION_COLUMN,
             "countable": self.selections is not None,
             "unreadable": self.unreadable,
+            "remediation": self.remediation(),
         }
 
     def cost(self) -> str:
@@ -219,14 +220,47 @@ class SelectionCensus:
             "which Companion answers through each of those devices."
         )
 
+    def remediation(self) -> str | None:
+        """The exact command that will set *this* database aside, flags and all.
+
+        Flags and all, because a bare ``--apply`` is not one command — it is
+        three, and which one it is depends on the census. The first version of
+        this named ``--apply`` in every state, including the state where the
+        repair demands an acknowledgement ``--apply`` alone does not carry. On
+        the most likely database in the workspace — one schema version behind,
+        so with no ``kernel_body_assignments`` at all — that produced a refusal
+        telling the operator to run a command that always refused back.
+
+        Which is the same defect this whole census exists to remove, one layer
+        up: a path that reads as available and is not. So the sentence names the
+        command that works, and ops holds a test that every command named here
+        is one its gate accepts.
+        """
+
+        if self.unreadable is not None:
+            # Nothing is promised here on purpose. A database this Kernel could
+            # not open is not one it can prescribe an ending for.
+            return None
+        if self.selections is None:
+            return f"{REMEDIATION_COMMAND} --apply --forget-uncounted-selections"
+        if self.selections == 0:
+            return f"{REMEDIATION_COMMAND} --apply"
+        return f"{REMEDIATION_COMMAND} --apply --forget-selections {self.selections}"
+
     def notice(self) -> str:
         """The cost, plus why no other copy of this Host can supply it back."""
 
+        command = self.remediation()
+        ending = (
+            "Read the file yourself before going further; this Kernel cannot tell you "
+            "what is in it."
+            if command is None
+            else f"Set it aside — it is renamed, not deleted — with `{command}`."
+        )
         return (
             f"{self.cost()} Device mounts come back from the Hub Claim stream; an Owner's "
             "Companion selection does not, and a backup of this file is a backup at the "
-            "schema this Kernel just refused. Set it aside — do not delete it — with "
-            f"`{REMEDIATION_COMMAND} --apply`."
+            f"schema this Kernel just refused. {ending}"
         )
 
 
