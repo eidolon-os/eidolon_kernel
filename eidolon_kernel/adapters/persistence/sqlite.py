@@ -7,6 +7,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,259 @@ _EXPECTED_COLUMNS = {
         "updated_at",
     },
 }
+
+
+#: Where this Kernel keeps the one fact in this database that nothing else can
+#: give back, and the column in it that names the chosen Companion.
+#:
+#: Both are spelled here rather than inline so the refusal below and the census
+#: an operator asks for before repairing a Host read the same two names. The day
+#: the selection moves to another table, this pair moves with it — and if it is
+#: ever forgotten, the census says it cannot count rather than answering zero.
+SELECTION_TABLE = "kernel_body_assignments"
+SELECTION_COLUMN = "companion_id"
+
+#: The operation that owns setting a refused database aside. Named inside the
+#: refusal because the refusal is the moment somebody chooses between a command
+#: and ``rm``, and until this existed only ``rm`` was on offer.
+REMEDIATION_COMMAND = "eidolon <host> kernel-schema-reset"
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionCensus:
+    """What setting one refused Kernel database aside would actually destroy.
+
+    This Kernel supports no migrations, so a schema it does not recognise is a
+    Host that will not start, and the only way to start it is to set the file
+    aside. That is the right refusal — opening a database of unknown shape as
+    if it were this one is worse. What was missing is the price on it.
+
+    The price is not the file. Mounts are rebuilt from the Hub's Claim stream,
+    and the audit log and request ledger are evidence rather than authority. One
+    fact in here is authoritative nowhere else: which Companion the Owner chose
+    to answer through each Body. Only an explicit Owner command can write it
+    (``domain/body.py``), the Claim stream cannot replay it because the Hub was
+    never told, and a backup of this file is a backup at the schema it was taken
+    at — which is precisely the shape the new Kernel refuses. Setting the file
+    aside destroys it, and nothing gets it back except the Owner choosing again.
+
+    So the count travels with the refusal. It is a count and not a guess: when
+    this database does not have the table this Kernel stores selections in,
+    ``selections`` is ``None`` and the refusal says it cannot count, rather than
+    saying zero. A false zero here is the one answer that would make things
+    worse than the silence it replaces.
+    """
+
+    schema_version: int | None
+    mounts: int | None
+    assignments: int | None
+    selections: int | None
+    unreadable: str | None = None
+
+    def as_document(self) -> dict[str, Any]:
+        """The same census as JSON, for whoever is repairing the Host.
+
+        Ops reads this through the Kernel's own interpreter rather than
+        restating the two table names on its side; there is one definition of
+        where the selection lives and both readers use it.
+        """
+
+        return {
+            "schema_version": self.schema_version,
+            "mounts": self.mounts,
+            "assignments": self.assignments,
+            "selections": self.selections,
+            "selection_table": SELECTION_TABLE,
+            "selection_column": SELECTION_COLUMN,
+            "countable": self.selections is not None,
+            "unreadable": self.unreadable,
+        }
+
+    def cost(self) -> str:
+        """One sentence naming what setting this database aside would take."""
+
+        if self.unreadable is not None:
+            return (
+                "This Kernel could not read the database to say what setting it aside "
+                f"would destroy ({self.unreadable}), so treat it as holding Owner "
+                "Companion selections until something proves otherwise."
+            )
+        if self.selections is None:
+            held = (
+                "an unknown number of device mounts"
+                if self.mounts is None
+                else _plural(self.mounts, "device mount")
+            )
+            return (
+                f"Setting it aside destroys every Owner Companion selection it holds, and "
+                f"this Kernel cannot say how many that is: the database has no "
+                f"{SELECTION_TABLE}.{SELECTION_COLUMN} to count. It holds {held}."
+            )
+        if self.selections == 0:
+            return (
+                "Setting it aside destroys no Owner Companion selection: of the "
+                f"{_plural(self.assignments or 0, 'Body assignment')} here, none names a "
+                "Companion."
+            )
+        return (
+            f"Setting it aside destroys {self.selections} of "
+            f"{_plural(self.assignments or 0, 'Body assignment')} — the Owner's choice of "
+            "which Companion answers through each of those devices."
+        )
+
+    def notice(self) -> str:
+        """The cost, plus why no other copy of this Host can supply it back."""
+
+        return (
+            f"{self.cost()} Device mounts come back from the Hub Claim stream; an Owner's "
+            "Companion selection does not, and a backup of this file is a backup at the "
+            "schema this Kernel just refused. Set it aside — do not delete it — with "
+            f"`{REMEDIATION_COMMAND} --apply`."
+        )
+
+
+def schema_refusal(connection: sqlite3.Connection) -> str | None:
+    """Why this Kernel will not use the database behind this connection, if it will not.
+
+    Lifted out of the store so that "does this release's Kernel accept this
+    file" has one answer and two askers: the Kernel deciding whether to start,
+    and whoever is repairing a Host that did not. The repair used to have to
+    infer it — from a version number, or from the fact that the service was
+    crash-looping — and an inference is exactly what must not be standing behind
+    a decision to set an authority aside.
+    """
+
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    if tables != set(_EXPECTED_COLUMNS):
+        return "kernel SQLite schema is partial or unknown; migrations are unsupported"
+    for table, expected in _EXPECTED_COLUMNS.items():
+        actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if actual != expected:
+            return f"kernel SQLite table {table} does not match schema v{SCHEMA_VERSION}"
+    version_row = connection.execute("SELECT schema_version FROM kernel_schema_meta").fetchall()
+    if len(version_row) != 1 or version_row[0][0] != SCHEMA_VERSION:
+        return "kernel SQLite schema version is unsupported"
+    return None
+
+
+def schema_report(path: Path) -> dict[str, Any]:
+    """Everything a repair needs to decide, read off the file without opening the store.
+
+    One call rather than several, and answered by the Kernel rather than
+    restated by the operator's tooling: whether this Kernel accepts the
+    database, why not if it does not, what setting it aside would destroy, and
+    the sentence to put in front of a person. Ops runs this through the Kernel's
+    own interpreter, so the number in the refusal an operator saw and the number
+    in the plan they are about to approve cannot disagree.
+
+    Nothing here raises. A repair tool that crashed while asking what a repair
+    would cost would send its operator back to ``rm``, which is the whole thing
+    this exists to replace.
+    """
+
+    census = selection_census(path)
+    accepted: bool | None = None
+    refusal: str | None = None
+    if census.unreadable is None:
+        try:
+            connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                refusal = schema_refusal(connection)
+            finally:
+                connection.close()
+            accepted = refusal is None
+        except sqlite3.Error as exc:
+            refusal = f"kernel SQLite schema could not be read: {exc}"
+    return {
+        "path": str(path),
+        "code_schema_version": SCHEMA_VERSION,
+        "accepted": accepted,
+        "refusal": refusal,
+        "notice": census.notice(),
+        **census.as_document(),
+    }
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def selection_census(path: Path) -> SelectionCensus:
+    """Count, without opening the store, what one Kernel database would cost.
+
+    Read-only and side-effect free by construction: the caller is either a
+    Kernel that is already refusing to start, or an operator deciding whether to
+    set the file aside. Neither may be the reason the file changes.
+    """
+
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return SelectionCensus(None, None, None, None, unreadable=str(exc))
+    try:
+        return _selection_census(connection)
+    finally:
+        connection.close()
+
+
+def _selection_census(connection: sqlite3.Connection) -> SelectionCensus:
+    try:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    except sqlite3.Error as exc:
+        return SelectionCensus(None, None, None, None, unreadable=str(exc))
+    version: int | None = None
+    if "kernel_schema_meta" in tables:
+        rows = _rows(connection, "SELECT schema_version FROM kernel_schema_meta")
+        if rows is not None and len(rows) == 1:
+            version = rows[0][0] if isinstance(rows[0][0], int) else None
+    mounts = (
+        _count(connection, "SELECT count(*) FROM kernel_device_mounts")
+        if "kernel_device_mounts" in tables
+        else None
+    )
+    if SELECTION_TABLE not in tables:
+        return SelectionCensus(version, mounts, None, None)
+    assignments = _count(connection, f"SELECT count(*) FROM {SELECTION_TABLE}")
+    columns = _rows(connection, f"PRAGMA table_info({SELECTION_TABLE})")
+    if columns is None or SELECTION_COLUMN not in {row[1] for row in columns}:
+        return SelectionCensus(version, mounts, assignments, None)
+    selections = _count(
+        connection,
+        f"SELECT count(*) FROM {SELECTION_TABLE} WHERE {SELECTION_COLUMN} IS NOT NULL",
+    )
+    return SelectionCensus(version, mounts, assignments, selections)
+
+
+def _rows(connection: sqlite3.Connection, sql: str) -> list[Any] | None:
+    """A query whose failure is an answer of "unknown" rather than an exception.
+
+    Every caller here runs while something has already gone wrong with this
+    file. A census that can raise would turn a refusal that names its cost into
+    a stack trace that names nothing — strictly worse than the silence it is
+    replacing — so nothing in the census is allowed to fail loudly.
+    """
+
+    try:
+        return list(connection.execute(sql))
+    except sqlite3.Error:
+        return None
+
+
+def _count(connection: sqlite3.Connection, sql: str) -> int | None:
+    rows = _rows(connection, sql)
+    if rows is None or len(rows) != 1 or not isinstance(rows[0][0], int):
+        return None
+    return rows[0][0]
 
 
 def _timestamp(value: datetime) -> str:
@@ -367,27 +621,27 @@ class SqliteMountStore:
         self._validate_schema()
 
     def _validate_schema(self) -> None:
-        tables = {
-            row[0]
-            for row in self._connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-        }
-        if tables != set(_EXPECTED_COLUMNS):
-            raise RuntimeError(
-                "kernel SQLite schema is partial or unknown; migrations are unsupported"
-            )
-        for table, expected in _EXPECTED_COLUMNS.items():
-            actual = {row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")}
-            if actual != expected:
-                raise RuntimeError(
-                    f"kernel SQLite table {table} does not match schema v{SCHEMA_VERSION}"
-                )
-        version_row = self._connection.execute(
-            "SELECT schema_version FROM kernel_schema_meta"
-        ).fetchall()
-        if len(version_row) != 1 or version_row[0][0] != SCHEMA_VERSION:
-            raise RuntimeError("kernel SQLite schema version is unsupported")
+        reason = schema_refusal(self._connection)
+        if reason is not None:
+            raise self._refuse(reason)
+
+    def _refuse(self, reason: str) -> RuntimeError:
+        """Refuse this database, and say what starting without it would cost.
+
+        Every one of the three refusals above ends the same way for whoever is
+        holding the Host: this file has to be set aside for the Kernel to run.
+        So all three carry the same second half. Which of the three fired says
+        what is wrong with the file; the census says what is *in* it, and that
+        is the half nobody had — the loss used to be discovered afterwards, by
+        an Owner whose speaker had stopped answering as anyone.
+
+        The census reads the connection this Kernel already refused to trust,
+        which is exactly why nothing in it may raise: an exception thrown while
+        composing an error message replaces a refusal that names its cost with a
+        traceback that names nothing.
+        """
+
+        return RuntimeError(f"{reason}. {_selection_census(self._connection).notice()}")
 
     def close(self) -> None:
         connection = getattr(self, "_connection", None)

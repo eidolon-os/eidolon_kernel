@@ -8,7 +8,11 @@ import pytest
 from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventStreamItem
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
-from eidolon_kernel.adapters.persistence.sqlite import SqliteMountStore
+from eidolon_kernel.adapters.persistence.sqlite import (
+    SqliteMountStore,
+    schema_report,
+    selection_census,
+)
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
 from eidolon_kernel.domain.body import BodyAssignment, derived_endpoint
 from eidolon_kernel.domain.errors import IdempotencyConflict, RevisionConflict
@@ -453,3 +457,210 @@ def test_an_assignment_survives_restart_because_it_is_keyed_to_the_body(tmp_path
         assert restarted.list_assignments() == (assignment,)
     finally:
         restarted.close()
+
+
+def _stale(path) -> str:
+    """Refuse a v8 database that has been moved off v8, and return the message."""
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE kernel_requests ADD COLUMN arrived_late TEXT")
+    connection.commit()
+    connection.close()
+    with pytest.raises(RuntimeError) as raised:
+        SqliteMountStore(path)
+    return str(raised.value)
+
+
+def test_a_refused_database_says_how_many_owner_selections_it_would_cost(tmp_path) -> None:
+    """The refusal is right; what it left out was the price of obeying it.
+
+    A Kernel that will not open this file cannot be started until the file is
+    set aside, and setting it aside destroys the one fact in here that nothing
+    else on this Host can supply back: which Companion the Owner chose to answer
+    through each Body. Mounts return from the Hub Claim stream, and a backup of
+    this file is a backup at the schema just refused, so neither is a way back.
+
+    Before this, an operator met ``schema is partial or unknown`` and reached for
+    ``rm`` — the workspace still holds one file somebody renamed by hand, with no
+    record of what went with it.
+    """
+
+    path = tmp_path / "kernel.sqlite3"
+    store = SqliteMountStore(path)
+    try:
+        for index, companion in enumerate(("companion-1", "companion-2", None), start=1):
+            _, assignment = _assignment(companion_id=companion, request_id=f"assign-{index}")
+            store.commit_assignment(
+                assignment=replace(
+                    assignment, body_endpoint_id=f"body-{index}", device_id=f"device-{index}"
+                ),
+                expected_revision=0,
+                mount_revision=1,
+                event_type="eidolon.kernel.body-assignment-created.v1",
+                event_data={"previous_revision": 0},
+            )
+    finally:
+        store.close()
+
+    message = _stale(path)
+
+    assert "does not match schema v8" in message
+    assert "destroys 2 of 3 Body assignments" in message
+    assert "kernel-schema-reset" in message
+
+
+def test_a_refusal_with_nothing_to_lose_says_that_rather_than_the_same_warning(
+    tmp_path,
+) -> None:
+    """A count nobody can act on is the same silence in more words.
+
+    Most Hosts that fall behind the schema are development Hosts holding no
+    Owner selection at all, and a refusal that warned them identically would
+    train the operator to skip the sentence on the Host where it is true.
+    """
+
+    path = tmp_path / "kernel.sqlite3"
+    SqliteMountStore(path).close()
+
+    message = _stale(path)
+
+    assert "destroys no Owner Companion selection" in message
+
+
+def test_a_database_with_no_assignment_table_is_told_the_count_is_unknown(tmp_path) -> None:
+    """Never zero for a shape this Kernel does not recognise.
+
+    The one real file this has happened to is schema v3, which kept the Owner's
+    choice as ``kernel_device_mounts.attached_companion_id`` — a column this
+    Kernel has never heard of. Counting the current table and reporting ``0``
+    would have told its operator the truest-sounding lie available: that setting
+    the file aside was free, on the exact file where it was not.
+
+    So the census counts only where *this* Kernel keeps the selection, and says
+    it cannot count anywhere else. That also means it stays honest through the
+    next move of that fact rather than needing to be taught each old shape.
+    """
+
+    path = tmp_path / "kernel-v3-shaped.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE kernel_device_mounts(device_id TEXT PRIMARY KEY, attached_companion_id TEXT)"
+    )
+    connection.execute("INSERT INTO kernel_device_mounts VALUES ('device-1', 'companion-1')")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError) as raised:
+        SqliteMountStore(path)
+
+    message = str(raised.value)
+    assert "migrations are unsupported" in message
+    assert "cannot say how many that is" in message
+    assert "1 device mount" in message
+    assert "destroys no Owner" not in message
+
+
+def test_counting_the_cost_can_never_become_a_second_way_to_fail(tmp_path) -> None:
+    """The census runs inside an error path, so it is not allowed to have one.
+
+    The census asks this file questions the refusal itself never asked. On the
+    "partial or unknown" path the Kernel stops at the table *names*, so a
+    ``kernel_schema_meta`` shaped like somebody else's is a column error the
+    census meets alone. A census that let ``sqlite3.Error`` out would replace a
+    refusal naming its cost with a traceback naming nothing — strictly worse
+    than the message this change exists to improve.
+    """
+
+    path = tmp_path / "not-this-kernels.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE kernel_schema_meta(version INTEGER)")
+    connection.execute("INSERT INTO kernel_schema_meta VALUES (8)")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError) as raised:
+        SqliteMountStore(path)
+
+    message = str(raised.value)
+    assert "migrations are unsupported" in message
+    assert "kernel-schema-reset" in message
+
+    census = selection_census(path)
+    assert census.schema_version is None
+
+    not_a_database = tmp_path / "notes.txt"
+    not_a_database.write_text("this is not a Kernel authority", encoding="utf-8")
+    assert selection_census(not_a_database).as_document()["unreadable"] is not None
+
+
+def test_the_census_answers_off_a_file_no_kernel_is_holding(tmp_path) -> None:
+    """Ops asks this before repairing a Host, with nothing running to ask.
+
+    Read-only and openable by whoever is deciding, so that the number in the
+    refusal and the number in the repair plan have one definition rather than
+    two implementations that can disagree.
+    """
+
+    path = tmp_path / "kernel.sqlite3"
+    store = SqliteMountStore(path)
+    try:
+        _, assignment = _assignment(companion_id="companion-1", request_id="assign-1")
+        store.commit_assignment(
+            assignment=assignment,
+            expected_revision=0,
+            mount_revision=1,
+            event_type="eidolon.kernel.body-assignment-created.v1",
+            event_data={"previous_revision": 0},
+        )
+    finally:
+        store.close()
+
+    document = selection_census(path).as_document()
+
+    assert document["schema_version"] == 8
+    assert document["selections"] == 1
+    assert document["assignments"] == 1
+    assert document["countable"] is True
+    assert document["unreadable"] is None
+    assert selection_census(tmp_path / "absent.sqlite3").as_document()["countable"] is False
+
+
+def test_the_repair_asks_this_kernel_the_same_question_startup_asked(tmp_path) -> None:
+    """One predicate, two askers, so a repair can never act on a different answer.
+
+    The decision to set an authority aside must not rest on an inference — a
+    version number that looks wrong, or a unit observed crash-looping. It rests
+    on this Kernel saying it will not open this file, which is the same sentence
+    it puts in front of the operator when it refuses to start.
+    """
+
+    path = tmp_path / "kernel.sqlite3"
+    SqliteMountStore(path).close()
+
+    healthy = schema_report(path)
+    assert healthy["accepted"] is True
+    assert healthy["refusal"] is None
+    assert healthy["code_schema_version"] == 8
+
+    message = _stale(path)
+    refused = schema_report(path)
+
+    assert refused["accepted"] is False
+    assert message.startswith(refused["refusal"])
+    assert refused["notice"] in message
+
+
+def test_a_file_this_kernel_cannot_read_at_all_is_not_reported_as_acceptable(
+    tmp_path,
+) -> None:
+    """``accepted`` is three-valued because "could not ask" is not "yes".
+
+    A repair that read a missing or unreadable file as acceptable would refuse
+    the one operation that could fix the Host; one that read it as refused would
+    set aside a file it never managed to look inside.
+    """
+
+    absent = schema_report(tmp_path / "absent.sqlite3")
+
+    assert absent["accepted"] is None
+    assert absent["unreadable"] is not None
