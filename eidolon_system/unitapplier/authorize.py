@@ -27,8 +27,14 @@ MANAGER_UNIT = "eidolond.service"
 #: SO_PEERPIDFD (Linux 6.5+). The kernel hands back a pidfd for the process that
 #: called connect(), which pins that pid: the caller cannot exit and have its pid
 #: recycled underneath the /proc read that follows. Python does not name the
-#: constant yet.
+#: constant yet. The RK3588 board runs 6.1 and answers ENOPROTOOPT, so the
+#: fallback below is the path that runs in the product today.
 _SO_PEERPIDFD = 77
+
+#: Linux's own value, used when the platform does not name it. This module only
+#: ever runs for real on Linux; the fallback keeps it importable — and its
+#: decisions testable against a fake socket — on the workstation.
+_SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
 
 _SLICE_SUFFIX = ".slice"
 
@@ -62,7 +68,7 @@ def peer_of(connection: socket.socket, *, proc_root: Path = Path("/proc")) -> Pe
     """Identify the caller: pid, uid, and the systemd unit it runs under."""
 
     raw = connection.getsockopt(
-        socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+        socket.SOL_SOCKET, _SO_PEERCRED, struct.calcsize("3i")
     )
     pid, uid, _gid = struct.unpack("3i", raw)
     try:

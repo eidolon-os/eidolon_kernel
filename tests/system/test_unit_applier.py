@@ -9,11 +9,13 @@ names the condition it failed on.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import platform
 import shutil
 import socket
+import struct
 import tempfile
 import threading
 from collections.abc import Iterator
@@ -29,6 +31,7 @@ from eidolon_system.unitapplier.authorize import (
     Denied,
     Peer,
     authorize,
+    peer_of,
     unit_of_process,
 )
 from eidolon_system.unitapplier.protocol import (
@@ -414,12 +417,41 @@ def test_inspect_does_not_cross_the_privilege_boundary(tmp_path: Path) -> None:
     assert runner.commands and runner.commands[0][1] == "show"
 
 
+def test_a_kernel_without_peerpidfd_still_identifies_the_caller(
+    tmp_path: Path,
+) -> None:
+    """The RK3588 board runs 6.1 and answers ENOPROTOOPT to SO_PEERPIDFD.
+
+    Checked on the board rather than assumed: `getsockopt(SOL_SOCKET, 77)`
+    raises OSError(92) there, so the fallback is the path that actually runs in
+    the product. It must still identify the caller, not fail the connection.
+    """
+
+    (tmp_path / "77").mkdir()
+    (tmp_path / "77" / "cgroup").write_text(
+        "0::/system.slice/eidolond.service\n", encoding="utf-8"
+    )
+
+    class OldKernelSocket:
+        def getsockopt(self, level, option, *size):
+            if option == 77:
+                raise OSError(errno.ENOPROTOOPT, "Protocol not available")
+            return struct.pack("3i", 77, 997, 997)
+
+    peer = peer_of(OldKernelSocket(), proc_root=tmp_path)
+
+    assert peer == Peer(pid=77, uid=997, unit="eidolond.service", pinned=False)
+    # And it is still authorised: the pin is a property of how the caller was
+    # identified, never a condition on whether it may act.
+    authorize(
+        Request("start", "eidolon-nats.service"), peer, allowed_units=ALLOWED
+    )
+
+
 @pytest.mark.skipif(
     platform.system() != "Linux", reason="SO_PEERCRED is a Linux socket option"
 )
 def test_peer_of_reports_this_process_on_linux() -> None:
-    from eidolon_system.unitapplier.authorize import peer_of
-
     server, client = _pair()
     with server, client:
         peer = peer_of(server)
