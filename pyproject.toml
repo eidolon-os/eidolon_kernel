@@ -25,6 +25,7 @@ eidolon-sdk = { path = "../eidolon_sdk", editable = true }
 [project.scripts]
 eidolond = "eidolon_system.main:run"
 eidolon-release = "eidolon_deploy.cli:run"
+eidolon-unit-applier = "eidolon_system.unitapplier.server:main"
 
 [dependency-groups]
 dev = [

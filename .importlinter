@@ -99,6 +99,20 @@ forbidden_modules =
     eidolon_system.composition
     eidolon_system.contracts
 
+[importlinter:contract:system-privilege-boundary]
+name = The unprivileged manager never imports the root applier's decision or loop
+type = forbidden
+source_modules =
+    eidolon_system.domain
+    eidolon_system.ports
+    eidolon_system.application
+    eidolon_system.adapters
+    eidolon_system.interfaces
+    eidolon_system.composition
+forbidden_modules =
+    eidolon_system.unitapplier.authorize
+    eidolon_system.unitapplier.server
+
 [importlinter:contract:system-application]
 name = System application depends only inward
 type = forbidden

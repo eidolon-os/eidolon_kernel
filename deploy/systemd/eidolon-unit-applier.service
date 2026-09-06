@@ -1,0 +1,30 @@
+[Unit]
+Description=Eidolon privileged unit applier
+Documentation=file:/opt/eidolon/current/eidolon_kernel/deploy/systemd/README.md
+Requires=eidolon-unit-applier.socket
+After=eidolon-unit-applier.socket
+
+[Service]
+Type=simple
+# Root by necessity: this is the process that holds the privilege eidolond does
+# not. Its authority is narrowed in code — the caller must itself run under
+# eidolond.service, and the unit must be one system-services.yaml declares.
+User=root
+Group=root
+ExecStart=/opt/eidolon/current/eidolon_kernel/.venv/bin/eidolon-unit-applier \
+    --manifest /etc/eidolon/system-services.yaml \
+    --systemctl /usr/bin/systemctl
+Restart=always
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+# It talks to PID 1 over the private D-Bus socket and to its own listener.
+# Nothing here needs a network.
+RestrictAddressFamilies=AF_UNIX

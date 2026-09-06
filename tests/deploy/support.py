@@ -24,6 +24,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 "environment_sha256": "3" * 64,
                 "required_entrypoints": [
                     ".venv/bin/eidolond",
+                    ".venv/bin/eidolon-unit-applier",
                     ".venv/bin/uvicorn",
                 ],
             },
@@ -167,9 +168,15 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
-                    "deploy/polkit/60-eidolon-system-manager.rules",
-                    "/etc/polkit-1/rules.d/60-eidolon-system-manager.rules",
+                    "deploy/systemd/eidolon-unit-applier.socket",
+                    "/etc/systemd/system/eidolon-unit-applier.socket",
                     "9",
+                ),
+                (
+                    "eidolon_kernel",
+                    "deploy/systemd/eidolon-unit-applier.service",
+                    "/etc/systemd/system/eidolon-unit-applier.service",
+                    "f",
                 ),
                 (
                     "eidolon_admin",
@@ -284,6 +291,8 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             "eidolon-local-api.service",
             "eidolon-lifecycle-workflow.service",
             "eidolon-bootstrapd.service",
+            "eidolon-unit-applier.socket",
+            "eidolon-unit-applier.service",
             "eidolon-data.service",
             "eidolon-data-workspace.service",
             "eidolon-hub.service",

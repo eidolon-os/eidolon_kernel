@@ -1,7 +1,10 @@
 [Unit]
 Description=Eidolon OS local system manager
 Wants=eidolon-bootstrapd.service
-After=local-fs.target eidolon-bootstrapd.service
+# The manager cannot start a unit itself; the applier's socket must be listening
+# before it reconciles, or every start in the first pass fails on a missing path.
+Requires=eidolon-unit-applier.socket
+After=local-fs.target eidolon-bootstrapd.service eidolon-unit-applier.socket
 StartLimitIntervalSec=0
 
 [Service]

@@ -158,7 +158,16 @@ def test_system_manager_layers_import_only_inward_and_hide_host_platforms() -> N
         "ports": {"domain", "ports"},
         "application": {"domain", "ports", "application"},
         "contracts": {"domain", "contracts"},
-        "adapters": {"domain", "ports", "contracts", "adapters"},
+        # The applier's wire, and only its wire. `unitapplier.authorize` and
+        # `unitapplier.server` are the root half: an adapter that imported
+        # either would pull a privileged decision into the unprivileged process.
+        "adapters": {
+            "domain",
+            "ports",
+            "contracts",
+            "adapters",
+            "unitapplier.protocol",
+        },
         "interfaces": {"domain", "ports", "application", "contracts", "interfaces"},
         "composition": {
             "domain",
@@ -170,6 +179,16 @@ def test_system_manager_layers_import_only_inward_and_hide_host_platforms() -> N
             "composition",
             "config",
         },
+        # The root applier reads the same manifest through the same loader as
+        # the manager, and speaks its own wire. It has no business in the
+        # manager's application, interface or composition layers.
+        "unitapplier": {
+            "domain",
+            "contracts",
+            "adapters",
+            "unitapplier.protocol",
+            "unitapplier.authorize",
+        },
     }
     violations = []
     for layer, allowed in allowed_by_layer.items():
@@ -179,7 +198,16 @@ def test_system_manager_layers_import_only_inward_and_hide_host_platforms() -> N
             for imported in imports(path):
                 if not imported.startswith("eidolon_system."):
                     continue
-                target = imported.removeprefix("eidolon_system.").split(".", 1)[0]
+                remainder = imported.removeprefix("eidolon_system.")
+                head = remainder.split(".", 1)[0]
+                # `unitapplier` is checked one level deeper than the others: the
+                # privilege boundary runs through the middle of that package,
+                # so "which module" is the whole point.
+                target = (
+                    ".".join(remainder.split(".")[:2])
+                    if head == "unitapplier"
+                    else head
+                )
                 if target not in allowed:
                     violations.append(
                         f"{path.relative_to(ROOT)} ({layer}) imports outer layer {target}"

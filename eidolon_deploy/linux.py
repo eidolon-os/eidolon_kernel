@@ -69,6 +69,10 @@ _READINESS_UNITS = {
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
+    # The socket, not its service: the service is socket-activated, so whether
+    # it happens to be running at verification time is a timing accident. The
+    # socket listening is the invariant the manager depends on.
+    "eidolon-unit-applier.socket",
     _MANAGER_UNIT,
     "eidolon-data.service",
     "eidolon-data-workspace.service",
@@ -482,6 +486,12 @@ class LinuxDeploymentHost:
     def start_release(self, release: ReleaseDescriptor) -> None:
         self._assert_privileged()
         self._checked_command("bootstrap start", _SYSTEMCTL, "start", "eidolon-bootstrapd.service")
+        # Before the manager, and named explicitly rather than left to the
+        # manager's Requires=: if the applier's socket cannot come up, the
+        # release should say that, not report a manager that failed to start.
+        self._checked_command(
+            "unit applier start", _SYSTEMCTL, "start", "eidolon-unit-applier.socket"
+        )
         self._checked_command("manager start", _SYSTEMCTL, "start", _MANAGER_UNIT)
         for unit in _POST_MANAGER_UNITS:
             if unit in release.affected_units:

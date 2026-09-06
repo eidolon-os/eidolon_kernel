@@ -11,6 +11,7 @@ from eidolon_system.adapters.directory.memory import InMemoryServiceDirectory
 from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.adapters.host.supervisord import SupervisordHostSupervisor
 from eidolon_system.adapters.host.systemd import SystemdHostSupervisor
+from eidolon_system.adapters.host.unit_applier import ApplierUnitMutator
 from eidolon_system.adapters.manifest.yaml_file import YamlServiceManifest
 from eidolon_system.adapters.persistence.sqlite import SqliteSystemStateStore
 from eidolon_system.adapters.readiness.http import HttpReadinessProbe
@@ -82,7 +83,19 @@ def create_production_app(settings: SystemSettings | None = None) -> SystemRunti
     )
     driver = selected_host_driver(settings.host)
     if driver == "systemd":
-        host = SystemdHostSupervisor(runner=runner, systemctl=settings.host.systemctl)
+        applier_socket = settings.host.unit_applier_socket
+        host = SystemdHostSupervisor(
+            runner=runner,
+            systemctl=settings.host.systemctl,
+            mutator=(
+                None
+                if applier_socket is None
+                else ApplierUnitMutator(
+                    applier_socket,
+                    timeout_seconds=settings.host.command_timeout_seconds,
+                )
+            ),
+        )
     else:
         if settings.host.supervisor_config is None:
             store.close()

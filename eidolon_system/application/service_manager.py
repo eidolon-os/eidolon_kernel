@@ -165,8 +165,8 @@ class ServiceManager:
         seconds, so logging each observation would bury the one that matters,
         and logging none — which is what happened before — leaves an operator
         with "readiness timeout: nats, kernel, ..." and no way to learn that
-        every start was refused by polkit. The reason was already here, in
-        detail, published to a directory nothing durable read.
+        every start was refused for want of privilege. The reason was already
+        here, in detail, published to a directory nothing durable read.
         """
 
         try:

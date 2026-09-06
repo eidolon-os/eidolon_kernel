@@ -23,7 +23,14 @@ _COMPONENT_LINKS = {
     "eidolon_memory": Path("/opt/eidolon/current/eidolon_memory"),
 }
 V2_COMPONENT_ENTRYPOINTS = {
-    "eidolon_kernel": (Path(".venv/bin/eidolond"), Path(".venv/bin/uvicorn")),
+    "eidolon_kernel": (
+        Path(".venv/bin/eidolond"),
+        # eidolon-unit-applier.service ExecStarts this. It is listed for the
+        # same reason eidolond is: a release that shipped the unit without
+        # the binary would fail at first start, not at activation.
+        Path(".venv/bin/eidolon-unit-applier"),
+        Path(".venv/bin/uvicorn"),
+    ),
     "eidolon_data": (Path(".venv/bin/uvicorn"),),
     "eidolon_hub": (Path(".venv/bin/uvicorn"),),
     "eidolon_admin": (
@@ -88,9 +95,16 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("config/system-services.yaml"),
     ),
-    Path("/etc/polkit-1/rules.d/60-eidolon-system-manager.rules"): (
+    # The privilege eidolond does not have. A polkit rule used to grant it
+    # `manage-units` directly; it was replaced because a refusal wrote nothing to
+    # the journal, so "why did every start fail" had no answer on the Host.
+    Path("/etc/systemd/system/eidolon-unit-applier.socket"): (
         "eidolon_kernel",
-        Path("deploy/polkit/60-eidolon-system-manager.rules"),
+        Path("deploy/systemd/eidolon-unit-applier.socket"),
+    ),
+    Path("/etc/systemd/system/eidolon-unit-applier.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-unit-applier.service"),
     ),
     Path("/etc/systemd/system/eidolon-bootstrapd.service"): (
         "eidolon_admin",
@@ -171,6 +185,11 @@ V2_AFFECTED_UNITS = (
     "eidolon-local-api.service",
     "eidolon-lifecycle-workflow.service",
     "eidolon-bootstrapd.service",
+    # Ordered here, not with the pre-manager units, so quiesce's reverse sweep
+    # reaches them last: the manager is stopped before them, and stopping the
+    # socket earlier would propagate a stop into the manager mid-transaction.
+    "eidolon-unit-applier.socket",
+    "eidolon-unit-applier.service",
     "eidolon-data.service",
     "eidolon-data-workspace.service",
     "eidolon-hub.service",

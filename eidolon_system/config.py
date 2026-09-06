@@ -28,6 +28,11 @@ class HostSettings(SettingsModel):
     systemctl: str = "systemctl"
     supervisorctl: str = "supervisorctl"
     supervisor_config: Path | None = None
+    #: Where the root unit applier listens. Set on the product image, where
+    #: eidolond runs as `eidolon` and cannot start a unit itself; left unset for
+    #: a root source run, which mutates units directly. Not a systemd-only
+    #: notion by accident — the supervisord driver never reads it.
+    unit_applier_socket: Path | None = None
     command_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
 
     @model_validator(mode="after")
@@ -97,6 +102,13 @@ def load_settings(path: Path | None = None) -> SystemSettings:
         settings.host.supervisorctl = str((base / settings.host.supervisorctl).resolve())
     if "/" in settings.host.systemctl and not Path(settings.host.systemctl).is_absolute():
         settings.host.systemctl = str((base / settings.host.systemctl).resolve())
+    if (
+        settings.host.unit_applier_socket is not None
+        and not settings.host.unit_applier_socket.is_absolute()
+    ):
+        settings.host.unit_applier_socket = (
+            base / settings.host.unit_applier_socket
+        ).resolve()
     if settings.interface.uds is not None and not settings.interface.uds.is_absolute():
         settings.interface.uds = (base / settings.interface.uds).resolve()
     return settings

@@ -1,0 +1,20 @@
+[Unit]
+Description=Eidolon unit applier socket
+Documentation=file:/opt/eidolon/current/eidolon_kernel/deploy/systemd/README.md
+
+[Socket]
+# Deliberately not under /run/eidolon. Seven units declare RuntimeDirectory=eidolon
+# and systemd chowns that directory to whichever of them starts first; a
+# root-owned socket inside it would make ownership depend on start order. Here
+# root owns the path outright and the manager reaches it by group.
+ListenStream=/run/eidolon-unit-applier.sock
+SocketUser=root
+SocketGroup=eidolon
+SocketMode=0660
+# One long-lived server, not one process per connection: the verbs it applies
+# must be serialised anyway, and a single instance keeps the derived unit
+# allowlist in memory instead of re-reading the manifest per request.
+Accept=no
+
+[Install]
+WantedBy=sockets.target

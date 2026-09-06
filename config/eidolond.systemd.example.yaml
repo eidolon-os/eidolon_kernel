@@ -7,6 +7,10 @@ persistence:
 host:
   driver: systemd
   systemctl: /usr/bin/systemctl
+  # eidolond runs as `eidolon` with NoNewPrivileges, so start/stop/restart are
+  # applied by the root applier on this socket. `systemctl show` still runs
+  # here: reading a unit's state needs no privilege.
+  unit_applier_socket: /run/eidolon-unit-applier.sock
   command_timeout_seconds: 20
 reconciliation:
   interval_seconds: 5

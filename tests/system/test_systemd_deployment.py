@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import configparser
-import re
 from pathlib import Path
 
 import yaml
 
 from eidolon_kernel.config import load_settings as load_kernel_settings
+from eidolon_system.unitapplier.protocol import VERBS
+from eidolon_system.unitapplier.server import managed_units
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD = ROOT / "deploy/systemd"
-POLKIT = ROOT / "deploy/polkit/60-eidolon-system-manager.rules"
 
 
 def _unit(name: str) -> configparser.ConfigParser:
@@ -125,8 +125,38 @@ def test_livekit_does_not_offer_devices_an_address_off_their_link() -> None:
     assert "includes:" not in rtc
 
 
-def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
-    policy = POLKIT.read_text(encoding="utf-8")
+def test_applier_socket_is_enabled_and_its_service_is_activated_by_it() -> None:
+    socket_unit = _unit("eidolon-unit-applier.socket")
+    service = _unit("eidolon-unit-applier.service")
+    manager = _unit("eidolond.service")
+
+    # The socket is what boot brings up; the service is started by the first
+    # connection. Enabling the service instead would run a root daemon whether
+    # or not the manager exists to talk to it.
+    assert socket_unit["Install"]["WantedBy"] == "sockets.target"
+    assert "Install" not in service
+    assert service["Unit"]["Requires"] == "eidolon-unit-applier.socket"
+
+    # Root by necessity, and reachable only by the manager's group.
+    assert service["Service"]["User"] == "root"
+    assert socket_unit["Socket"]["SocketUser"] == "root"
+    assert socket_unit["Socket"]["SocketGroup"] == "eidolon"
+    assert socket_unit["Socket"]["SocketMode"] == "0660"
+
+    # Outside /run/eidolon: seven units declare RuntimeDirectory=eidolon and
+    # systemd chowns it to whichever starts first, so a root-owned socket in
+    # there would have an owner decided by start order.
+    listen = socket_unit["Socket"]["ListenStream"]
+    assert listen == "/run/eidolon-unit-applier.sock"
+    assert not listen.startswith("/run/eidolon/")
+
+    # The manager must not reconcile before the socket exists, or every start in
+    # its first pass fails on a missing path.
+    assert "eidolon-unit-applier.socket" in manager["Unit"]["Requires"]
+    assert "eidolon-unit-applier.socket" in manager["Unit"]["After"]
+
+
+def test_applier_allowlist_is_the_manifest_and_nothing_else() -> None:
     document = yaml.safe_load(
         (ROOT / "config/system-services.yaml").read_text(encoding="utf-8")
     )
@@ -135,22 +165,30 @@ def test_polkit_rule_is_bound_to_manager_unit_targets_and_verbs() -> None:
         for item in document["services"]
         if item["host_targets"]["systemd"] != "external"
     }
-    allowlist = policy.split("var allowedUnits = [", 1)[1].split("];", 1)[0]
-    allowed_targets = set(re.findall(r'"([a-z0-9.-]+\.service)"', allowlist))
 
-    assert 'action.id !== "org.freedesktop.systemd1.manage-units"' in policy
-    assert 'subject.user !== "eidolon"' in policy
-    assert 'subject.system_unit !== "eidolond.service"' in policy
-    assert "!subject.no_new_privileges" in policy
-    # The service catalog and privilege boundary are one contract. A catalogued
-    # target missing here is accepted by every static release check but cannot
-    # be started by the unprivileged eidolond process; an extra target silently
-    # broadens its authority.
-    assert allowed_targets == managed_targets
-    assert 'var allowedVerbs = ["start", "stop", "restart"]' in policy
-    assert "manage-unit-files" not in policy
-    assert "daemon-reload" not in policy
-    assert "polkit.Result.NO" in policy
+    derived = managed_units(ROOT / "config/system-services.yaml")
+
+    # The service catalog and the privilege boundary are one contract, and the
+    # applier keeps them one by deriving from the manifest at start rather than
+    # carrying a list. A catalogued target missing from the boundary passes every
+    # static release check and then cannot be started; an extra one silently
+    # broadens root's authority.
+    assert derived == managed_targets
+    assert VERBS == {"start", "stop", "restart"}
+
+
+def test_manager_settings_route_mutations_through_the_applier() -> None:
+    settings = yaml.safe_load(
+        (ROOT / "config/eidolond.systemd.example.yaml").read_text(encoding="utf-8")
+    )
+    socket_unit = _unit("eidolon-unit-applier.socket")
+
+    # The path the manager dials and the path root listens on are the same
+    # string in two files; nothing at runtime would reconcile them.
+    assert (
+        settings["host"]["unit_applier_socket"]
+        == socket_unit["Socket"]["ListenStream"]
+    )
 
 
 def test_systemd_manifest_targets_units_without_false_hard_dependency() -> None:

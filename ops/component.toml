@@ -16,7 +16,7 @@ contract_version = "1"
 
 # The .service files for Hub, Data, Memory, Agent and Channel live in this
 # repository's deploy/systemd, though none of those components is Kernel's.
-# Those units belong to their own components' contracts; only the two units
+# Those units belong to their own components' contracts; only the three units
 # below are Kernel's own. Where the files sit is a separate problem from who
 # owns what they say.
 
@@ -26,7 +26,22 @@ kind = "service"
 exec = ".venv/bin/eidolond"
 user = "eidolon"
 serves = ["eidolond"]
-requires = ["eidolon-bootstrapd"]
+requires = ["eidolon-bootstrapd", "eidolon-unit-applier"]
+after = ["local-fs.target"]
+
+# The privilege eidolond does not have. It runs as `eidolon` under
+# NoNewPrivileges and still has to start, stop and restart twelve units, so the
+# verb is applied by a root process on the other side of a socket, which
+# authorises the request by resolving the caller's own systemd unit from its
+# cgroup. A polkit rule used to grant `manage-units` directly; it was replaced
+# because a refusal wrote nothing to the journal, and "every start failed" then
+# had no readable cause on the Host.
+[[units]]
+id = "eidolon-unit-applier"
+kind = "service"
+exec = ".venv/bin/eidolon-unit-applier"
+user = "root"
+socket_activated = true
 after = ["local-fs.target"]
 
 [[units]]

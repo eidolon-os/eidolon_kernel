@@ -31,9 +31,9 @@ def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
     )
     assert release.support_sources[0].source_id == "eidolon_sdk"
     assert release.readiness_checks[0].socket == Path("/run/eidolon/system.sock")
-    assert len(release.system_assets) == 24
+    assert len(release.system_assets) == 25
     assert len(release.required_secrets) == 11
-    assert len(release.affected_units) == 16
+    assert len(release.affected_units) == 18
     assert len(release.readiness_checks) == 15
     assert Path("/etc/eidolon/lifecycle.env") not in {
         secret.path for secret in release.required_secrets
