@@ -43,7 +43,11 @@ from eidolon_sdk.device_foundation.v1 import (
     OperationalPublicKey,
     claim_grant_ack_proof_document,
     claim_grant_collection_proof_document,
+    commissioning_voucher_claims,
     derive_device_instance_id,
+    derive_voucher_signing_key,
+    operation_key_id,
+    sign_commissioning_voucher,
 )
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
@@ -64,7 +68,6 @@ COMPANION_TOKEN = "m2b-unused-companion-authority-token"
 OWNER_DOMAIN_ID = "owner-m2b"
 BUSINESS_OWNER_ID = "owner_m2b"
 OWNER_HEADERS = {"X-Eidolon-Owner": BUSINESS_OWNER_ID}
-SETUP_SECRET = b"m2b-process-e2e-setup-secret-value-0001"
 
 pytestmark = pytest.mark.e2e
 
@@ -360,14 +363,6 @@ def _start_eidolond(settings: Path) -> subprocess.Popen[str]:
     )
 
 
-#: One per device in this test, standing in for the stable hardware identity a
-#: manufactured board would carry. Deliberately not the instance ID: the
-#: instance is derived from a rotatable operational key, and the whole point of
-#: separating them is that a device can rejoin as a new instance on the same
-#: hardware.
-HARDWARE_LOOKUP_IDS = {"m2b-a": "box-3-m2b-a", "m2b-b": "box-3-m2b-b"}
-
-
 def _instance_id(key: ec.EllipticCurvePrivateKey) -> str:
     """The device instance ID Hub will accept, derived from its operational key.
 
@@ -478,30 +473,50 @@ def _create_enrollment(
         digest="sha256:" + hashlib.sha256(rfc8785.dumps(manifest_document)).hexdigest(),
         document=manifest_document,
     )
-    lookup_id = HARDWARE_LOOKUP_IDS[suffix]
     device_id = _instance_id(operational_key)
     operational_public_key = _p256_spki(operational_key)
+    # A Host mints these; the values are fixed here only so a failing run names
+    # the same device twice. The one-shot `jti` is safe to fix because each run
+    # gets its own Hub database.
+    device_base_id = f"device-base-{suffix}-0001"
+    nonce = f"jti-{suffix}-commissioning-0001"
+    # Still assembled here, unlike the voucher below: the base-identity evidence
+    # document has no builder in eidolon_sdk yet. Hub re-derives its RFC 8785
+    # form and compares the member set exactly, so this is a second spelling of
+    # bytes it also spells -- the same debt the ClaimGrant documents just paid
+    # off, and the reason firmware and this test can drift apart silently.
     evidence_document = {
+        "device_base_id": device_base_id,
         "device_instance_id": device_id,
-        "hardware_lookup_id": lookup_id,
         "operational_public_key": operational_public_key,
         "profile_id": "eidolon-trust-p256-hpke-v1",
     }
     evidence = (
         rfc8785.dumps(evidence_document).decode() + "." + _sign(operational_key, evidence_document)
     )
-    nonce = f"commissioning-nonce-{suffix}-0001"
-    proof_document = f"{lookup_id}\0{device_id}\0{OWNER_DOMAIN_ID}\0{nonce}".encode()
+    voucher = sign_commissioning_voucher(
+        claims=commissioning_voucher_claims(
+            device_base_id=device_base_id,
+            owner_domain_id=OWNER_DOMAIN_ID,
+            operational_spki_sha256=operation_key_id(operational_public_key),
+            jti=nonce,
+            expires_at_unix=int(time.time()) + 300,
+        ),
+        signing_key=derive_voucher_signing_key(HUB_MANAGEMENT_SECRET.encode()),
+    )
     command = CreateEnrollment(
         device_instance_candidate_id=device_id,
         requested_owner_domain_id=OWNER_DOMAIN_ID,
         hardware_identity_evidence=HardwareIdentityEvidence(
-            scheme="dev-self-signed-p256",
+            scheme="hub-issued-base-p256",
             evidence=evidence,
             evidence_digest="sha256:" + hashlib.sha256(evidence.encode()).hexdigest(),
         ),
+        # `nonce` is the voucher's `jti`, not a nonce of this test's choosing:
+        # Hub refuses a mismatch without saying which of the two it disliked.
         commissioning_proof=CommissioningProof(
-            proof=_b64url(hmac.new(SETUP_SECRET, proof_document, hashlib.sha256).digest()),
+            scheme="hub-issued-commissioning-voucher-v1",
+            proof=voucher,
             nonce=nonce,
         ),
         manifest=manifest,
