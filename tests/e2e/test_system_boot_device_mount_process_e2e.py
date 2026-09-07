@@ -9,7 +9,6 @@ import json
 import os
 import signal
 import socket
-import stat
 import subprocess
 import sys
 import tempfile
@@ -57,7 +56,6 @@ HUB_UVICORN = HUB_ROOT / ".venv/bin/uvicorn"
 HUB_PYTHON = HUB_ROOT / ".venv/bin/python"
 EIDOLOND = ROOT / ".venv/bin/eidolond"
 OWNER_DIRECTORY_HELPER = Path(__file__).with_name("owner_directory_material.py")
-HUB_PROCESS_APP_ROOT = Path(__file__).parent
 
 HUB_MANAGEMENT_SECRET = "m2b-hub-management-secret-value-0001"
 HUB_READER_TOKEN = "m2b-hub-registry-reader-token-value-0001"
@@ -191,26 +189,6 @@ def _write_runtime_configuration(root: Path, *, hub_port: int, kernel_port: int)
     kernel_settings = root / "kernel.yaml"
     manifest = root / "services.yaml"
     system_settings = root / "eidolond.yaml"
-    commissioning_registry = root / "commissioning-secrets.json"
-
-    commissioning_registry.write_text(
-        json.dumps(
-            {
-                "profile": "eidolon-development-hmac-commissioning-v2",
-                "devices": {
-                    lookup_id: {"setup_secret": _b64url(SETUP_SECRET)}
-                    for lookup_id in (HARDWARE_LOOKUP_IDS["m2b-a"], HARDWARE_LOOKUP_IDS["m2b-b"])
-                },
-            },
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    commissioning_registry.chmod(0o600)
-    registry_metadata = commissioning_registry.stat()
-    assert registry_metadata.st_uid == os.geteuid()
-    assert stat.S_IMODE(registry_metadata.st_mode) == 0o600
-
     subprocess.run(
         [
             str(HUB_PYTHON),
@@ -238,8 +216,7 @@ discovery:
   mdns:
     enabled: false
 commissioning_proof:
-  profile: development-hmac
-  setup_secret_registry_path: {commissioning_registry}
+  enabled: true
 persistence:
   path: {root / "hub.sqlite3"}
 """,
@@ -333,7 +310,7 @@ supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface
 serverurl=unix://{supervisor_socket}
 
 [program:hub-api]
-command={HUB_UVICORN} --app-dir {HUB_PROCESS_APP_ROOT} hub_process_app:create_app --factory --host 127.0.0.1 --port {hub_port} --log-level warning
+command={HUB_UVICORN} hub.main:create_app --factory --host 127.0.0.1 --port {hub_port} --log-level warning
 directory={HUB_ROOT}
 autostart=false
 autorestart=true
