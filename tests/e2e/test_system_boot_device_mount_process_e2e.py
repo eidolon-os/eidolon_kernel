@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from eidolon_sdk.device_foundation.v1 import (
+    BASE_IDENTITY_EVIDENCE_SCHEME,
     AckClaimGrant,
     AckClaimGrantResult,
     ClaimGrant,
@@ -41,12 +42,15 @@ from eidolon_sdk.device_foundation.v1 import (
     ManifestDocument,
     ManifestRef,
     OperationalPublicKey,
+    base_identity_evidence_digest,
+    base_identity_evidence_document,
+    base_identity_evidence_wire,
     claim_grant_ack_proof_document,
     claim_grant_collection_proof_document,
     commissioning_voucher_claims,
     derive_device_instance_id,
     derive_voucher_signing_key,
-    operation_key_id,
+    operational_key_id,
     sign_commissioning_voucher,
 )
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
@@ -480,25 +484,20 @@ def _create_enrollment(
     # gets its own Hub database.
     device_base_id = f"device-base-{suffix}-0001"
     nonce = f"jti-{suffix}-commissioning-0001"
-    # Still assembled here, unlike the voucher below: the base-identity evidence
-    # document has no builder in eidolon_sdk yet. Hub re-derives its RFC 8785
-    # form and compares the member set exactly, so this is a second spelling of
-    # bytes it also spells -- the same debt the ClaimGrant documents just paid
-    # off, and the reason firmware and this test can drift apart silently.
-    evidence_document = {
-        "device_base_id": device_base_id,
-        "device_instance_id": device_id,
-        "operational_public_key": operational_public_key,
-        "profile_id": "eidolon-trust-p256-hpke-v1",
-    }
-    evidence = (
-        rfc8785.dumps(evidence_document).decode() + "." + _sign(operational_key, evidence_document)
+    evidence_document = base_identity_evidence_document(
+        device_base_id=device_base_id,
+        device_instance_id=device_id,
+        operational_public_key=operational_public_key,
+    )
+    evidence = base_identity_evidence_wire(
+        document=evidence_document,
+        signature=_sign(operational_key, evidence_document),
     )
     voucher = sign_commissioning_voucher(
         claims=commissioning_voucher_claims(
             device_base_id=device_base_id,
             owner_domain_id=OWNER_DOMAIN_ID,
-            operational_spki_sha256=operation_key_id(operational_public_key),
+            operational_spki_sha256=operational_key_id(operational_public_key),
             jti=nonce,
             expires_at_unix=int(time.time()) + 300,
         ),
@@ -508,9 +507,9 @@ def _create_enrollment(
         device_instance_candidate_id=device_id,
         requested_owner_domain_id=OWNER_DOMAIN_ID,
         hardware_identity_evidence=HardwareIdentityEvidence(
-            scheme="hub-issued-base-p256",
+            scheme=BASE_IDENTITY_EVIDENCE_SCHEME,
             evidence=evidence,
-            evidence_digest="sha256:" + hashlib.sha256(evidence.encode()).hexdigest(),
+            evidence_digest=base_identity_evidence_digest(evidence),
         ),
         # `nonce` is the voucher's `jti`, not a nonce of this test's choosing:
         # Hub refuses a mismatch without saying which of the two it disliked.
