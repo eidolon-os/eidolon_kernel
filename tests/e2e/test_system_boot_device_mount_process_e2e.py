@@ -42,6 +42,8 @@ from eidolon_sdk.device_foundation.v1 import (
     ManifestDocument,
     ManifestRef,
     OperationalPublicKey,
+    claim_grant_ack_proof_document,
+    claim_grant_collection_proof_document,
     derive_device_instance_id,
 )
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
@@ -579,12 +581,11 @@ async def _activate_claim(hub: httpx.AsyncClient, *, suffix: str) -> DeviceRef:
     decision = DecideEnrollmentResult.model_validate(decision_response.json())
     assert decision.decision == "approve"
 
-    collection_document = {
-        "contract": "eidolon.device-foundation.claim-grant-collection",
-        "enrollment_id": created.enrollment_id,
-        "proposal_revision": created.proposal_revision,
-        "collection_challenge": created.collection_challenge,
-    }
+    collection_document = claim_grant_collection_proof_document(
+        enrollment_id=created.enrollment_id,
+        proposal_revision=created.proposal_revision,
+        collection_challenge=created.collection_challenge,
+    )
     collect_command = CollectClaimGrant(
         enrollment_id=created.enrollment_id,
         proposal_revision=created.proposal_revision,
@@ -605,12 +606,11 @@ async def _activate_claim(hub: httpx.AsyncClient, *, suffix: str) -> DeviceRef:
     grant = _open_claim_grant(handoff_key, collected)
     assert grant.approval_decision_id == decision.decision_id
 
-    acknowledgement_document = {
-        "contract": "eidolon.device-foundation.claim-grant-ack",
-        "enrollment_id": created.enrollment_id,
-        "grant_id": grant.grant_id,
-        "device_ref": grant.device_ref.model_dump(mode="json"),
-    }
+    acknowledgement_document = claim_grant_ack_proof_document(
+        enrollment_id=created.enrollment_id,
+        grant_id=grant.grant_id,
+        device_ref=grant.device_ref,
+    )
     ack_command = AckClaimGrant(
         enrollment_id=created.enrollment_id,
         grant_id=grant.grant_id,
