@@ -11,6 +11,12 @@ Type=simple
 # eidolond.service, and the unit must be one system-services.yaml declares.
 User=root
 Group=root
+# Every product unit reads the sealed Host profile, and this one is no
+# exception: its identity comes from the Host, not from whatever the operator
+# typed. Nothing in it is used yet — the manifest path is on the command line
+# below — but a unit that opts out of the profile is a unit that can drift from
+# the Host, and the release matrix is right to refuse one.
+EnvironmentFile=/etc/eidolon/host.env
 ExecStart=/opt/eidolon/current/eidolon_kernel/.venv/bin/eidolon-unit-applier \
     --manifest /etc/eidolon/system-services.yaml \
     --systemctl /usr/bin/systemctl
