@@ -3,6 +3,72 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def with_capability(document: dict, capability: str = "local_asr") -> dict:
+    """The same document as sealed for a Host that declares one capability.
+
+    Built by adding, not by writing a second fixture: the point of the change
+    being tested is that a capability *adds* to one reviewed baseline, so a
+    test that hand-wrote the whole expanded set could pass while the addition
+    rule was wrong.
+    """
+
+    from eidolon_deploy.manifest import (
+        expected_affected_units,
+        expected_readiness,
+        expected_system_assets,
+    )
+
+    declared = frozenset({capability})
+    release_root = f"/opt/eidolon/releases/{document['release_id']}"
+    result = dict(document)
+    result["capabilities"] = [capability]
+    result["components"] = [
+        *document["components"],
+        {
+            "component_id": "eidolon_models",
+            "revision": "e" * 40,
+            "release_path": f"{release_root}/eidolon_models",
+            "current_link": "/opt/eidolon/current/eidolon_models",
+            "source_tree_sha256": "7" * 64,
+            "lock_sha256": "8" * 64,
+            "environment_sha256": "9" * 64,
+            "required_entrypoints": ["scripts/eidolon-asr"],
+        },
+    ]
+    known = {item["destination"] for item in document["system_assets"]}
+    result["system_assets"] = [
+        *document["system_assets"],
+        *(
+            {
+                "source_component_id": component_id,
+                "source": str(source),
+                "destination": str(destination),
+                "sha256": "a" * 64,
+                "mode": "0644",
+            }
+            for destination, (component_id, source) in expected_system_assets(declared).items()
+            if str(destination) not in known
+        ),
+    ]
+    result["affected_units"] = list(expected_affected_units(declared))
+    seen = {item["check_id"] for item in document["readiness_checks"]}
+    result["readiness_checks"] = [
+        *document["readiness_checks"],
+        *(
+            {
+                "check_id": check_id,
+                "kind": values[0],
+                "url": values[1],
+                **({"socket": str(values[2])} if values[2] is not None else {}),
+                "expected_status": values[3],
+            }
+            for check_id, values in expected_readiness(declared).items()
+            if check_id not in seen
+        ),
+    ]
+    return result
+
+
 def release_document(release_id: str = "20260806-m2d-test") -> dict:
     release_root = f"/opt/eidolon/releases/{release_id}"
     return {

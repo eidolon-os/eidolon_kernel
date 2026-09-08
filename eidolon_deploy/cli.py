@@ -18,6 +18,7 @@ from eidolon_deploy.activation import (
     receipt_to_document,
 )
 from eidolon_deploy.bundle import BundleError, build_source_bundle
+from eidolon_deploy.capabilities import require_known_capabilities
 from eidolon_deploy.contract import contract_document
 from eidolon_deploy.linux import LinuxDeploymentError, LinuxDeploymentHost
 from eidolon_deploy.manifest import ReleaseDescriptorError, load_release_descriptor
@@ -45,23 +46,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 channel=arguments.channel_revision,
                 memory=arguments.memory_revision,
                 sdk=arguments.sdk_revision,
+                models=arguments.models_revision,
             )
+            capabilities = _capabilities(arguments.capability)
+            repositories = {
+                "eidolon_kernel": arguments.kernel_repo,
+                "eidolon_data": arguments.data_repo,
+                "eidolon_hub": arguments.hub_repo,
+                "eidolon_admin": arguments.admin_repo,
+                "eidolon_agent": arguments.agent_repo,
+                "eidolon_channel": arguments.channel_repo,
+                "eidolon_memory": arguments.memory_repo,
+                "eidolon_sdk": arguments.sdk_repo,
+            }
+            if arguments.models_repo is not None:
+                repositories["eidolon_models"] = arguments.models_repo
             built = build_source_bundle(
                 release_id=arguments.release_id,
-                repositories={
-                    "eidolon_kernel": arguments.kernel_repo,
-                    "eidolon_data": arguments.data_repo,
-                    "eidolon_hub": arguments.hub_repo,
-                    "eidolon_admin": arguments.admin_repo,
-                    "eidolon_agent": arguments.agent_repo,
-                    "eidolon_channel": arguments.channel_repo,
-                    "eidolon_memory": arguments.memory_repo,
-                    "eidolon_sdk": arguments.sdk_repo,
-                },
+                repositories=repositories,
                 revisions=revisions,
                 output=arguments.output,
                 uv=arguments.uv,
                 cutover_mode=arguments.cutover_mode,
+                capabilities=capabilities,
             )
             _print_json(
                 {
@@ -83,8 +90,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     channel=arguments.channel_revision,
                     memory=arguments.memory_revision,
                     sdk=arguments.sdk_revision,
+                    models=arguments.models_revision,
                 ),
                 cutover_mode=arguments.cutover_mode,
+                capabilities=_capabilities(arguments.capability),
             )
             _print_json({"status": "sealed", "descriptor": str(path)})
             return 0
@@ -163,6 +172,9 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--channel-repo", type=Path, required=True)
     bundle.add_argument("--memory-repo", type=Path, required=True)
     bundle.add_argument("--sdk-repo", type=Path, required=True)
+    # Required exactly when a declared capability needs it, which argparse
+    # cannot express, so it is refused in the operation instead.
+    bundle.add_argument("--models-repo", type=Path)
     bundle.add_argument("--kernel-revision", required=True)
     bundle.add_argument("--data-revision", required=True)
     bundle.add_argument("--hub-revision", required=True)
@@ -171,6 +183,19 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--channel-revision", required=True)
     bundle.add_argument("--memory-revision", required=True)
     bundle.add_argument("--sdk-revision", required=True)
+    bundle.add_argument("--models-revision")
+    bundle.add_argument(
+        "--capability",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "a capability the target Host provides, repeatable. Selects the "
+            "conditional components, units, assets and readiness checks this "
+            "release must carry; an unknown name is refused rather than "
+            "selecting nothing."
+        ),
+    )
     bundle.add_argument("--uv", default="uv", help="exact uv 0.11.15 executable")
     bundle.add_argument(
         "--cutover-mode",
@@ -188,6 +213,19 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--channel-revision", required=True)
     seal.add_argument("--memory-revision", required=True)
     seal.add_argument("--sdk-revision", required=True)
+    seal.add_argument("--models-revision")
+    seal.add_argument(
+        "--capability",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "a capability the target Host provides, repeatable. Selects the "
+            "conditional components, units, assets and readiness checks this "
+            "release must carry; an unknown name is refused rather than "
+            "selecting nothing."
+        ),
+    )
     seal.add_argument(
         "--cutover-mode",
         choices=("reversible", "forward-only"),
@@ -215,6 +253,20 @@ def _parser() -> argparse.ArgumentParser:
 
 def _print_receipt(receipt: ActivationReceipt, *, stream=None) -> None:
     _print_json(receipt_to_document(receipt), stream=stream)
+
+
+def _capabilities(values: list[str]) -> frozenset[str]:
+    """Read repeated --capability flags, refusing a name nobody defined.
+
+    Refused here rather than left to select nothing: a misspelt capability
+    would otherwise produce a release for a Host that declares nothing, be
+    accepted as such, and install none of what the operator asked for.
+    """
+
+    try:
+        return require_known_capabilities(list(values))
+    except ValueError as exc:
+        raise SystemExit(f"eidolon-deploy: {exc}") from exc
 
 
 def _print_json(document: object, *, stream=None) -> None:

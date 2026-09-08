@@ -32,7 +32,7 @@ _REAL_BUILD_DEPENDENCY_CACHE = bundle._build_dependency_cache
 
 @pytest.fixture(autouse=True)
 def isolated_dependency_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_build(*, uv, source_dir, destination, workspace) -> tuple[str, ...]:
+    def fake_build(*, uv, source_dir, destination, workspace, project_ids) -> tuple[str, ...]:
         assert uv
         assert source_dir.is_dir()
         assert workspace.is_dir()
@@ -139,7 +139,7 @@ def test_unchanged_locked_inputs_reuse_one_dependency_artifact(
     monkeypatch.setenv(bundle._ARTIFACT_STORE_ENV, str(store))
     calls = 0
 
-    def fake_build(*, uv, source_dir, destination, workspace) -> tuple[str, ...]:
+    def fake_build(*, uv, source_dir, destination, workspace, project_ids) -> tuple[str, ...]:
         nonlocal calls
         calls += 1
         with tarfile.open(destination, "w:") as archive:
@@ -740,7 +740,7 @@ def test_dependency_prefetch_pins_both_halves_of_the_target_abi(
 
     source_dir = tmp_path / "sources"
     source_dir.mkdir()
-    for source_id in bundle_module._SOURCE_IDS[:-1]:
+    for source_id in bundle_module.bundle_project_ids(frozenset()):
         with tarfile.open(source_dir / f"{source_id}.tar", "w") as archive:
             member = tarfile.TarInfo("pyproject.toml")
             payload = b"[project]\nname='x'\nversion='0'\n"
@@ -754,10 +754,11 @@ def test_dependency_prefetch_pins_both_halves_of_the_target_abi(
         source_dir=source_dir,
         destination=tmp_path / "python-dependencies.tar.gz",
         workspace=workspace,
+        project_ids=bundle_module.bundle_project_ids(frozenset()),
     )
 
     syncs = [call for call in calls if "sync" in call]
-    assert len(syncs) == len(bundle_module._SOURCE_IDS) - 1
+    assert len(syncs) == len(bundle_module.bundle_project_ids(frozenset()))
     for call in syncs:
         assert call[call.index("--python") + 1] == bundle_module._PYTHON_VERSION
         assert call[call.index("--python-platform") + 1] == bundle_module._PYTHON_PLATFORM
@@ -789,7 +790,7 @@ def _prefetch_harness(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(bundle_module, "_dependency_run", fake_run)
     source_dir = tmp_path / "sources"
     source_dir.mkdir()
-    for source_id in bundle_module._SOURCE_IDS[:-1]:
+    for source_id in bundle_module.bundle_project_ids(frozenset()):
         with tarfile.open(source_dir / f"{source_id}.tar", "w") as archive:
             member = tarfile.TarInfo("pyproject.toml")
             payload = b"[project]\nname='x'\nversion='0'\n"
@@ -803,7 +804,11 @@ def _prefetch(tmp_path: Path, source_dir: Path, name: str) -> Path:
     workspace.mkdir()
     destination = tmp_path / f"{name}.tar.gz"
     _REAL_BUILD_DEPENDENCY_CACHE(
-        uv="uv", source_dir=source_dir, destination=destination, workspace=workspace
+        uv="uv",
+        source_dir=source_dir,
+        destination=destination,
+        workspace=workspace,
+        project_ids=bundle.bundle_project_ids(frozenset()),
     )
     return destination
 

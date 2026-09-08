@@ -17,10 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
-from eidolon_deploy.manifest import V2_SYSTEM_ASSETS
+from eidolon_deploy.capabilities import require_known_capabilities
+from eidolon_deploy.manifest import expected_system_assets
 from eidolon_deploy.sealing import ReleaseRevisions
 
-_SOURCE_IDS = (
+_BASE_SOURCE_IDS = (
     "eidolon_kernel",
     "eidolon_data",
     "eidolon_hub",
@@ -30,6 +31,15 @@ _SOURCE_IDS = (
     "eidolon_memory",
     "eidolon_sdk",
 )
+#: What a capability adds to the sources a bundle carries. Kept out of the
+#: baseline rather than always included: eidolon_models holds about 720 MB of
+#: committed ASR weights, so a Host that reaches a provider for speech would
+#: otherwise ship them in every bundle and never open them.
+_CAPABILITY_SOURCE_IDS = {
+    "local_asr": ("eidolon_models",),
+    "local_tts": ("eidolon_models",),
+    "local_llm": ("eidolon_models",),
+}
 _REVISION_BY_SOURCE = {
     "eidolon_kernel": "kernel",
     "eidolon_data": "data",
@@ -39,7 +49,41 @@ _REVISION_BY_SOURCE = {
     "eidolon_channel": "channel",
     "eidolon_memory": "memory",
     "eidolon_sdk": "sdk",
+    "eidolon_models": "models",
 }
+
+
+#: Carried so components can import it, and not a project of its own: it has
+#: no lock and gets no environment built for it.
+_SUPPORT_SOURCE_ID = "eidolon_sdk"
+
+
+def bundle_source_ids(capabilities: frozenset[str]) -> tuple[str, ...]:
+    """The sources a bundle for a Host with these capabilities must carry."""
+
+    extra: list[str] = []
+    for capability in sorted(capabilities):
+        for source_id in _CAPABILITY_SOURCE_IDS.get(capability, ()):
+            if source_id not in extra:
+                extra.append(source_id)
+    return (*_BASE_SOURCE_IDS, *extra)
+
+
+def bundle_project_ids(capabilities: frozenset[str]) -> tuple[str, ...]:
+    """Those of them that are projects: locked, and given an environment.
+
+    Named rather than sliced. This was `_SOURCE_IDS[:-1]`, which meant "all but
+    the SDK" only because the SDK happened to be written last — and the first
+    conditional source appended after it would have quietly excluded that
+    instead, building no environment for a component whose service then falls
+    back to resolving its dependencies at start.
+    """
+
+    return tuple(
+        source_id
+        for source_id in bundle_source_ids(capabilities)
+        if source_id != _SUPPORT_SOURCE_ID
+    )
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PREPARER_NAME = "prepare_target.py"
@@ -130,16 +174,30 @@ def build_source_bundle(
     git: str = "git",
     uv: str = "uv",
     cutover_mode: str = "reversible",
+    capabilities: frozenset[str] | None = None,
 ) -> BuiltBundle:
-    """Archive exact Git commits without reading working-tree content."""
+    """Archive exact Git commits without reading working-tree content.
+
+    Which sources that is depends on what the Host can do. One component is not
+    on every Host, and it holds about 720 MB of committed ASR weights: a Host
+    that reaches a provider for speech would otherwise carry them in every
+    bundle and never open them.
+    """
 
     if _RELEASE_ID.fullmatch(release_id) is None:
         raise BundleError("release id is invalid")
     if cutover_mode not in {"reversible", "forward-only"}:
         raise BundleError("release cutover mode is invalid")
-    if set(repositories) != set(_SOURCE_IDS):
+    declared = frozenset() if capabilities is None else frozenset(capabilities)
+    try:
+        require_known_capabilities(sorted(declared))
+    except ValueError as exc:
+        raise BundleError(str(exc)) from exc
+    source_ids = bundle_source_ids(declared)
+    if set(repositories) != set(source_ids):
         raise BundleError(
-            "repository set must be exactly Kernel/Data/Hub/Admin/Agent/Channel/Memory/SDK"
+            "repository set must be exactly the sources this Host's capabilities pin: "
+            + ", ".join(source_ids)
         )
     output = output.resolve()
     if output.exists():
@@ -157,7 +215,7 @@ def build_source_bundle(
         records: list[dict[str, str]] = []
         artifact_records: list[dict[str, object]] = []
         channel_artifacts: dict[str, dict[str, object]] = {}
-        for source_id in _SOURCE_IDS:
+        for source_id in source_ids:
             repository = repositories[source_id].resolve()
             if not repository.is_dir():
                 raise BundleError(f"repository is missing: {source_id}")
@@ -193,7 +251,12 @@ def build_source_bundle(
                 ):
                     artifact_records.append(record)
                     channel_artifacts[str(record["install_path"])] = record
-            _validate_source_archive(source_id, archive, channel_artifacts=channel_artifacts)
+            _validate_source_archive(
+                source_id,
+                archive,
+                channel_artifacts=channel_artifacts,
+                capabilities=declared,
+            )
             records.append(
                 {
                     "source_id": source_id,
@@ -211,6 +274,7 @@ def build_source_bundle(
             workspace=temporary,
             bundle_artifact_root=bundle_artifact_root,
             persistent_artifact_root=persistent_artifact_root,
+            project_ids=bundle_project_ids(declared),
         )
         artifact_records.append(dependency_object)
         dependency_record = {
@@ -230,6 +294,10 @@ def build_source_bundle(
             "schema_version": 3,
             "release_id": release_id,
             "cutover_mode": cutover_mode,
+            # Recorded so the bundle says which sources it should hold rather
+            # than the reader assuming a fixed list. Absent on bundles built
+            # before this field, which is a Host that declares nothing.
+            "capabilities": sorted(declared),
             "target": {"system": "linux", "machine": "aarch64"},
             "sources": records,
             "preparer": {
@@ -267,7 +335,10 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         document = json.loads((root / _MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise BundleError("bundle manifest is unreadable") from exc
-    if not isinstance(document, dict) or set(document) != {
+    # `capabilities` is optional so a bundle built before it existed still
+    # reads: absent means a Host that declares nothing, which is what those
+    # bundles were.
+    if not isinstance(document, dict) or set(document) - {"capabilities"} != {
         "schema_version",
         "release_id",
         "cutover_mode",
@@ -354,19 +425,24 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         or any(item.is_symlink() or not item.is_file() for item in artifact_root.iterdir())
     ):
         raise BundleError("bundle artifact directory contains unexpected entries")
+    try:
+        declared = require_known_capabilities(document.get("capabilities", []))
+    except ValueError as exc:
+        raise BundleError(str(exc)) from exc
+    source_ids = bundle_source_ids(declared)
     wire_sources = document.get("sources")
-    if not isinstance(wire_sources, list) or len(wire_sources) != len(_SOURCE_IDS):
+    if not isinstance(wire_sources, list) or len(wire_sources) != len(source_ids):
         raise BundleError("bundle source set is invalid")
     source_root = root / "sources"
     if (
         not source_root.is_dir()
         or source_root.is_symlink()
         or {item.name for item in source_root.iterdir()}
-        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+        != {f"{source_id}.tar" for source_id in source_ids}
     ):
         raise BundleError("bundle sources directory contains unexpected entries")
     sources: list[BundleSource] = []
-    for index, source_id in enumerate(_SOURCE_IDS):
+    for index, source_id in enumerate(source_ids):
         value = wire_sources[index]
         expected_archive = f"sources/{source_id}.tar"
         if (
@@ -387,7 +463,9 @@ def validate_source_bundle(path: Path) -> SourceBundle:
             or _file_sha256(archive) != value["sha256"]
         ):
             raise BundleError(f"bundle source archive checksum mismatch: {source_id}")
-        _validate_source_archive(source_id, archive, channel_artifacts=channel_artifacts)
+        _validate_source_archive(
+            source_id, archive, channel_artifacts=channel_artifacts, capabilities=declared
+        )
         sources.append(BundleSource(**value))
     preparer = document.get("preparer")
     if (
@@ -513,8 +591,9 @@ def _dependency_artifact(
     workspace: Path,
     bundle_artifact_root: Path,
     persistent_artifact_root: Path | None,
+    project_ids: tuple[str, ...],
 ) -> tuple[tuple[str, ...], dict[str, object]]:
-    key = _dependency_input_key(source_dir)
+    key = _dependency_input_key(source_dir, project_ids)
     if persistent_artifact_root is not None:
         record_path = persistent_artifact_root / _DEPENDENCY_KEY_DIRECTORY / f"{key}.json"
         cached = _read_dependency_key(record_path, persistent_artifact_root, key)
@@ -535,6 +614,7 @@ def _dependency_artifact(
         source_dir=source_dir,
         destination=destination,
         workspace=workspace,
+        project_ids=project_ids,
     )
     record = _artifact_record(
         artifact_id="python-dependencies",
@@ -560,7 +640,7 @@ def _dependency_artifact(
     return notes, record
 
 
-def _dependency_input_key(source_dir: Path) -> str:
+def _dependency_input_key(source_dir: Path, project_ids: tuple[str, ...]) -> str:
     digest = hashlib.sha256()
     inputs = {
         "schema_version": 1,
@@ -571,7 +651,7 @@ def _dependency_input_key(source_dir: Path) -> str:
         "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
     }
     digest.update(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode())
-    for source_id in _SOURCE_IDS[:-1]:
+    for source_id in project_ids:
         archive_path = source_dir / f"{source_id}.tar"
         digest.update(source_id.encode())
         with tarfile.open(archive_path, "r:") as archive:
@@ -617,7 +697,12 @@ def _read_dependency_key(path: Path, root: Path, key: str) -> dict[str, object] 
 
 
 def _build_dependency_cache(
-    *, uv: str, source_dir: Path, destination: Path, workspace: Path
+    *,
+    uv: str,
+    source_dir: Path,
+    destination: Path,
+    workspace: Path,
+    project_ids: tuple[str, ...],
 ) -> tuple[str, ...]:
     version = _dependency_run((uv, "--version")).stdout.strip()
     if version != f"uv {_UV_VERSION}" and not version.startswith(f"uv {_UV_VERSION} "):
@@ -654,7 +739,7 @@ def _build_dependency_cache(
         env=common_environment,
     )
     shutil.rmtree(seed)
-    for source_id in _SOURCE_IDS[:-1]:
+    for source_id in project_ids:
         project = projects / source_id
         project.mkdir()
         with tarfile.open(source_dir / f"{source_id}.tar", "r:") as archive:
@@ -893,13 +978,14 @@ def _validate_source_archive(
     archive: Path,
     *,
     channel_artifacts: Mapping[str, Mapping[str, object]] | None = None,
+    capabilities: frozenset[str] = frozenset(),
 ) -> None:
     required = {"pyproject.toml"}
-    if source_id != "eidolon_sdk":
+    if source_id != _SUPPORT_SOURCE_ID:
         required.add("uv.lock")
     if source_id == "eidolon_channel":
         required.update(_CHANNEL_MODEL_PATHS)
-    for _destination, (component_id, source) in V2_SYSTEM_ASSETS.items():
+    for _destination, (component_id, source) in expected_system_assets(capabilities).items():
         if component_id == source_id:
             required.add(source.as_posix())
     try:

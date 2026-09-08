@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 from jsonschema import Draft202012Validator, ValidationError
 
+from eidolon_deploy.capabilities import require_known_capabilities
+
 _COMPONENT_LINKS = {
     "eidolon_kernel": Path("/opt/eidolon/current/eidolon_kernel"),
     "eidolon_data": Path("/opt/eidolon/current/eidolon_data"),
@@ -21,6 +23,22 @@ _COMPONENT_LINKS = {
     "eidolon_agent": Path("/opt/eidolon/current/eidolon_agent"),
     "eidolon_channel": Path("/opt/eidolon/current/eidolon_channel"),
     "eidolon_memory": Path("/opt/eidolon/current/eidolon_memory"),
+    # Present only on a Host that declares a capability requiring it; see
+    # BASE_COMPONENTS. Linked the same way as the rest when it is present,
+    # which is why it is in this table unconditionally.
+    "eidolon_models": Path("/opt/eidolon/current/eidolon_models"),
+}
+
+#: The components every Host runs, whatever it can do.
+BASE_COMPONENTS: frozenset[str] = frozenset(set(_COMPONENT_LINKS) - {"eidolon_models"})
+
+#: What a capability adds to that. Three capabilities name one component
+#: because speech in, speech out and the conversation are three things one
+#: repository holds; a Host that declares any of them carries it once.
+CAPABILITY_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "local_asr": ("eidolon_models",),
+    "local_tts": ("eidolon_models",),
+    "local_llm": ("eidolon_models",),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (
@@ -49,6 +67,9 @@ V2_COMPONENT_ENTRYPOINTS = {
         Path(".venv/bin/eidolon-memory-supervisor"),
         Path(".venv/bin/eidolon-memory-discovery"),
     ),
+    # A shell entry point rather than a console script: the ASR service is
+    # started through `scripts/eidolon-asr`, which is what its unit ExecStarts.
+    "eidolon_models": (Path("scripts/eidolon-asr"),),
 }
 #: Every file a release writes outside its own release root, and which component
 #: it comes from.
@@ -203,6 +224,79 @@ V2_AFFECTED_UNITS = (
     "eidolon-channel-provider.service",
     "eidolon-channel.service",
 )
+#: What a capability adds to the asset, unit and readiness sets. Stated as
+#: additions rather than as alternative whole sets so that the baseline stays
+#: one reviewed list: a Host that declares nothing gets exactly what every Host
+#: got before any of this existed.
+CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
+    "local_asr": {
+        Path("/etc/systemd/system/eidolon-asr.service"): (
+            "eidolon_models",
+            Path("deploy/systemd/eidolon-asr.service"),
+        ),
+    },
+}
+
+CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
+    "local_asr": ("eidolon-asr.service",),
+}
+
+CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
+    "local_asr": {
+        # The port eidolon_models/ops/component.toml reserves for asr_stream,
+        # bound to loopback. Checked as a socket rather than a health document
+        # because the service speaks a WebSocket at /v1/stream and has no
+        # health route; what a release needs to know is that it is listening.
+        "asr": ("tcp", "tcp://127.0.0.1:8768", None, "open"),
+    },
+}
+
+
+def expected_components(capabilities: frozenset[str]) -> frozenset[str]:
+    """The components a Host with these capabilities runs."""
+
+    return BASE_COMPONENTS.union(
+        component
+        for capability in capabilities
+        for component in CAPABILITY_COMPONENTS.get(capability, ())
+    )
+
+
+def expected_system_assets(capabilities: frozenset[str]) -> dict[Path, tuple[str, Path]]:
+    """Every file this release writes outside its own root, for this Host."""
+
+    assets = dict(V2_SYSTEM_ASSETS)
+    for capability in sorted(capabilities):
+        assets.update(CAPABILITY_SYSTEM_ASSETS.get(capability, {}))
+    return assets
+
+
+def expected_affected_units(capabilities: frozenset[str]) -> tuple[str, ...]:
+    """The unit topology, in the one order a cutover may use.
+
+    Order is load-bearing — quiesce sweeps it in reverse — so additions go
+    after the baseline and capabilities are applied in sorted order. Two Hosts
+    declaring the same capabilities therefore produce the same tuple, and a
+    descriptor cannot smuggle a different sequence past this.
+    """
+
+    units = list(V2_AFFECTED_UNITS)
+    for capability in sorted(capabilities):
+        units.extend(CAPABILITY_AFFECTED_UNITS.get(capability, ()))
+    return tuple(units)
+
+
+def expected_readiness(
+    capabilities: frozenset[str],
+) -> dict[str, tuple[str, str, Path | None, str]]:
+    """What must answer before this release is considered started."""
+
+    checks = dict(V2_READINESS)
+    for capability in sorted(capabilities):
+        checks.update(CAPABILITY_READINESS.get(capability, {}))
+    return checks
+
+
 V2_READINESS = {
     "eidolond": (
         "unix_http",
@@ -307,6 +401,12 @@ class ReleaseDescriptor:
     schema_version: int
     release_id: str
     target: TargetProfile
+    #: What the Host this release was sealed for can do. Sealed with it, so it
+    #: is evidence rather than a parameter: the expected component, asset, unit
+    #: and readiness sets are computed from this and compared exactly, and a
+    #: descriptor cannot claim a capability and then ship a set that does not
+    #: match it.
+    capabilities: frozenset[str]
     components: tuple[ComponentRelease, ...]
     support_sources: tuple[SupportSource, ...]
     system_assets: tuple[SystemAsset, ...]
@@ -354,11 +454,18 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
     assert isinstance(document, dict)
     release_id = str(document["release_id"])
     target_wire = document["target"]
+    try:
+        capabilities = require_known_capabilities(document.get("capabilities", []))
+    except ValueError as exc:
+        raise ReleaseDescriptorError(f"release descriptor capability is invalid: {exc}") from exc
     components = tuple(_component_from_wire(item) for item in document["components"])
     component_ids = [item.component_id for item in components]
-    if set(component_ids) != set(_COMPONENT_LINKS) or len(component_ids) != len(set(component_ids)):
+    if set(component_ids) != expected_components(capabilities) or len(component_ids) != len(
+        set(component_ids)
+    ):
         raise ReleaseDescriptorError(
-            "release descriptor component set must be the unique reviewed full product set"
+            "release descriptor component set must be the unique reviewed set for these "
+            "capabilities"
         )
     for component in components:
         expected_path = Path("/opt/eidolon/releases") / release_id / component.component_id
@@ -402,12 +509,15 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
     destinations = [asset.destination for asset in assets]
     if len(destinations) != len(set(destinations)):
         raise ReleaseDescriptorError("system asset destination must be unique")
-    if set(destinations) != set(V2_SYSTEM_ASSETS):
-        raise ReleaseDescriptorError("system asset set must equal the fixed V2 set")
+    declared_assets = expected_system_assets(capabilities)
+    if set(destinations) != set(declared_assets):
+        raise ReleaseDescriptorError(
+            "system asset set must equal the reviewed set for these capabilities"
+        )
     for asset in assets:
         if asset.source.is_absolute() or ".." in asset.source.parts:
             raise ReleaseDescriptorError("system asset source must stay inside its component")
-        expected_component, expected_source = V2_SYSTEM_ASSETS[asset.destination]
+        expected_component, expected_source = declared_assets[asset.destination]
         if asset.source_component_id != expected_component or asset.source != expected_source:
             raise ReleaseDescriptorError(
                 f"system asset source mapping is not fixed: {asset.destination}"
@@ -421,18 +531,24 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         raise ReleaseDescriptorError("required secret set must equal the fixed V2 set")
 
     affected_units = tuple(str(item) for item in document["affected_units"])
-    if affected_units != V2_AFFECTED_UNITS:
-        raise ReleaseDescriptorError("affected unit set must equal the fixed V2 set")
+    if affected_units != expected_affected_units(capabilities):
+        raise ReleaseDescriptorError(
+            "affected unit set must equal the reviewed topology for these capabilities"
+        )
 
     readiness = tuple(_readiness_from_wire(item) for item in document["readiness_checks"])
     check_ids = [check.check_id for check in readiness]
     if len(check_ids) != len(set(check_ids)):
         raise ReleaseDescriptorError("readiness check id must be unique")
-    if set(check_ids) != set(V2_READINESS) or any(
-        (check.kind, check.url, check.socket, check.expected_status) != V2_READINESS[check.check_id]
+    declared_readiness = expected_readiness(capabilities)
+    if set(check_ids) != set(declared_readiness) or any(
+        (check.kind, check.url, check.socket, check.expected_status)
+        != declared_readiness[check.check_id]
         for check in readiness
     ):
-        raise ReleaseDescriptorError("readiness set must equal the fixed V2 set")
+        raise ReleaseDescriptorError(
+            "readiness set must equal the reviewed set for these capabilities"
+        )
 
     migrations = tuple(str(item) for item in document["database_migrations"])
     cutover_mode = str(document["cutover_mode"])
@@ -442,6 +558,7 @@ def release_descriptor_from_document(document: object) -> ReleaseDescriptor:
         )
     return ReleaseDescriptor(
         schema_version=int(document["schema_version"]),
+        capabilities=capabilities,
         release_id=release_id,
         target=TargetProfile(
             system=str(target_wire["system"]),

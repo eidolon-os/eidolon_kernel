@@ -17,6 +17,7 @@ from eidolon_deploy.contract import (
 from eidolon_deploy.manifest import (
     V2_COMPONENT_ENTRYPOINTS,
     V2_SYSTEM_ASSETS,
+    expected_system_assets,
     load_release_descriptor,
 )
 from eidolon_deploy.sealing import (
@@ -41,7 +42,9 @@ def _host_path(root: Path, value: str) -> Path:
     return root / Path(value).relative_to("/")
 
 
-def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
+def _prepared_tree(
+    tmp_path: Path, release_id: str, capabilities: frozenset[str] | None = None
+) -> Path:
     root = tmp_path / "root"
     release_root = _host_path(root, f"/opt/eidolon/releases/{release_id}")
     sources = {
@@ -66,7 +69,9 @@ def _prepared_tree(tmp_path: Path, release_id: str) -> Path:
             executable.parent.mkdir(parents=True, exist_ok=True)
             executable.write_text("#!/bin/sh\n")
             executable.chmod(0o755)
-    for _destination, (source_id, relative) in V2_SYSTEM_ASSETS.items():
+    for _destination, (source_id, relative) in expected_system_assets(
+        frozenset() if capabilities is None else frozenset(capabilities)
+    ).items():
         asset = sources[source_id] / relative
         asset.parent.mkdir(parents=True, exist_ok=True)
         asset.write_text(f"asset:{relative}\n")
@@ -284,3 +289,106 @@ def test_package_digest_is_reproducible_from_a_tree_without_this_package(
     assert package_digest(root) == (
         "280d4ab1ee9356bb66788af6769817df8d4069d88310e47999ff0d899c004883"
     )
+
+
+def test_sealing_carries_the_conditional_component_for_a_declaring_host(
+    tmp_path: Path,
+) -> None:
+    """A board with an NPU, sealed as one.
+
+    `eidolon_models` could not ship at all: every set in the descriptor was
+    compared against a literal, so a component present on one Host and absent
+    on another had no way to be expressed and was refused however it was
+    declared.
+    """
+
+    release_id = "20260908-asr-seal"
+    capabilities = frozenset({"local_asr"})
+    root = _prepared_tree(tmp_path, release_id, capabilities)
+
+    path = seal_prepared_release(
+        host_root=root,
+        release_id=release_id,
+        revisions=_revisions(models="3" * 40),
+        inspector=FakeInspector(),
+        system="linux",
+        machine="aarch64",
+        capabilities=capabilities,
+    )
+
+    release = load_release_descriptor(path)
+    assert release.capabilities == capabilities
+    assert "eidolon_models" in {item.component_id for item in release.components}
+    assert release.affected_units[-1] == "eidolon-asr.service"
+    assert "asr" in {check.check_id for check in release.readiness_checks}
+
+
+def test_sealing_a_host_that_declares_nothing_carries_none_of_it(tmp_path: Path) -> None:
+    """Most Hosts. It reaches a provider for speech and carries no weights."""
+
+    release_id = "20260908-plain-seal"
+    root = _prepared_tree(tmp_path, release_id)
+
+    path = seal_prepared_release(
+        host_root=root,
+        release_id=release_id,
+        revisions=_revisions(),
+        inspector=FakeInspector(),
+        system="linux",
+        machine="aarch64",
+    )
+
+    release = load_release_descriptor(path)
+    assert release.capabilities == frozenset()
+    assert "eidolon_models" not in {item.component_id for item in release.components}
+
+
+def test_sealing_refuses_a_capability_without_its_revision_and_the_reverse(
+    tmp_path: Path,
+) -> None:
+    """The two halves have to agree, in both directions.
+
+    A declared capability with no revision is a release that cannot carry what
+    it promises; a revision with no capability ships about 720 MB of weights
+    that no unit on that Host will ever load.
+    """
+
+    capabilities = frozenset({"local_asr"})
+    root = _prepared_tree(tmp_path, "20260908-a", capabilities)
+    with pytest.raises(PreparationError, match="eidolon_models revision"):
+        seal_prepared_release(
+            host_root=root,
+            release_id="20260908-a",
+            revisions=_revisions(),
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+            capabilities=capabilities,
+        )
+
+    other = _prepared_tree(tmp_path / "second", "20260908-b", capabilities)
+    with pytest.raises(PreparationError, match="eidolon_models revision"):
+        seal_prepared_release(
+            host_root=other,
+            release_id="20260908-b",
+            revisions=_revisions(models="3" * 40),
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+        )
+
+
+def test_sealing_refuses_a_capability_nobody_defined(tmp_path: Path) -> None:
+    """An unknown name would otherwise select nothing, silently."""
+
+    root = _prepared_tree(tmp_path, "20260908-c")
+    with pytest.raises(PreparationError, match="unknown Host capability"):
+        seal_prepared_release(
+            host_root=root,
+            release_id="20260908-c",
+            revisions=_revisions(),
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+            capabilities=frozenset({"local_asrr"}),
+        )

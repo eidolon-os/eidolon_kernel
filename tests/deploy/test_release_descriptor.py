@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from eidolon_deploy.manifest import ReleaseDescriptorError, load_release_descriptor
-from tests.deploy.support import release_document, write_release_document
+from tests.deploy.support import release_document, with_capability, write_release_document
 
 
 def test_loads_strict_sealed_release_descriptor(tmp_path: Path) -> None:
@@ -201,4 +201,92 @@ def test_rejects_v1_descriptor_instead_of_claiming_full_stack_coverage(
     write_release_document(path, document)
 
     with pytest.raises(ReleaseDescriptorError, match="contract"):
+        load_release_descriptor(path)
+
+
+def test_a_host_that_declares_nothing_gets_exactly_the_baseline(tmp_path: Path) -> None:
+    """No capability, no additions — and no `capabilities` key needed at all.
+
+    A rollback reads the descriptor of the release it returns to, and those were
+    sealed before the field existed. Requiring it would make every older release
+    unrestorable, so absence means a Host that declares nothing.
+    """
+
+    path = tmp_path / "release.json"
+    document = release_document()
+    assert "capabilities" not in document
+    write_release_document(path, document)
+
+    release = load_release_descriptor(path)
+
+    assert release.capabilities == frozenset()
+    assert "eidolon_models" not in {item.component_id for item in release.components}
+    assert "eidolon-asr.service" not in release.affected_units
+
+
+def test_a_declared_capability_adds_its_component_unit_asset_and_check(
+    tmp_path: Path,
+) -> None:
+    """The conditional component could not ship at all before this.
+
+    Every set was compared against a literal, so `eidolon_models` — a component
+    that is on a board with an NPU and on no other Host — was refused by the
+    contract no matter how it was declared. The sets are computed from the
+    Host's capabilities now, and still compared exactly.
+    """
+
+    path = tmp_path / "release.json"
+    write_release_document(path, with_capability(release_document()))
+
+    release = load_release_descriptor(path)
+
+    assert release.capabilities == frozenset({"local_asr"})
+    assert "eidolon_models" in {item.component_id for item in release.components}
+    # Order is load-bearing: quiesce sweeps the unit list in reverse, so an
+    # addition goes after the baseline rather than anywhere in it.
+    assert release.affected_units[-1] == "eidolon-asr.service"
+    assert Path("/etc/systemd/system/eidolon-asr.service") in {
+        asset.destination for asset in release.system_assets
+    }
+    assert "asr" in {check.check_id for check in release.readiness_checks}
+
+
+def test_a_capability_nobody_declared_cannot_bring_a_component(tmp_path: Path) -> None:
+    """Shipping it needs the capability said out loud, not just the parts."""
+
+    path = tmp_path / "release.json"
+    document = with_capability(release_document())
+    document["capabilities"] = []
+    write_release_document(path, document)
+
+    with pytest.raises(ReleaseDescriptorError, match="component set"):
+        load_release_descriptor(path)
+
+
+def test_a_declared_capability_without_its_parts_is_refused(tmp_path: Path) -> None:
+    """And the other way round: claiming it and shipping the baseline is not a
+    release for that Host, it is a Host that will install nothing it asked for."""
+
+    path = tmp_path / "release.json"
+    document = release_document()
+    document["capabilities"] = ["local_asr"]
+    write_release_document(path, document)
+
+    with pytest.raises(ReleaseDescriptorError, match="component set"):
+        load_release_descriptor(path)
+
+
+def test_a_misspelt_capability_is_refused_rather_than_selecting_nothing(
+    tmp_path: Path,
+) -> None:
+    """An open set fails silently: a typo selects no additions, so the expected
+    sets come out as the baseline and the release is accepted as a Host that
+    runs nothing extra — which is exactly what such a Host would install."""
+
+    path = tmp_path / "release.json"
+    document = release_document()
+    document["capabilities"] = ["local_asrr"]
+    write_release_document(path, document)
+
+    with pytest.raises(ReleaseDescriptorError, match="contract violation|capability"):
         load_release_descriptor(path)

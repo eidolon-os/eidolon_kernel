@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from eidolon_deploy.capabilities import require_known_capabilities
 from eidolon_deploy.contract import (
     ACTIVATOR_RELATIVE_PATH,
     ACTIVATOR_SOURCE_RELATIVE_PATH,
@@ -25,11 +26,12 @@ from eidolon_deploy.fingerprints import (
     source_tree_sha256,
 )
 from eidolon_deploy.manifest import (
-    V2_AFFECTED_UNITS,
     V2_COMPONENT_ENTRYPOINTS,
-    V2_READINESS,
     V2_REQUIRED_SECRETS,
-    V2_SYSTEM_ASSETS,
+    expected_affected_units,
+    expected_components,
+    expected_readiness,
+    expected_system_assets,
     release_descriptor_from_document,
 )
 
@@ -52,8 +54,14 @@ class ReleaseRevisions:
     channel: str
     memory: str
     sdk: str
+    #: Present only for a Host that declares a capability requiring it. `None`
+    #: is not "unknown" — it is a Host that reaches a provider for speech and
+    #: carries none of the weights, which is most of them.
+    models: str | None = None
 
     def __post_init__(self) -> None:
+        if self.models is not None and _REVISION.fullmatch(self.models) is None:
+            raise PreparationError("release revision is invalid")
         if any(
             _REVISION.fullmatch(value) is None
             for value in (
@@ -119,8 +127,18 @@ def seal_prepared_release(
     system: str | None = None,
     machine: str | None = None,
     cutover_mode: str = "reversible",
+    capabilities: frozenset[str] | None = None,
 ) -> Path:
-    """Validate and seal the fixed Eidolon OS V2 release layout on its target."""
+    """Validate and seal the Eidolon OS V2 release layout on its target.
+
+    The layout is fixed for a given set of Host capabilities rather than fixed
+    outright. One component is not on every Host — a board with an NPU listens
+    and speaks with its own models, a Host without one reaches a provider and
+    should carry none of the weights — so the component, asset, unit and
+    readiness sets are computed from the declared capabilities and then
+    compared exactly, which is the same refusal as before against a set that
+    now depends on something.
+    """
 
     if _RELEASE_ID.fullmatch(release_id) is None:
         raise PreparationError("release id is invalid")
@@ -130,6 +148,18 @@ def seal_prepared_release(
         raise PreparationError(
             f"release must be sealed on the linux/aarch64 target host, got "
             f"{actual_system}/{actual_machine}"
+        )
+
+    declared = frozenset() if capabilities is None else frozenset(capabilities)
+    try:
+        require_known_capabilities(sorted(declared))
+    except ValueError as exc:
+        raise PreparationError(str(exc)) from exc
+    wanted = expected_components(declared)
+    if ("eidolon_models" in wanted) != (revisions.models is not None):
+        raise PreparationError(
+            "a declared local-model capability needs an eidolon_models revision, and a "
+            "revision without one would ship weights no unit on this Host loads"
         )
 
     root = host_root.resolve()
@@ -143,9 +173,12 @@ def seal_prepared_release(
     channel = release_root / "eidolon_channel"
     memory = release_root / "eidolon_memory"
     sdk = release_root / "eidolon_sdk"
+    models = release_root / "eidolon_models" if revisions.models is not None else None
     for source in (kernel, data, hub, admin, agent, channel, memory, sdk):
         if not source.is_dir():
             raise PreparationError(f"release source directory is missing: {source.name}")
+    if models is not None and not models.is_dir():
+        raise PreparationError("release source directory is missing: eidolon_models")
 
     environment_inspector = inspector or SubprocessEnvironmentInspector()
     component_inputs = (
@@ -191,6 +224,18 @@ def seal_prepared_release(
             memory,
             tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_memory"]),
         ),
+        *(
+            ()
+            if models is None
+            else (
+                (
+                    "eidolon_models",
+                    revisions.models,
+                    models,
+                    tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_models"]),
+                ),
+            )
+        ),
     )
     components: list[dict[str, object]] = []
     python_version: str | None = None
@@ -234,7 +279,9 @@ def seal_prepared_release(
     component_roots = {
         component_id: source for component_id, _revision, source, _entrypoints in component_inputs
     }
-    for destination, (source_component_id, source_value) in V2_SYSTEM_ASSETS.items():
+    for destination, (source_component_id, source_value) in expected_system_assets(
+        declared
+    ).items():
         source = component_roots[source_component_id] / source_value
         if not source.is_file() or source.is_symlink():
             raise PreparationError(f"system asset source is missing: {source_value}")
@@ -258,6 +305,7 @@ def seal_prepared_release(
             "machine": "aarch64",
             "python": python_version,
         },
+        "capabilities": sorted(declared),
         "components": components,
         "support_sources": [
             {
@@ -269,7 +317,7 @@ def seal_prepared_release(
         ],
         "system_assets": assets,
         "required_secrets": [{"path": str(path), "mode": "0600"} for path in V2_REQUIRED_SECRETS],
-        "affected_units": list(V2_AFFECTED_UNITS),
+        "affected_units": list(expected_affected_units(declared)),
         "readiness_checks": [
             {
                 "check_id": check_id,
@@ -278,7 +326,7 @@ def seal_prepared_release(
                 **({"socket": str(values[2])} if values[2] is not None else {}),
                 "expected_status": values[3],
             }
-            for check_id, values in V2_READINESS.items()
+            for check_id, values in expected_readiness(declared).items()
         ],
         "cutover_mode": cutover_mode,
         "database_migrations": [],

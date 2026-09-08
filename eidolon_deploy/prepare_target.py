@@ -195,7 +195,9 @@ def _validate_bundle(root: Path) -> dict:
         document = json.loads((root / "bundle.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TargetPreparationError("bundle manifest is unreadable") from exc
-    if not isinstance(document, dict) or set(document) != {
+    # `capabilities` is optional so a bundle built before it existed still
+    # prepares: absent means a Host that declares nothing.
+    if not isinstance(document, dict) or set(document) - {"capabilities"} != {
         "schema_version",
         "release_id",
         "cutover_mode",
