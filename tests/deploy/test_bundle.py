@@ -1085,3 +1085,31 @@ def test_the_preparer_refuses_a_capability_it_does_not_know(tmp_path: Path) -> N
         prepare_target.TargetPreparationError, match="unknown capabilities"
     ):
         prepare_target._validate_bundle(output)
+
+
+def test_a_capability_that_adds_no_source_is_still_a_capability(tmp_path: Path) -> None:
+    """`rknpu2` says the machine has an NPU runtime. That selects models and
+    units elsewhere and adds nothing to a bundle's sources.
+
+    Checked because it was got wrong: the preparer tested membership against
+    the keys of the "what does it add" table rather than against the closed set
+    of capabilities, so a Host that legitimately declared `rknpu2` was refused
+    as declaring something unknown — after the whole bundle had been
+    transferred to it.
+    """
+
+    capabilities = frozenset({"rknpu2", "local_asr"})
+    repositories, revisions = _repositories(tmp_path / "repositories", capabilities)
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="20260908-npu-bundle",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+        capabilities=capabilities,
+    )
+
+    document = prepare_target._validate_bundle(output)
+
+    assert document["capabilities"] == ["local_asr", "rknpu2"]
+    assert prepare_target._source_ids(["rknpu2"]) == prepare_target._BASE_SOURCE_IDS

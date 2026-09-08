@@ -33,11 +33,19 @@ _BASE_SOURCE_IDS = (
     "eidolon_memory",
     "eidolon_sdk",
 )
-#: What a capability adds. A fourth statement of the pairing eidolon_ops,
-#: eidolon_deploy and each component's contract also make — this file runs on a
-#: Host from inside the bundle, with nothing installed and nothing to import,
-#: so it cannot ask any of them. The bundle says which capabilities it was
-#: built for and this derives the same set from that.
+#: Every capability a Host may declare. Separate from the table below because
+#: most capabilities add no source: `rknpu2` says the machine has an NPU
+#: runtime, which selects models and units elsewhere and nothing here. Checking
+#: membership against the table's keys instead of against this set is a mistake
+#: that has already been made once — a legitimate `rknpu2` was refused on the
+#: Host as "unknown" after the whole bundle had been transferred.
+_HOST_CAPABILITIES = frozenset({"rknpu2", "local_asr", "local_tts", "local_llm"})
+
+#: What a capability adds to the sources. A fifth statement of the pairing
+#: eidolon_ops, eidolon_deploy and each component's contract also make — this
+#: file runs on a Host from inside the bundle, with nothing installed and
+#: nothing to import, so it cannot ask any of them. The bundle says which
+#: capabilities it was built for and this derives the same set from that.
 _CAPABILITY_SOURCE_IDS = {
     "local_asr": ("eidolon_models",),
     "local_tts": ("eidolon_models",),
@@ -334,7 +342,7 @@ def _validate_bundle(root: Path) -> dict:
         isinstance(item, str) for item in capabilities
     ):
         raise TargetPreparationError("bundle capability set is invalid")
-    unknown = sorted(set(capabilities) - set(_CAPABILITY_SOURCE_IDS))
+    unknown = sorted(set(capabilities) - _HOST_CAPABILITIES)
     if unknown:
         # Refused rather than ignored: an unknown name would select no extra
         # sources, the baseline would validate, and the Host would prepare a
