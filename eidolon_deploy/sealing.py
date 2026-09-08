@@ -156,10 +156,16 @@ def seal_prepared_release(
     except ValueError as exc:
         raise PreparationError(str(exc)) from exc
     wanted = expected_components(declared)
-    if ("eidolon_models" in wanted) != (revisions.models is not None):
+    if "eidolon_models" in wanted and revisions.models is None:
         raise PreparationError(
-            "a declared local-model capability needs an eidolon_models revision, and a "
-            "revision without one would ship weights no unit on this Host loads"
+            "a declared local-model capability needs an eidolon_models revision: "
+            f"{sorted(declared)} selects eidolon_models and none was given"
+        )
+    if "eidolon_models" not in wanted and revisions.models is not None:
+        raise PreparationError(
+            "an eidolon_models revision was given and no capability selects it, so the "
+            "release would carry about 720 MB of weights no unit on this Host loads: "
+            f"declared capabilities are {sorted(declared) or 'none'}"
         )
 
     root = host_root.resolve()

@@ -213,6 +213,13 @@ def prepare_target_release(
                 "--cutover-mode",
                 document["cutover_mode"],
             ]
+            # What this Host can do has to be said, not left to be inferred
+            # from the sources present: the sealer compares the whole expected
+            # component, asset, unit and readiness set against what the
+            # capabilities select, so a models revision arriving with no
+            # capability declared is a release nothing on this Host would load.
+            for capability in sorted(document.get("capabilities", [])):
+                seal_command.extend(("--capability", capability))
             for source in document["sources"]:
                 seal_command.extend((_REVISION_FLAGS[source["source_id"]], source["revision"]))
             _run("release sealing", *seal_command)

@@ -355,7 +355,7 @@ def test_sealing_refuses_a_capability_without_its_revision_and_the_reverse(
 
     capabilities = frozenset({"local_asr"})
     root = _prepared_tree(tmp_path, "20260908-a", capabilities)
-    with pytest.raises(PreparationError, match="eidolon_models revision"):
+    with pytest.raises(PreparationError, match="needs an eidolon_models revision"):
         seal_prepared_release(
             host_root=root,
             release_id="20260908-a",
@@ -366,8 +366,10 @@ def test_sealing_refuses_a_capability_without_its_revision_and_the_reverse(
             capabilities=capabilities,
         )
 
+    # The other direction says the other thing. One message that covered both
+    # described the opposite of what had happened, which is worse than none.
     other = _prepared_tree(tmp_path / "second", "20260908-b", capabilities)
-    with pytest.raises(PreparationError, match="eidolon_models revision"):
+    with pytest.raises(PreparationError, match="no capability selects it"):
         seal_prepared_release(
             host_root=other,
             release_id="20260908-b",

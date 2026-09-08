@@ -1113,3 +1113,23 @@ def test_a_capability_that_adds_no_source_is_still_a_capability(tmp_path: Path) 
 
     assert document["capabilities"] == ["local_asr", "rknpu2"]
     assert prepare_target._source_ids(["rknpu2"]) == prepare_target._BASE_SOURCE_IDS
+
+
+def test_the_preparer_tells_the_sealer_what_the_host_can_do(tmp_path: Path) -> None:
+    """The seal command must declare capabilities, not only carry the sources.
+
+    Found on the Host, at the last step: the bundle had transferred, every venv
+    had been built, and sealing then refused because a models revision arrived
+    with no capability declared. The sealer compares the whole expected
+    component, asset, unit and readiness set against what the capabilities
+    select, so the sources present are not a substitute for saying so.
+    """
+
+    import inspect
+
+    source = inspect.getsource(prepare_target.prepare_target_release)
+    seal = source[source.index('"seal"') :]
+    assert '"--capability"' in seal, "the seal command no longer declares capabilities"
+    # And before the revisions, so a reader sees what is being asked for before
+    # what it is being asked with.
+    assert seal.index('"--capability"') < seal.index("_REVISION_FLAGS")
