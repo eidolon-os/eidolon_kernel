@@ -18,7 +18,7 @@ from eidolon_deploy.linux import (
     SubprocessRunner,
 )
 from eidolon_deploy.manifest import release_descriptor_from_document
-from tests.deploy.support import release_document
+from tests.deploy.support import release_document, with_capability
 
 
 class FakeRunner:
@@ -78,9 +78,11 @@ def _host_path(root: Path, path: str | Path) -> Path:
     return root / value.relative_to("/")
 
 
-def prepared_release(tmp_path: Path):
+def prepared_release(tmp_path: Path, capability: str | None = None):
     root = tmp_path / "root"
     document = release_document()
+    if capability is not None:
+        document = with_capability(document, capability)
     runner = FakeRunner()
 
     for component in document["components"]:
@@ -95,6 +97,9 @@ def prepared_release(tmp_path: Path):
         )
         for entrypoint in component["required_entrypoints"]:
             path = release_path / entrypoint
+            # Not every entry point is a console script under .venv/bin: the
+            # ASR service is started through `scripts/eidolon-asr`.
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("#!/bin/sh\n")
             path.chmod(0o755)
         component["lock_sha256"] = hashlib.sha256(
@@ -1184,3 +1189,79 @@ def test_preflight_rejects_a_release_hub_that_states_no_profile(tmp_path: Path) 
 
     with pytest.raises(LinuxDeploymentError, match="does not state"):
         host.preflight(release)
+
+
+def test_a_conditional_component_arriving_alone_is_not_a_partial_expansion(
+    tmp_path: Path,
+) -> None:
+    """The state of a Host that has just declared a capability.
+
+    Found on the board. It had the agent/channel/memory links — they have been
+    there since those three joined the product — and no eidolon_models link,
+    because that component had never shipped anywhere. The rule was "every
+    expansion link or none", which held while the only expansion was one
+    migration three components made together, and it called this correct state
+    a partial expansion and refused the release.
+    """
+
+    root, release, host, _ = prepared_release(tmp_path, capability="local_asr")
+    models = release.components_by_id["eidolon_models"]
+    _host_path(root, models.current_link).unlink()
+
+    previous = host.preflight(release)
+
+    assert "eidolon_models" not in previous
+    assert {"eidolon_agent", "eidolon_channel", "eidolon_memory"} <= set(previous)
+
+
+def test_a_half_finished_migration_is_still_refused(tmp_path: Path) -> None:
+    """What the all-or-none rule is actually for, kept per step.
+
+    Two of the three that arrived together means an activation that stopped
+    half-way, and that is still not a Host to deploy onto — including when a
+    conditional component is legitimately absent at the same time.
+    """
+
+    root, release, host, _ = prepared_release(tmp_path, capability="local_asr")
+    for component_id in ("eidolon_agent", "eidolon_channel", "eidolon_models"):
+        _host_path(root, release.components_by_id[component_id].current_link).unlink()
+
+    with pytest.raises(LinuxDeploymentError, match="partial topology expansion"):
+        host.preflight(release)
+
+
+def test_rollback_removes_a_conditional_component_it_created(tmp_path: Path) -> None:
+    """A Host that had no eidolon_models link before must not keep one after a
+    rollback: the release that put it there is the one being undone."""
+
+    root, release, host, _ = prepared_release(tmp_path, capability="local_asr")
+    models = release.components_by_id["eidolon_models"]
+    _host_path(root, models.current_link).unlink()
+    previous = host.preflight(release)
+    snapshot = host.create_snapshot(release, previous)
+    host.install_assets(release)
+    host.switch_components(release)
+    assert _host_path(root, models.current_link).is_symlink()
+
+    host.restore(release, snapshot)
+
+    assert not _host_path(root, models.current_link).exists()
+    assert not _host_path(root, models.current_link).is_symlink()
+
+
+def test_every_readiness_check_a_release_can_carry_names_a_unit() -> None:
+    """The map has to cover the conditional checks too.
+
+    A rollback filters the release's readiness checks by which units it
+    actually restored, and looks each check up by id. A check with no entry
+    raised KeyError *inside the rollback* — the links were already back and the
+    Host was fine, and the operator would have been told the rollback itself
+    failed.
+    """
+
+    from eidolon_deploy.capabilities import HOST_CAPABILITIES
+    from eidolon_deploy.linux import _READINESS_UNITS
+    from eidolon_deploy.manifest import CAPABILITY_READINESS, expected_readiness
+
+    assert set(CAPABILITY_READINESS) <= HOST_CAPABILITIES
+    assert set(expected_readiness(HOST_CAPABILITIES)) <= set(_READINESS_UNITS)

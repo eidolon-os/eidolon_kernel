@@ -66,6 +66,10 @@ _READINESS_UNITS = {
     "agent": "eidolon-agent.service",
     "channel-provider": "eidolon-channel-provider.service",
     "channel": "eidolon-channel.service",
+    #: Only on a Host that declares a local-model capability, like the check
+    #: itself. A release descriptor never carries a check this map has no unit
+    #: for, so it is enough to be complete rather than conditional.
+    "asr": "eidolon-asr.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
@@ -124,13 +128,26 @@ _COMMISSIONING_FILE_PROFILE_SCRIPT = (
 #: tables which may already be there. That is a broken host, not a migration.
 _MIGRATABLE_BOOTSTRAP_SCHEMA = 1
 _SNAPSHOT_SCHEMA_VERSION = 2
-_TOPOLOGY_EXPANSION_COMPONENTS = frozenset(
-    {
-        "eidolon_agent",
-        "eidolon_channel",
-        "eidolon_memory",
-    }
+#: Components whose `current` symlink an activation may have to create rather
+#: than replace, because a Host can reach this release without ever having had
+#: one.
+#:
+#: For the first three that was a migration: they joined the product after Hosts
+#: existed, and each Host passed through the gap once. For `eidolon_models` it
+#: is permanent. The component is conditional — a board with an NPU runs it and
+#: a Host that reaches a provider for speech does not — so a Host that gains the
+#: capability meets it for the first time whenever that happens, and one that
+#: loses it and gains it again meets it again.
+_TOPOLOGY_EXPANSION_STEPS = (
+    #: The three that joined the product together. A Host with two of their
+    #: links and not the third is mid-activation, not mid-migration, which is
+    #: what the all-or-none rule below is for.
+    frozenset({"eidolon_agent", "eidolon_channel", "eidolon_memory"}),
+    #: Its own step, because it does not arrive with anything: a Host gains and
+    #: loses this one on its own whenever its declared capabilities change.
+    frozenset({"eidolon_models"}),
 )
+_TOPOLOGY_EXPANSION_COMPONENTS = frozenset().union(*_TOPOLOGY_EXPANSION_STEPS)
 
 
 class LinuxDeploymentError(RuntimeError):
@@ -802,9 +819,27 @@ class LinuxDeploymentHost:
         ):
             return False
         expected = {component.component_id for component in release.components}
-        required = expected - _TOPOLOGY_EXPANSION_COMPONENTS
         actual = set(previous_targets)
-        return actual == required or actual == expected
+        if not actual <= expected:
+            return False
+        if expected - _TOPOLOGY_EXPANSION_COMPONENTS - actual:
+            return False
+        # Per step, not across all of them. The original rule was "every
+        # expansion link or none", which held while the only expansion was one
+        # migration that three components made together. It cannot hold once a
+        # component is conditional: this Host had the three links and no
+        # eidolon_models link, which is the correct state for a Host that has
+        # just declared the capability, and the rule called it a partial
+        # expansion and refused the release.
+        #
+        # What each step still has to be is all or none, which is the fact
+        # worth keeping: two of three links is an activation that stopped
+        # half-way.
+        for step in _TOPOLOGY_EXPANSION_STEPS:
+            present = actual & step & expected
+            if present and present != step & expected:
+                return False
+        return True
 
     def _restore_file_ownership(self, path: Path, uid: int, gid: int) -> None:
         """Restore captured ownership on the real host before atomic replacement."""
