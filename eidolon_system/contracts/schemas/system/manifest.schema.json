@@ -3,48 +3,112 @@
   "$id": "https://eidolon.dev/system/contracts/system-service-manifest-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "services"],
+  "required": [
+    "version",
+    "services"
+  ],
   "properties": {
-    "version": {"const": 1},
+    "version": {
+      "const": 1
+    },
     "services": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["service_id", "host_targets"],
+        "required": [
+          "service_id",
+          "host_targets"
+        ],
         "properties": {
-          "service_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
-          "description": {"type": "string", "maxLength": 256, "default": ""},
-          "required": {"type": "boolean", "default": false},
-          "enabled_by_default": {"type": "boolean", "default": true},
+          "service_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+            "maxLength": 128
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 256,
+            "default": ""
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          },
+          "enabled_by_default": {
+            "type": "boolean",
+            "default": true
+          },
           "dependencies": {
             "type": "array",
             "uniqueItems": true,
-            "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              "maxLength": 128
+            },
             "default": []
           },
           "host_targets": {
             "description": "One target per host driver. The reserved value \"external\" declares that the driver does not manage the service on this kind of Host: eidolond will not start, stop or restart it, but still probes it and still gates its dependents on it.",
             "type": "object",
             "minProperties": 1,
-            "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 256}
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
           },
           "endpoints": {
             "type": "array",
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["endpoint_id", "protocol", "address", "contract"],
+              "required": [
+                "endpoint_id",
+                "protocol",
+                "address",
+                "contract"
+              ],
               "properties": {
-                "endpoint_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 128},
-                "protocol": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 32},
-                "address": {"type": "string", "minLength": 1, "maxLength": 2048},
-                "contract": {"type": "string", "minLength": 1, "maxLength": 256},
-                "health_url": {"type": ["string", "null"], "format": "uri", "maxLength": 2048}
+                "endpoint_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                  "maxLength": 128
+                },
+                "protocol": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                  "maxLength": 32
+                },
+                "address": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                },
+                "contract": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "health_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uri",
+                  "maxLength": 2048
+                }
               }
             },
             "default": []
+          },
+          "requires_capability": {
+            "description": "A Host capability this service needs present. A Host that does not declare it has no such service at all — not a disabled one: a listed service is still health-probed, still gates its dependents, and is still something the unit applier may actuate. Spelled the same as in a component's ops/component.toml, which states the same requirement for the same service; a drift test holds the two together.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
           }
         }
       }

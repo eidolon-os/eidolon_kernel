@@ -39,6 +39,7 @@ def manifest_service_to_domain(wire: ManifestServiceWire) -> ServiceDefinition:
         required=wire.required,
         enabled_by_default=wire.enabled_by_default,
         dependencies=wire.dependencies,
+        requires_capability=wire.requires_capability,
         host_targets=wire.host_targets,
         endpoints=tuple(manifest_endpoint_to_domain(endpoint) for endpoint in wire.endpoints),
     )

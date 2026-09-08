@@ -243,11 +243,12 @@ CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
 
 CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
     "local_asr": {
-        # The port eidolon_models/ops/component.toml reserves for asr_stream,
-        # bound to loopback. Checked as a socket rather than a health document
-        # because the service speaks a WebSocket at /v1/stream and has no
-        # health route; what a release needs to know is that it is listening.
-        "asr": ("tcp", "tcp://127.0.0.1:8768", None, "open"),
+        # The service's own readiness route, not a bare socket check. A port
+        # that is merely bound says a process started; `/readyz` answers only
+        # once the backend has its models open, which is what a release needs
+        # to know before it calls itself activated. `http_2xx` because the
+        # document reports `ok` rather than a `status` field.
+        "asr": ("http", "http://127.0.0.1:8768/readyz", None, "http_2xx"),
     },
 }
 

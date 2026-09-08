@@ -26,6 +26,9 @@ class ManifestServiceWire(ContractModel):
     required: bool = False
     enabled_by_default: bool = True
     dependencies: tuple[str, ...] = ()
+    #: Absent means every Host runs it, which is what every service was before
+    #: any Host could differ.
+    requires_capability: str | None = None
     host_targets: dict[str, str]
     endpoints: tuple[ManifestEndpointWire, ...] = ()
 

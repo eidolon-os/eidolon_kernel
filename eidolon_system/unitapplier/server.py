@@ -21,6 +21,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from eidolon_system.adapters.host_profile import declared_host_capabilities
 from eidolon_system.adapters.manifest.yaml_file import YamlServiceManifest
 from eidolon_system.unitapplier.authorize import (
     MANAGER_UNIT,
@@ -52,10 +53,22 @@ _DEFAULT_SOCKET = Path("/run/eidolon-unit-applier.sock")
 _log = logging.getLogger("eidolon.unitapplier")
 
 
-def managed_units(manifest_path: Path) -> frozenset[str]:
-    """The systemd units the manifest says this driver actuates."""
+def managed_units(
+    manifest_path: Path, capabilities: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """The systemd units the manifest says this driver actuates, on this Host.
 
-    catalog = YamlServiceManifest(manifest_path).load()
+    Filtered by the same capabilities eidolond filters by, and for the same
+    reason: this allowlist is what the applier will act on at all. A Host
+    without the capability has no such unit installed, so allowing its name
+    would be allowing something that cannot exist — and a Host with it needs
+    the name here or the manager's own start would be refused by its applier.
+
+    Both facts come from one filter over one file, which is the property worth
+    having: there is no second place to keep in step.
+    """
+
+    catalog = YamlServiceManifest(manifest_path, capabilities=capabilities).load()
     return frozenset(
         definition.target_for("systemd")
         for definition in catalog.definitions
@@ -217,7 +230,7 @@ def run(argv: list[str] | None = None) -> int:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
     try:
-        allowed = managed_units(arguments.manifest)
+        allowed = managed_units(arguments.manifest, declared_host_capabilities())
     except Exception as exc:  # a manifest we cannot read is not a partial start
         _log.error("cannot derive managed units from %s: %s", arguments.manifest, exc)
         return 1

@@ -167,6 +167,35 @@ services:
         address: 127.0.0.1:45051
         contract: eidolon.agent.rpc.v1
         health_url: http://127.0.0.1:8180/readyz
+  # The one service not every Host runs. A board with an NPU listens with its
+  # own models; a Host without one reaches a provider for the same thing and
+  # carries none of this — no unit, no port, no weights.
+  #
+  # `requires_capability` is the same word the component's own
+  # ops/component.toml uses for the same service, and a drift test holds the
+  # two together. A Host that does not declare it has no such service here at
+  # all: not a disabled one, because a listed service is still health-probed,
+  # still gates dependents, and is still a unit the applier may actuate.
+  #
+  # Nothing depends on it yet. Nothing unconditional may: the manifest is
+  # refused if a service every Host runs names a dependency only some have.
+  - service_id: asr
+    description: Local streaming speech recognition on this Host's own models
+    required: true
+    enabled_by_default: true
+    requires_capability: local_asr
+    dependencies: []
+    host_targets:
+      systemd: eidolon-asr.service
+      # No macOS source topology for it: the weights are NPU artifacts and a
+      # workstation has no NPU to load them with.
+      supervisord: external
+    endpoints:
+      - endpoint_id: asr.stream
+        protocol: websocket
+        address: 127.0.0.1:8768
+        contract: eidolon.models.asr.v1
+        health_url: http://127.0.0.1:8768/readyz
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true

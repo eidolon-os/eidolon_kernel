@@ -66,6 +66,13 @@ class ServiceDefinition:
     dependencies: tuple[str, ...]
     host_targets: dict[str, str]
     endpoints: tuple[ServiceEndpoint, ...]
+    #: A Host capability this service needs present, or None when every Host
+    #: runs it — which is what every service was before any Host could differ,
+    #: and why this is the one field with a default. `required` and
+    #: `enabled_by_default` are read within the set this Host actually has: a
+    #: service that is not here is not a disabled service, it is not a service
+    #: of this Host at all.
+    requires_capability: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "service_id", _identifier("service_id", self.service_id))
@@ -86,6 +93,12 @@ class ServiceDefinition:
         endpoint_ids = [endpoint.endpoint_id for endpoint in self.endpoints]
         if len(endpoint_ids) != len(set(endpoint_ids)):
             raise InvalidManifest(f"{self.service_id} has duplicate endpoint_id")
+        if self.requires_capability is not None:
+            object.__setattr__(
+                self,
+                "requires_capability",
+                _identifier("requires_capability", self.requires_capability),
+            )
 
     def manages(self, driver_name: str) -> bool:
         """Whether this driver is the thing that starts and stops the service."""
@@ -104,6 +117,60 @@ class ServiceDefinition:
                 f"{self.service_id} is external to {driver_name} and has no target to act on"
             )
         return target
+
+
+def require_satisfiable_conditions(definitions: tuple[ServiceDefinition, ...]) -> None:
+    """Refuse a manifest whose graph cannot survive being filtered.
+
+    A service every Host runs must not depend on one only some Hosts have:
+    filtering the conditional one away would leave a dependency naming nothing,
+    and the Host that got there would be told it has an unknown dependency
+    rather than that the manifest asks for something impossible.
+
+    Checked over the whole manifest rather than after filtering, because it is a
+    property of the manifest and is equally wrong on every Host — including the
+    ones where the missing piece happens to be present.
+    """
+
+    conditional = {
+        definition.service_id
+        for definition in definitions
+        if definition.requires_capability is not None
+    }
+    for definition in definitions:
+        if definition.requires_capability is not None:
+            continue
+        depends_on = sorted(set(definition.dependencies) & conditional)
+        if depends_on:
+            raise InvalidManifest(
+                f"{definition.service_id} runs on every Host and depends on "
+                f"{depends_on[0]}, which only some Hosts have"
+            )
+
+
+def select_for_capabilities(
+    definitions: tuple[ServiceDefinition, ...],
+    capabilities: frozenset[str],
+) -> tuple[tuple[ServiceDefinition, ...], tuple[tuple[str, str], ...]]:
+    """The services this Host has, and what was left out and why.
+
+    The second half is returned rather than discarded so the caller can say it.
+    A service silently absent from a catalogue is the failure mode this whole
+    mechanism exists to make impossible to reach by accident: nothing starts it,
+    nothing reports it missing, and the readiness check that waits for it times
+    out with no explanation anywhere.
+    """
+
+    require_satisfiable_conditions(definitions)
+    kept: list[ServiceDefinition] = []
+    dropped: list[tuple[str, str]] = []
+    for definition in definitions:
+        needed = definition.requires_capability
+        if needed is None or needed in capabilities:
+            kept.append(definition)
+        else:
+            dropped.append((definition.service_id, needed))
+    return tuple(kept), tuple(dropped)
 
 
 class ServiceCatalog:

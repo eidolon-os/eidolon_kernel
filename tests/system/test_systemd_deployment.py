@@ -160,20 +160,34 @@ def test_applier_allowlist_is_the_manifest_and_nothing_else() -> None:
     document = yaml.safe_load(
         (ROOT / "config/system-services.yaml").read_text(encoding="utf-8")
     )
-    managed_targets = {
-        item["host_targets"]["systemd"]
+    # Stated for every Host shape, not just one. The catalogue is conditional
+    # now — a board with an NPU has a service a Host without one does not — so
+    # the invariant is that the boundary equals the catalogue *this* Host has,
+    # for whichever capabilities it declares.
+    every_capability = {
+        item.get("requires_capability")
         for item in document["services"]
-        if item["host_targets"]["systemd"] != "external"
+        if item.get("requires_capability")
     }
+    for declared in (frozenset(), *(frozenset({name}) for name in sorted(every_capability))):
+        managed_targets = {
+            item["host_targets"]["systemd"]
+            for item in document["services"]
+            if item["host_targets"]["systemd"] != "external"
+            and (
+                item.get("requires_capability") is None
+                or item["requires_capability"] in declared
+            )
+        }
 
-    derived = managed_units(ROOT / "config/system-services.yaml")
+        derived = managed_units(ROOT / "config/system-services.yaml", declared)
 
-    # The service catalog and the privilege boundary are one contract, and the
-    # applier keeps them one by deriving from the manifest at start rather than
-    # carrying a list. A catalogued target missing from the boundary passes every
-    # static release check and then cannot be started; an extra one silently
-    # broadens root's authority.
-    assert derived == managed_targets
+        # The service catalog and the privilege boundary are one contract, and
+        # the applier keeps them one by deriving from the manifest at start
+        # rather than carrying a list. A catalogued target missing from the
+        # boundary passes every static release check and then cannot be started;
+        # an extra one silently broadens root's authority.
+        assert derived == managed_targets, f"declared={sorted(declared)}"
     assert VERBS == {"start", "stop", "restart"}
 
 
@@ -283,6 +297,10 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
         "agent": "agent:agent",
         "channel": "channel:channel-worker",
         "channel-provider": "channel-provider:channel-provider",
+        # External to the supervisord driver: the weights are NPU artifacts and
+        # a workstation has no NPU to load them with. Catalogued so a Mac source
+        # run still gates on it if one is somehow listening, never started here.
+        "asr": "external",
     }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"

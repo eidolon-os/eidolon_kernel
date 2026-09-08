@@ -462,3 +462,26 @@ def test_peer_of_reports_this_process_on_linux() -> None:
     assert peer.pid == os.getpid()
     assert peer.uid == os.getuid()
     assert peer.unit is None or peer.unit.endswith((".service", ".scope"))
+
+
+def test_the_applier_allowlist_follows_the_hosts_capabilities(tmp_path) -> None:
+    """One filter over one file gives both halves, which is the point.
+
+    The allowlist is what the root applier will act on at all. A Host without
+    the capability has no such unit installed, so allowing its name would allow
+    something that cannot exist; a Host with it needs the name here or the
+    manager's own start would be refused by its own applier.
+
+    Derived from the same manifest, through the same loader, filtered by the
+    same declaration eidolond filters by — so there is no second place to keep
+    in step.
+    """
+
+    manifest = Path(__file__).resolve().parents[2] / "config/system-services.yaml"
+
+    plain = managed_units(manifest)
+    npu = managed_units(manifest, frozenset({"local_asr"}))
+
+    assert "eidolon-asr.service" not in plain
+    assert "eidolon-asr.service" in npu
+    assert plain < npu

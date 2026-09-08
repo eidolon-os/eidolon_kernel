@@ -12,6 +12,7 @@ from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.adapters.host.supervisord import SupervisordHostSupervisor
 from eidolon_system.adapters.host.systemd import SystemdHostSupervisor
 from eidolon_system.adapters.host.unit_applier import ApplierUnitMutator
+from eidolon_system.adapters.host_profile import declared_host_capabilities
 from eidolon_system.adapters.manifest.yaml_file import YamlServiceManifest
 from eidolon_system.adapters.persistence.sqlite import SqliteSystemStateStore
 from eidolon_system.adapters.readiness.http import HttpReadinessProbe
@@ -76,7 +77,11 @@ def create_http_app(
 def create_production_app(settings: SystemSettings | None = None) -> SystemRuntime:
     settings = settings or load_settings()
     contracts = SystemContractRegistry()
-    catalog = YamlServiceManifest(settings.manifest.path, contracts=contracts).load()
+    catalog = YamlServiceManifest(
+        settings.manifest.path,
+        contracts=contracts,
+        capabilities=declared_host_capabilities(),
+    ).load()
     store = SqliteSystemStateStore(settings.persistence.path)
     runner = SubprocessCommandRunner(
         timeout_seconds=settings.host.command_timeout_seconds
