@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Iterator, Sequence
 
-_SOURCE_IDS = (
+_BASE_SOURCE_IDS = (
     "eidolon_kernel",
     "eidolon_data",
     "eidolon_hub",
@@ -33,6 +33,19 @@ _SOURCE_IDS = (
     "eidolon_memory",
     "eidolon_sdk",
 )
+#: What a capability adds. A fourth statement of the pairing eidolon_ops,
+#: eidolon_deploy and each component's contract also make — this file runs on a
+#: Host from inside the bundle, with nothing installed and nothing to import,
+#: so it cannot ask any of them. The bundle says which capabilities it was
+#: built for and this derives the same set from that.
+_CAPABILITY_SOURCE_IDS = {
+    "local_asr": ("eidolon_models",),
+    "local_tts": ("eidolon_models",),
+    "local_llm": ("eidolon_models",),
+}
+#: Carried so components can import it, and not a project of its own: no lock,
+#: and no environment built for it.
+_SUPPORT_SOURCE_ID = "eidolon_sdk"
 _REVISION_FLAGS = {
     "eidolon_kernel": "--kernel-revision",
     "eidolon_data": "--data-revision",
@@ -42,7 +55,36 @@ _REVISION_FLAGS = {
     "eidolon_channel": "--channel-revision",
     "eidolon_memory": "--memory-revision",
     "eidolon_sdk": "--sdk-revision",
+    "eidolon_models": "--models-revision",
 }
+
+
+def _source_ids(capabilities: Sequence[str]) -> tuple[str, ...]:
+    """Every source this bundle should hold, baseline plus capabilities."""
+
+    extra: list[str] = []
+    for capability in sorted(capabilities):
+        for source_id in _CAPABILITY_SOURCE_IDS.get(capability, ()):
+            if source_id not in extra:
+                extra.append(source_id)
+    return (*_BASE_SOURCE_IDS, *extra)
+
+
+def _project_ids(capabilities: Sequence[str]) -> tuple[str, ...]:
+    """Those of them that are projects: locked, and given an environment.
+
+    Named rather than sliced. This was `_SOURCE_IDS[:-1]`, which meant "all but
+    the SDK" only because the SDK happened to be written last — and the first
+    conditional source appended after it would have been excluded instead,
+    leaving a component with no environment and a service that falls back to
+    resolving its dependencies at start, offline, on a Host.
+    """
+
+    return tuple(
+        source_id
+        for source_id in _source_ids(capabilities)
+        if source_id != _SUPPORT_SOURCE_ID
+    )
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -132,7 +174,7 @@ def prepare_target_release(
             os.replace(staging, release_root)
             installed = True
 
-            for source_id in _SOURCE_IDS[:-1]:
+            for source_id in _project_ids(document.get("capabilities", [])):
                 command = [
                     "/usr/bin/env",
                     f"UV_CACHE_DIR={dependency_cache}",
@@ -287,18 +329,30 @@ def _validate_bundle(root: Path) -> dict:
             or any(item.is_symlink() or not item.is_file() for item in object_root.iterdir())
         ):
             raise TargetPreparationError("bundled artifact directory is invalid")
+    capabilities = document.get("capabilities", [])
+    if not isinstance(capabilities, list) or not all(
+        isinstance(item, str) for item in capabilities
+    ):
+        raise TargetPreparationError("bundle capability set is invalid")
+    unknown = sorted(set(capabilities) - set(_CAPABILITY_SOURCE_IDS))
+    if unknown:
+        # Refused rather than ignored: an unknown name would select no extra
+        # sources, the baseline would validate, and the Host would prepare a
+        # release missing exactly what the operator asked for.
+        raise TargetPreparationError(f"bundle declares unknown capabilities: {unknown}")
+    source_ids = _source_ids(capabilities)
     sources = document.get("sources")
-    if not isinstance(sources, list) or len(sources) != len(_SOURCE_IDS):
+    if not isinstance(sources, list) or len(sources) != len(source_ids):
         raise TargetPreparationError("bundle source set is invalid")
     source_root = root / "sources"
     if (
         not source_root.is_dir()
         or source_root.is_symlink()
         or {item.name for item in source_root.iterdir()}
-        != {f"{source_id}.tar" for source_id in _SOURCE_IDS}
+        != {f"{source_id}.tar" for source_id in source_ids}
     ):
         raise TargetPreparationError("bundle sources directory contains unexpected entries")
-    for index, source_id in enumerate(_SOURCE_IDS):
+    for index, source_id in enumerate(source_ids):
         value = sources[index]
         archive = f"sources/{source_id}.tar"
         if (

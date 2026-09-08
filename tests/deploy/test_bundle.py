@@ -19,7 +19,7 @@ from eidolon_deploy.bundle import (
     build_source_bundle,
     validate_source_bundle,
 )
-from eidolon_deploy.manifest import V2_SYSTEM_ASSETS
+from eidolon_deploy.manifest import expected_system_assets
 from eidolon_deploy.prepare_target import (
     TargetPreparationError,
     _exclusive_lock,
@@ -51,10 +51,13 @@ def _run(*command: str) -> str:
     return result.stdout.strip()
 
 
-def _repositories(tmp_path: Path) -> tuple[dict[str, Path], ReleaseRevisions]:
+def _repositories(
+    tmp_path: Path, capabilities: frozenset[str] = frozenset()
+) -> tuple[dict[str, Path], ReleaseRevisions]:
     tmp_path.mkdir(parents=True)
     repositories: dict[str, Path] = {}
     revisions: dict[str, str] = {}
+    extra = set(bundle.bundle_source_ids(capabilities)) - set(bundle._BASE_SOURCE_IDS)
     revision_names = {
         "eidolon_kernel": "kernel",
         "eidolon_data": "data",
@@ -64,6 +67,7 @@ def _repositories(tmp_path: Path) -> tuple[dict[str, Path], ReleaseRevisions]:
         "eidolon_channel": "channel",
         "eidolon_memory": "memory",
         "eidolon_sdk": "sdk",
+        **({"eidolon_models": "models"} if "eidolon_models" in extra else {}),
     }
     for source_id, revision_name in revision_names.items():
         repository = tmp_path / source_id
@@ -77,7 +81,9 @@ def _repositories(tmp_path: Path) -> tuple[dict[str, Path], ReleaseRevisions]:
         )
         if source_id != "eidolon_sdk":
             (repository / "uv.lock").write_text("version = 1\n", encoding="utf-8")
-        for _destination, (component_id, source) in V2_SYSTEM_ASSETS.items():
+        for _destination, (component_id, source) in expected_system_assets(
+            capabilities
+        ).items():
             if component_id == source_id:
                 path = repository / source
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -1020,3 +1026,62 @@ def test_an_entry_that_would_extract_outside_the_cache_is_named(tmp_path: Path) 
     message = str(raised.value)
     assert "wheels-v6/pypi/addict/2.4.0-py3-none-any" in message
     assert str(outside / "payload") in message
+
+
+def test_a_bundle_for_a_declaring_host_carries_and_prepares_the_extra_source(
+    tmp_path: Path,
+) -> None:
+    """The board-side preparer is a standalone script with its own source list.
+
+    It reads the bundle with nothing installed and nothing to import, so it
+    cannot ask Ops or the release contract what a capability means — it holds a
+    fourth copy of the pairing. That copy was not updated with the others, and
+    the deploy failed on the Host with `bundle source set is invalid` after the
+    whole 720 MB had already been transferred.
+    """
+
+    capabilities = frozenset({"local_asr"})
+    repositories, revisions = _repositories(tmp_path / "repositories", capabilities)
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="20260908-asr-bundle",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+        capabilities=capabilities,
+    )
+
+    document = json.loads((output / "bundle.json").read_text(encoding="utf-8"))
+    assert document["capabilities"] == ["local_asr"]
+    assert [item["source_id"] for item in document["sources"]][-1] == "eidolon_models"
+    assert (output / "sources/eidolon_models.tar").is_file()
+
+    # The preparer accepts exactly this set, and builds an environment for the
+    # extra source rather than silently skipping it.
+    assert prepare_target._validate_bundle(output)["capabilities"] == ["local_asr"]
+    assert "eidolon_models" in prepare_target._project_ids(["local_asr"])
+    assert "eidolon_sdk" not in prepare_target._project_ids(["local_asr"])
+
+
+def test_the_preparer_refuses_a_capability_it_does_not_know(tmp_path: Path) -> None:
+    """An unknown name would select no extra sources, the baseline would
+    validate, and the Host would prepare a release missing exactly what the
+    operator asked for."""
+
+    repositories, revisions = _repositories(tmp_path / "repositories")
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="20260908-bad-cap",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+    )
+    manifest = output / "bundle.json"
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["capabilities"] = ["local_asrr"]
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(
+        prepare_target.TargetPreparationError, match="unknown capabilities"
+    ):
+        prepare_target._validate_bundle(output)
