@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from fastapi import FastAPI
 
 from eidolon_system.adapters.directory.memory import InMemoryServiceDirectory
+from eidolon_system.adapters.host.macos_monitor import MacHostMonitor
+from eidolon_system.adapters.host.monitor import LinuxHostMonitor
 from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.adapters.host.supervisord import SupervisordHostSupervisor
 from eidolon_system.adapters.host.systemd import SystemdHostSupervisor
 from eidolon_system.adapters.host.unit_applier import ApplierUnitMutator
+from eidolon_system.adapters.host.vitals import LinuxHostVitals
 from eidolon_system.adapters.host_profile import declared_host_capabilities
 from eidolon_system.adapters.manifest.yaml_file import YamlServiceManifest
 from eidolon_system.adapters.persistence.sqlite import SqliteSystemStateStore
@@ -21,10 +25,8 @@ from eidolon_system.adapters.runtime import SystemClock
 from eidolon_system.application.service_manager import ServiceManager
 from eidolon_system.config import SystemSettings, load_settings, selected_host_driver
 from eidolon_system.contracts.registry import SystemContractRegistry
-from eidolon_system.adapters.host.vitals import LinuxHostVitals
-from eidolon_system.ports.runtime import HostVitalsReader
 from eidolon_system.interfaces.http.router import create_system_router
-from eidolon_system.ports.runtime import SystemStateStore
+from eidolon_system.ports.runtime import HostVitalsReader, SystemStateStore
 
 
 @dataclass(slots=True)
@@ -40,6 +42,7 @@ def create_http_app(
     contracts: SystemContractRegistry | None = None,
     # Injected so a test of the HTTP surface needs a fake, not a Linux box.
     vitals: HostVitalsReader | None = None,
+    monitor=None,
     startup=None,
     shutdown=None,
 ) -> FastAPI:
@@ -53,12 +56,16 @@ def create_http_app(
             if shutdown is not None:
                 await shutdown()
 
+    if monitor is None:
+        monitor = MacHostMonitor(manager) if sys.platform == "darwin" and manager.host.driver_name == "supervisord" else LinuxHostMonitor(manager)
+
     app = FastAPI(title="Eidolon System Manager", version="1.0.0", lifespan=lifespan)
     app.include_router(
         create_system_router(
             manager=manager,
             contracts=contracts or SystemContractRegistry(),
             vitals=vitals or LinuxHostVitals(),
+            monitor=monitor,
         )
     )
 

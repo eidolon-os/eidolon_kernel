@@ -16,6 +16,7 @@ dependencies = [
     "jsonschema>=4.21",
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "psutil>=7.0,<8; sys_platform == 'darwin'",
     "uvicorn[standard]>=0.27",
 ]
 

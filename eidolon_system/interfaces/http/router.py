@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from eidolon_sdk.system.v1 import HostVitalsWire
-from fastapi import APIRouter, HTTPException, Query
+from eidolon_sdk.system.v1 import HostMonitorWire, HostVitalsWire
+from fastapi import APIRouter, HTTPException, Query, Response
 from jsonschema import ValidationError
 
 from eidolon_system.application.service_manager import ServiceManager
@@ -56,8 +56,14 @@ def create_system_router(
     manager: ServiceManager,
     contracts: SystemContractRegistry,
     vitals: HostVitalsReader,
+    monitor,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/system/v1", tags=["system-services"])
+
+    @router.get("/monitor", response_model=HostMonitorWire)
+    async def host_monitor(response: Response) -> HostMonitorWire:
+        response.headers["Cache-Control"] = "no-store"
+        return await monitor.read()
 
     @router.get("/vitals", response_model=HostVitalsWire)
     async def host_vitals() -> HostVitalsWire:
