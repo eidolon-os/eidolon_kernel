@@ -240,6 +240,17 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
             "eidolon_models",
             Path("deploy/systemd/eidolon-llm.service"),
         ),
+        # Not a unit, and that is the point: the core allocation is the board's
+        # single tuning point, read by every local-model unit through an
+        # optional EnvironmentFile. Declared here because a decision that is
+        # written down in a repository and never delivered is not in effect —
+        # this Host ran the model on all eight cores while the repository said
+        # it ran on the A55 cluster, which is the arrangement the measurements
+        # and the TTS margin are for (HOST-RK3588.md 2.22-2.23).
+        Path("/etc/eidolon/cpu-allocation.env"): (
+            "eidolon_models",
+            Path("deploy/cpu-allocation.env"),
+        ),
     },
 }
 
