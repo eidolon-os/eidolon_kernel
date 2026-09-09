@@ -290,3 +290,83 @@ def test_a_misspelt_capability_is_refused_rather_than_selecting_nothing(
 
     with pytest.raises(ReleaseDescriptorError, match="contract violation|capability"):
         load_release_descriptor(path)
+
+
+def test_every_count_ceiling_is_the_one_the_tables_can_produce() -> None:
+    """Nobody held these to the tables, so they were only found on a board.
+
+    A capability added two assets and the release refused to seal with "is too
+    long" — after building everything. Then the next ceiling refused the next
+    thing. Every one of them is derivable here: what a Host declaring every
+    capability would carry.
+
+    Only the ceilings are derived. The floors are deliberately left where they
+    are: this schema also validates descriptors sealed by *earlier* releases,
+    which a rollback reads back, and raising a floor would refuse one of those
+    rather than anything a current release can produce.
+    """
+
+    import json
+    from pathlib import Path
+
+    from eidolon_deploy.capabilities import HOST_CAPABILITIES
+    from eidolon_deploy.manifest import (
+        expected_affected_units,
+        expected_components,
+        expected_readiness,
+        expected_system_assets,
+    )
+
+    every = frozenset(HOST_CAPABILITIES)
+    ceilings = {
+        "components": len(expected_components(every)),
+        "system_assets": len(expected_system_assets(every)),
+        "affected_units": len(expected_affected_units(every)),
+        "readiness_checks": len(expected_readiness(every)),
+        "capabilities": len(every),
+    }
+
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "eidolon_deploy/contracts/schemas/release-descriptor.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    for name, ceiling in ceilings.items():
+        bounds = schema["properties"][name]
+        assert bounds["maxItems"] == ceiling, name
+        floor = bounds.get("minItems")
+        if floor is not None:
+            assert floor <= ceiling, name
+
+
+def test_every_name_the_schema_admits_is_a_name_the_tables_produce() -> None:
+    """The counts were not the only copy of the tables in here.
+
+    After the ceilings came the enums: the same unit the tables had just been
+    taught was refused by a hand-written list of allowed names. Held in both
+    directions, so a removed unit does not linger as an admitted name either.
+    """
+
+    import json
+    from pathlib import Path
+
+    from eidolon_deploy.capabilities import HOST_CAPABILITIES
+    from eidolon_deploy.manifest import expected_affected_units, expected_components
+
+    every = frozenset(HOST_CAPABILITIES)
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "eidolon_deploy/contracts/schemas/release-descriptor.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    # Order is load-bearing for the units — quiesce sweeps the tuple in reverse
+    # — so this is a list comparison, not a set one.
+    assert schema["properties"]["affected_units"]["items"]["enum"] == list(
+        expected_affected_units(every)
+    )
+    assert set(schema["properties"]["capabilities"]["items"]["enum"]) == set(every)
+    assert set(schema["$defs"]["componentId"]["enum"]) >= expected_components(every)
