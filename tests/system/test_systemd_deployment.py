@@ -301,6 +301,9 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
         # a workstation has no NPU to load them with. Catalogued so a Mac source
         # run still gates on it if one is somehow listening, never started here.
         "asr": "external",
+        # Same, for the same reason: the local server is pinned to a board's
+        # little cores, and a source run reaches a hosted model instead.
+        "llm": "external",
     }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"

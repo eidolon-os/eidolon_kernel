@@ -70,6 +70,7 @@ _READINESS_UNITS = {
     #: itself. A release descriptor never carries a check this map has no unit
     #: for, so it is enough to be complete rather than conditional.
     "asr": "eidolon-asr.service",
+    "llm": "eidolon-llm.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",

@@ -235,10 +235,17 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
             Path("deploy/systemd/eidolon-asr.service"),
         ),
     },
+    "local_llm": {
+        Path("/etc/systemd/system/eidolon-llm.service"): (
+            "eidolon_models",
+            Path("deploy/systemd/eidolon-llm.service"),
+        ),
+    },
 }
 
 CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
     "local_asr": ("eidolon-asr.service",),
+    "local_llm": ("eidolon-llm.service",),
 }
 
 CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
@@ -249,6 +256,14 @@ CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = 
         # to know before it calls itself activated. `http_2xx` because the
         # document reports `ok` rather than a `status` field.
         "asr": ("http", "http://127.0.0.1:8768/readyz", None, "http_2xx"),
+    },
+    "local_llm": {
+        # llama-server's own route, and the same reason: it binds the port
+        # before the weights are mapped, and answers /health with 503 until
+        # the model is loaded. On the A55 cores that gap is tens of seconds,
+        # so a socket check here would call the release activated while the
+        # first request would still fail.
+        "llm": ("http", "http://127.0.0.1:8769/health", None, "http_2xx"),
     },
 }
 

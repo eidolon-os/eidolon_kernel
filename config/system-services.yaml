@@ -196,6 +196,28 @@ services:
         address: 127.0.0.1:8768
         contract: eidolon.models.asr.v1
         health_url: http://127.0.0.1:8768/readyz
+  # The second of the same kind, and conditional for the same reason. The Agent
+  # reaches it as an OpenAI-compatible endpoint, exactly as it reaches a hosted
+  # model, so nothing downstream is aware of which one a Host has.
+  - service_id: llm
+    description: Local text generation on this Host's own weights
+    required: true
+    enabled_by_default: true
+    requires_capability: local_llm
+    dependencies: []
+    host_targets:
+      systemd: eidolon-llm.service
+      # As with ASR: no workstation topology. The weights are pinned to the
+      # board's little cores, and the dev stack reaches a hosted model.
+      supervisord: external
+    endpoints:
+      - endpoint_id: llm.openai
+        protocol: http
+        address: 127.0.0.1:8769
+        # Not a contract of ours: this is the OpenAI chat-completions surface,
+        # which is the whole reason the Agent needs no code for it.
+        contract: openai.chat.v1
+        health_url: http://127.0.0.1:8769/health
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true
