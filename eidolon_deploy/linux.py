@@ -71,6 +71,7 @@ _READINESS_UNITS = {
     #: for, so it is enough to be complete rather than conditional.
     "asr": "eidolon-asr.service",
     "llm": "eidolon-llm.service",
+    "tts": "eidolon-tts.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",

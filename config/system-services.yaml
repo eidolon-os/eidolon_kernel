@@ -218,6 +218,26 @@ services:
         # which is the whole reason the Agent needs no code for it.
         contract: openai.chat.v1
         health_url: http://127.0.0.1:8769/health
+  # The third of the same kind. Channel reaches it through a provider named
+  # after the capability, exactly as it reaches a hosted voice, so nothing
+  # downstream is aware of which one a Host has.
+  - service_id: tts
+    description: Local streaming speech synthesis on this Host's own weights
+    required: true
+    enabled_by_default: true
+    requires_capability: local_tts
+    dependencies: []
+    host_targets:
+      systemd: eidolon-tts.service
+      # As with ASR and the LLM: no workstation topology. The engine loads RKNN
+      # graphs onto an NPU a workstation does not have.
+      supervisord: external
+    endpoints:
+      - endpoint_id: tts.stream
+        protocol: websocket
+        address: 127.0.0.1:8770
+        contract: eidolon.models.tts.v1
+        health_url: http://127.0.0.1:8770/readyz
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true

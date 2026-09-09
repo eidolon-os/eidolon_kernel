@@ -252,11 +252,27 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
             Path("deploy/cpu-allocation.env"),
         ),
     },
+    "local_tts": {
+        Path("/etc/systemd/system/eidolon-tts.service"): (
+            "eidolon_models",
+            Path("deploy/systemd/eidolon-tts.service"),
+        ),
+        # The same core-allocation file local_llm declares. Declared by both
+        # rather than by one of them: it is the tuning point for whichever
+        # local models a Host runs, and a Host that runs only this one still
+        # needs it. Both name the same destination and the same source, so a
+        # Host declaring both gets it once.
+        Path("/etc/eidolon/cpu-allocation.env"): (
+            "eidolon_models",
+            Path("deploy/cpu-allocation.env"),
+        ),
+    },
 }
 
 CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
     "local_asr": ("eidolon-asr.service",),
     "local_llm": ("eidolon-llm.service",),
+    "local_tts": ("eidolon-tts.service",),
 }
 
 CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
@@ -275,6 +291,13 @@ CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = 
         # so a socket check here would call the release activated while the
         # first request would still fail.
         "llm": ("http", "http://127.0.0.1:8769/health", None, "http_2xx"),
+    },
+    "local_tts": {
+        # `/readyz`, and it answers 503 until the engine's NPU graphs are warm
+        # — about three seconds after the port is bound, and much longer on the
+        # first start, which compiles the engine. A socket check would call the
+        # release activated while the first spoken turn would still fail.
+        "tts": ("http", "http://127.0.0.1:8770/readyz", None, "http_2xx"),
     },
 }
 
