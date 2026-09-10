@@ -33,7 +33,9 @@ ProtectControlGroups=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 RestrictSUIDSGID=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# getifaddrs/psutil reads the Linux interface inventory through netlink.
+# Network administration capabilities remain absent.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

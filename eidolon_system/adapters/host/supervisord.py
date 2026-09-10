@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import psutil
+
 from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.domain.errors import HostOperationFailed
 from eidolon_system.domain.model import HostServiceState
@@ -53,10 +55,18 @@ class SupervisordHostSupervisor:
         if not observed:
             detail = result.stderr.strip() or output
             raise HostOperationFailed(f"supervisord inspect failed for {target}: {detail}")
+        instance_id = None
+        if state == "running" and "pid" in fields:
+            try:
+                pid = int(fields[fields.index("pid") + 1].rstrip(","))
+                instance_id = f"{pid}:{psutil.Process(pid).create_time()}"
+            except (ValueError, IndexError, psutil.Error):
+                pass
         return HostServiceState(
             active=state == "running",
             state=state,
             detail=output or None,
+            instance_id=instance_id,
         )
 
     @staticmethod

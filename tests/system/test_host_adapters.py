@@ -22,7 +22,7 @@ class FakeRunner:
 async def test_systemd_adapter_parses_state_and_never_uses_a_shell() -> None:
     runner = FakeRunner(
         [
-            CommandResult(0, "ActiveState=active\nSubState=running\n", ""),
+            CommandResult(0, "ActiveState=active\nSubState=running\nInvocationID=run-a\n", ""),
             CommandResult(0, "", ""),
         ]
     )
@@ -31,6 +31,7 @@ async def test_systemd_adapter_parses_state_and_never_uses_a_shell() -> None:
     await host.restart("eidolon-kernel.service")
     assert state.active is True
     assert state.state == "active/running"
+    assert state.instance_id == "run-a"
     assert runner.commands == [
         (
             "/bin/systemctl",
@@ -38,6 +39,7 @@ async def test_systemd_adapter_parses_state_and_never_uses_a_shell() -> None:
             "eidolon-kernel.service",
             "--property=ActiveState",
             "--property=SubState",
+            "--property=InvocationID",
             "--no-pager",
         ),
         ("/bin/systemctl", "restart", "eidolon-kernel.service"),
@@ -139,3 +141,18 @@ async def test_supervisord_adapter_rejects_non_status_error_output(tmp_path) -> 
 
     with pytest.raises(HostOperationFailed, match="no such process"):
         await host.inspect("missing")
+
+
+async def test_supervisord_instance_uses_pid_and_creation_time(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from eidolon_system.adapters.host import supervisord
+    created = [100.0]
+    monkeypatch.setattr(supervisord.psutil, "Process", lambda pid: SimpleNamespace(create_time=lambda: created[0]))
+    host = SupervisordHostSupervisor(config_path=tmp_path / "supervisor.conf", runner=FakeRunner([
+        CommandResult(0, "media RUNNING pid 1234, uptime 0:00:10", ""),
+        CommandResult(0, "media RUNNING pid 1234, uptime 0:00:10", ""),
+    ]))
+    first = await host.inspect("media")
+    created[0] = 200.0
+    assert first.instance_id != (await host.inspect("media")).instance_id

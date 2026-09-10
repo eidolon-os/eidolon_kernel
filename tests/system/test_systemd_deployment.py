@@ -74,10 +74,10 @@ def test_system_services_run_unprivileged_with_fixed_release_commands() -> None:
         assert "sudo" not in service["ExecStart"]
 
 
-def test_hub_hardening_allows_linux_interface_discovery() -> None:
-    service = _unit("eidolon-hub.service")["Service"]
-
-    assert "AF_NETLINK" in service["RestrictAddressFamilies"].split()
+def test_network_observers_allow_linux_interface_discovery() -> None:
+    for name in ("eidolon-hub.service", "eidolond.service"):
+        service = _unit(name)["Service"]
+        assert "AF_NETLINK" in service["RestrictAddressFamilies"].split()
 
 
 def test_data_unit_uses_dedicated_authority_store_and_secret_file() -> None:

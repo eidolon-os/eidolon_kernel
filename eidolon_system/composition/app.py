@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from eidolon_system.adapters.directory.memory import InMemoryServiceDirectory
 from eidolon_system.adapters.host.macos_monitor import MacHostMonitor
 from eidolon_system.adapters.host.monitor import LinuxHostMonitor
+from eidolon_system.adapters.host.network import LocalNetworkEnvironment
 from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.adapters.host.supervisord import SupervisordHostSupervisor
 from eidolon_system.adapters.host.systemd import SystemdHostSupervisor
@@ -127,6 +128,9 @@ def create_production_app(settings: SystemSettings | None = None) -> SystemRunti
         host=host,
         readiness=readiness,
         clock=SystemClock(),
+        network=LocalNetworkEnvironment(
+            settings.persistence.path.with_suffix(".network.json")
+        ),
     )
     reconciler = PeriodicServiceReconciler(
         manager, interval_seconds=settings.reconciliation.interval_seconds

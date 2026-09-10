@@ -11,6 +11,7 @@
     "desired": {"$ref": "#/$defs/desired"},
     "runtime_state": {"enum": ["unknown", "inactive", "starting", "ready", "degraded", "blocked", "failed"]},
     "detail": {"type": ["string", "null"]},
+    "network_current": {"type": ["boolean", "null"], "description": "Whether this managed process has consumed the currently observed stable network input; null means not established."},
     "observed_at": {"type": "string", "format": "date-time"},
     "endpoints": {
       "type": "array",

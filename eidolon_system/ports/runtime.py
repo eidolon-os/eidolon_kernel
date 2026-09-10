@@ -34,6 +34,20 @@ class HostServiceSupervisor(Protocol):
     async def restart(self, target: str) -> None: ...
 
 
+class NetworkEnvironment(Protocol):
+    """Observed network input and the last input applied to each process.
+
+    A missing snapshot means unavailable or still settling, never an empty LAN.
+    Applied inputs are disposable observations, separate from desired state.
+    """
+
+    async def snapshot(self) -> str | None: ...
+
+    def applied(self, service_id: str) -> str | None: ...
+
+    def record(self, service_id: str, fingerprint: str) -> None: ...
+
+
 class ReadinessProbe(Protocol):
     async def check(self, url: str) -> bool: ...
 

@@ -40,6 +40,7 @@ def manifest_service_to_domain(wire: ManifestServiceWire) -> ServiceDefinition:
         enabled_by_default=wire.enabled_by_default,
         dependencies=wire.dependencies,
         requires_capability=wire.requires_capability,
+        restart_on_network_change=wire.restart_on_network_change,
         host_targets=wire.host_targets,
         endpoints=tuple(manifest_endpoint_to_domain(endpoint) for endpoint in wire.endpoints),
     )
@@ -71,6 +72,7 @@ def status_to_wire(status: ServiceStatus) -> ServiceStatusWire:
         desired=desired_to_wire(status.desired),
         runtime_state=status.runtime_state,
         detail=status.detail,
+        network_current=status.network_current,
         observed_at=status.observed_at,
         endpoints=tuple(
             endpoint_to_wire(endpoint, service_id=status.service_id)

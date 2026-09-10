@@ -69,6 +69,7 @@ class SystemdHostSupervisor:
             target,
             "--property=ActiveState",
             "--property=SubState",
+            "--property=InvocationID",
             "--no-pager",
         )
         if result.returncode != 0:
@@ -84,6 +85,7 @@ class SystemdHostSupervisor:
         return HostServiceState(
             active=active == "active",
             state=f"{active}/{sub}",
+            instance_id=values.get("InvocationID") or None,
         )
 
     async def start(self, target: str) -> None:

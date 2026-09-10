@@ -29,6 +29,7 @@ class ManifestServiceWire(ContractModel):
     #: Absent means every Host runs it, which is what every service was before
     #: any Host could differ.
     requires_capability: str | None = None
+    restart_on_network_change: bool = False
     host_targets: dict[str, str]
     endpoints: tuple[ManifestEndpointWire, ...] = ()
 
@@ -73,6 +74,7 @@ class ServiceStatusWire(ContractModel):
     detail: str | None = None
     observed_at: datetime
     endpoints: tuple[EndpointWire, ...] = ()
+    network_current: bool | None = None
 
     @field_validator("endpoints", mode="before")
     @classmethod

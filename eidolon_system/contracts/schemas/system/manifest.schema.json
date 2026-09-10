@@ -105,10 +105,15 @@
             "default": []
           },
           "requires_capability": {
-            "description": "A Host capability this service needs present. A Host that does not declare it has no such service at all — not a disabled one: a listed service is still health-probed, still gates its dependents, and is still something the unit applier may actuate. Spelled the same as in a component's ops/component.toml, which states the same requirement for the same service; a drift test holds the two together.",
+            "description": "A Host capability this service needs present. A Host that does not declare it has no such service at all \u2014 not a disabled one: a listed service is still health-probed, still gates its dependents, and is still something the unit applier may actuate. Spelled the same as in a component's ops/component.toml, which states the same requirement for the same service; a drift test holds the two together.",
             "type": "string",
             "minLength": 1,
             "maxLength": 64
+          },
+          "restart_on_network_change": {
+            "type": "boolean",
+            "default": false,
+            "description": "Refresh a managed process after local network inputs change and settle. External services are never restarted."
           }
         }
       }

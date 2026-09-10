@@ -73,6 +73,8 @@ class ServiceDefinition:
     #: service that is not here is not a disabled service, it is not a service
     #: of this Host at all.
     requires_capability: str | None = None
+    # Services whose transport captures local interfaces at process creation.
+    restart_on_network_change: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "service_id", _identifier("service_id", self.service_id))
@@ -305,6 +307,7 @@ class HostServiceState:
     active: bool
     state: str
     detail: str | None = None
+    instance_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +319,8 @@ class ServiceStatus:
     detail: str | None
     observed_at: datetime
     endpoints: tuple[ServiceEndpoint, ...] = ()
+    # None means this process has not established the network-input fact.
+    network_current: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

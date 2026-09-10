@@ -36,6 +36,8 @@ services:
         contract: eidolon.agent-memory.nats.v1
         health_url: http://127.0.0.1:8222/healthz
   - service_id: livekit
+    # LiveKit/Pion captures local interfaces when its transport is created.
+    restart_on_network_change: true
     description: Local real-time media and room server
     required: true
     enabled_by_default: true
@@ -48,6 +50,7 @@ services:
         protocol: livekit
         address: ws://127.0.0.1:7880
         contract: livekit.protocol.v1
+        health_url: http://127.0.0.1:7880/
   - service_id: memory-supervisor
     description: Memory Realm process reconciliation owner
     required: true

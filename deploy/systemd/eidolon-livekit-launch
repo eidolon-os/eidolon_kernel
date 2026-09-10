@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
-import socket
 
 
 def required(name: str) -> str:
@@ -15,20 +15,12 @@ def required(name: str) -> str:
     return value
 
 
-def node_ip() -> str:
-    configured = os.environ.get("EIDOLON_LIVEKIT_NODE_IP", "").strip()
-    if configured:
-        return configured
-    connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        connection.connect(("192.0.2.1", 9))
-        return str(connection.getsockname()[0])
-    finally:
-        connection.close()
-
-
 key = required("LIVEKIT_API_KEY")
 secret = required("LIVEKIT_API_SECRET")
+node_ip = os.environ.get("EIDOLON_LIVEKIT_NODE_IP", "").strip()
+if node_ip:
+    node_ip = str(ipaddress.ip_address(node_ip))
+node_setting = f"  node_ip: {json.dumps(node_ip)}\n" if node_ip else ""
 config = f"""\
 port: 7880
 bind_addresses: [\"0.0.0.0\"]
@@ -39,8 +31,7 @@ turn:
   udp_port: 3478
 rtc:
   use_external_ip: false
-  node_ip: {json.dumps(node_ip())}
-  ips:
+{node_setting}  ips:
     excludes:
       # An IPv4 link-local address is reachable only from the same physical
       # link, and a device reaches this Host over the LAN. Offering one as an

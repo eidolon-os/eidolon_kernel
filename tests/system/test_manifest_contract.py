@@ -170,3 +170,10 @@ def test_service_set_is_the_full_product_topology() -> None:
         "memory-supervisor",
         "nats",
     ]
+
+
+def test_network_policy_is_shared_by_host_drivers_and_opt_in():
+    catalog = repository_catalog()
+    assert catalog.get("livekit").restart_on_network_change is True
+    assert catalog.get("nats").restart_on_network_change is False
+    assert {d.service_id for d in catalog.definitions if d.restart_on_network_change} == {"livekit"}

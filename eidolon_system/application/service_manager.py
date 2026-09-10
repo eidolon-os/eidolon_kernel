@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 
 from eidolon_system.domain.errors import Conflict, HostOperationFailed, NotFound
 from eidolon_system.domain.model import (
@@ -17,11 +18,11 @@ from eidolon_system.domain.model import (
 from eidolon_system.ports.runtime import (
     Clock,
     HostServiceSupervisor,
+    NetworkEnvironment,
     ReadinessProbe,
     ServiceDirectory,
     SystemStateStore,
 )
-
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ class ServiceManager:
         host: HostServiceSupervisor,
         readiness: ReadinessProbe,
         clock: Clock,
+        network: NetworkEnvironment | None = None,
+        monotonic=time.monotonic,
     ) -> None:
         self.catalog = catalog
         self.store = store
@@ -56,6 +59,10 @@ class ServiceManager:
         self.host = host
         self.readiness = readiness
         self.clock = clock
+        self.network = network
+        self.monotonic = monotonic
+        self._network_snapshot: str | None = None
+        self._network_retry_after: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -88,6 +95,7 @@ class ServiceManager:
             await self._reconcile_unlocked()
 
     async def _reconcile_unlocked(self) -> None:
+        self._network_snapshot = await self.network.snapshot() if self.network else None
         desired = {state.service_id: state for state in self.store.list_states()}
         for definition in self.catalog.stop_order:
             state = desired[definition.service_id]
@@ -155,7 +163,6 @@ class ServiceManager:
             )
         )
 
-
     def _publish(self, status: ServiceStatus) -> None:
         """Record a status, and say so when it changed.
 
@@ -177,7 +184,8 @@ class ServiceManager:
         unchanged = previous is not None and (
             previous.runtime_state,
             previous.detail,
-        ) == (status.runtime_state, status.detail)
+            previous.network_current,
+        ) == (status.runtime_state, status.detail, status.network_current)
         if unchanged:
             return
         _log.log(
@@ -196,9 +204,69 @@ class ServiceManager:
         target = definition.target_for(driver)
         try:
             observed = await self.host.inspect(target)
-            if not observed.active:
-                await self.host.start(target)
+            fingerprint = self._network_snapshot
+            network_bound = definition.restart_on_network_change
+            if network_bound and (self.network is None or fingerprint is None):
+                self._publish(
+                    ServiceStatus(
+                        service_id=definition.service_id,
+                        required=definition.required,
+                        desired=state,
+                        runtime_state="degraded",
+                        detail="local network unavailable or settling",
+                        observed_at=self.clock.now(),
+                    )
+                )
+                return
+            applied_input = json.dumps([fingerprint, observed.instance_id])
+            if network_bound and observed.active and observed.instance_id is None:
+                raise HostOperationFailed("cannot observe process instance for network refresh")
+            stale = network_bound and self.network.applied(definition.service_id) != applied_input
+            if stale and self.monotonic() < self._network_retry_after.get(definition.service_id, 0):
+                self._publish(
+                    ServiceStatus(
+                        service_id=definition.service_id,
+                        required=definition.required,
+                        desired=state,
+                        runtime_state="degraded",
+                        detail="waiting to retry network refresh",
+                        observed_at=self.clock.now(),
+                    )
+                )
+                return
+            if not observed.active or stale:
+                if network_bound:
+                    self._network_retry_after[definition.service_id] = self.monotonic() + 30
+                if observed.active:
+                    _log.info(
+                        "service %s: refreshing changed or unobserved network input",
+                        definition.service_id,
+                    )
+                    await self.host.restart(target)
+                else:
+                    await self.host.start(target)
                 observed = await self.host.inspect(target)
+                if observed.active and network_bound:
+                    # Re-read after the operation: a move during start must not
+                    # be acknowledged as if that process captured the new LAN.
+                    if await self.network.snapshot() != fingerprint:
+                        self._publish(
+                            ServiceStatus(
+                                service_id=definition.service_id,
+                                required=definition.required,
+                                desired=state,
+                                runtime_state="degraded",
+                                detail="local network changed while starting",
+                                observed_at=self.clock.now(),
+                            )
+                        )
+                        return
+                    if observed.instance_id is None:
+                        raise HostOperationFailed("cannot observe refreshed process instance")
+                    self.network.record(
+                        definition.service_id, json.dumps([fingerprint, observed.instance_id])
+                    )
+                    self._network_retry_after.pop(definition.service_id, None)
             if not observed.active:
                 status = ServiceStatus(
                     service_id=definition.service_id,
@@ -210,9 +278,7 @@ class ServiceManager:
                 )
             else:
                 health_urls = self._health_urls(definition)
-                checks = await asyncio.gather(
-                    *(self.readiness.check(url) for url in health_urls)
-                )
+                checks = await asyncio.gather(*(self.readiness.check(url) for url in health_urls))
                 ready = all(checks)
                 status = ServiceStatus(
                     service_id=definition.service_id,
@@ -222,8 +288,9 @@ class ServiceManager:
                     detail=None if ready else "readiness probe failed",
                     observed_at=self.clock.now(),
                     endpoints=definition.endpoints if ready else (),
+                    network_current=True if network_bound else None,
                 )
-        except HostOperationFailed as exc:
+        except (HostOperationFailed, OSError) as exc:
             status = ServiceStatus(
                 service_id=definition.service_id,
                 required=definition.required,
@@ -356,10 +423,18 @@ class ServiceManager:
             if not state.enabled:
                 raise Conflict(f"disabled system service cannot be restarted: {service_id}")
             if not definition.manages(self.host.driver_name):
-                raise Conflict(
-                    f"external system service cannot be restarted here: {service_id}"
-                )
+                raise Conflict(f"external system service cannot be restarted here: {service_id}")
+            before = (
+                await self.network.snapshot()
+                if self.network and definition.restart_on_network_change
+                else None
+            )
             await self.host.restart(definition.target_for(self.host.driver_name))
+            if before is not None and await self.network.snapshot() == before:
+                observed = await self.host.inspect(definition.target_for(self.host.driver_name))
+                if observed.active and observed.instance_id is not None:
+                    self.network.record(service_id, json.dumps([before, observed.instance_id]))
+                    self._network_retry_after.pop(service_id, None)
             result = self.store.record_operation(
                 service_id=service_id,
                 operation=operation,
