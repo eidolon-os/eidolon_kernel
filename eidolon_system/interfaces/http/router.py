@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from eidolon_sdk.system.v1 import HostMonitorWire, HostVitalsWire
+from eidolon_sdk.system.v1 import (
+    HostMonitorWire,
+    HostPowerOffAccepted,
+    HostPowerOffRequest,
+    HostPowerStatusWire,
+    HostVitalsWire,
+)
 from fastapi import APIRouter, HTTPException, Query, Response
 from jsonschema import ValidationError
 
@@ -29,6 +35,7 @@ from eidolon_system.domain.errors import (
     InvalidManifest,
     NotFound,
     NotReady,
+    PowerOffRejected,
 )
 from eidolon_system.ports.runtime import HostVitalsReader
 
@@ -38,6 +45,8 @@ def _document(model) -> dict:
 
 
 def _raise_http(exc: Exception) -> None:
+    if isinstance(exc, PowerOffRejected):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, NotFound):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, NotReady):
@@ -57,8 +66,22 @@ def create_system_router(
     contracts: SystemContractRegistry,
     vitals: HostVitalsReader,
     monitor,
+    power,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/system/v1", tags=["system-services"])
+
+    @router.get("/power", response_model=HostPowerStatusWire)
+    async def host_power(response: Response) -> HostPowerStatusWire:
+        response.headers["Cache-Control"] = "no-store"
+        return await power.read()
+
+    @router.post("/poweroff", response_model=HostPowerOffAccepted, status_code=202)
+    async def power_off_host(payload: HostPowerOffRequest, response: Response) -> HostPowerOffAccepted:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await power.power_off(request_id=payload.request_id)
+        except Exception as exc:
+            _raise_http(exc)
 
     @router.get("/monitor", response_model=HostMonitorWire)
     async def host_monitor(response: Response) -> HostMonitorWire:

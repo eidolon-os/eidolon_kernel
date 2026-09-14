@@ -12,6 +12,7 @@ from eidolon_system.adapters.directory.memory import InMemoryServiceDirectory
 from eidolon_system.adapters.host.macos_monitor import MacHostMonitor
 from eidolon_system.adapters.host.monitor import LinuxHostMonitor
 from eidolon_system.adapters.host.network import LocalNetworkEnvironment
+from eidolon_system.adapters.host.power import LinuxHostPower
 from eidolon_system.adapters.host.runner import SubprocessCommandRunner
 from eidolon_system.adapters.host.supervisord import SupervisordHostSupervisor
 from eidolon_system.adapters.host.systemd import SystemdHostSupervisor
@@ -44,6 +45,7 @@ def create_http_app(
     # Injected so a test of the HTTP surface needs a fake, not a Linux box.
     vitals: HostVitalsReader | None = None,
     monitor=None,
+    power=None,
     startup=None,
     shutdown=None,
 ) -> FastAPI:
@@ -67,6 +69,7 @@ def create_http_app(
             contracts=contracts or SystemContractRegistry(),
             vitals=vitals or LinuxHostVitals(),
             monitor=monitor,
+            power=power or LinuxHostPower(),
         )
     )
 
@@ -152,6 +155,10 @@ def create_production_app(settings: SystemSettings | None = None) -> SystemRunti
             contracts=contracts,
             startup=startup,
             shutdown=shutdown,
+            power=LinuxHostPower(applier=(
+                ApplierUnitMutator(settings.host.unit_applier_socket, timeout_seconds=10)
+                if driver == "systemd" and settings.host.unit_applier_socket is not None else None
+            )),
         ),
         manager=manager,
         store=store,

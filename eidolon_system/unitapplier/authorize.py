@@ -17,7 +17,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from eidolon_system.unitapplier.protocol import VERBS, Request
+from eidolon_system.unitapplier.protocol import HOST_POWER_TARGET, POWER_VERBS, VERBS, Request
 
 #: The systemd unit a caller must itself be running under. eidolond is the only
 #: process with a mandate to actuate the product units; a shell that happens to
@@ -91,9 +91,10 @@ def _peer_by_credentials(pid: int, uid: int, *, proc_root: Path) -> Peer:
     The pid is not pinned, so in principle the caller could exit and its pid be
     recycled before the cgroup read. What a winner of that race gains is bounded
     by the socket's own permissions: it is group-`eidolon`, the `eidolon` uid
-    belongs to Eidolon's own units, and the prize is start/stop/restart of a unit
-    already on the managed list. That is not an escalation, which is why the
-    fallback is allowed to exist rather than refusing outright on old kernels.
+    belongs to Eidolon's own units. The caller cgroup must resolve to eidolond
+    for both managed-unit changes and the explicit whole-Host power capability.
+    This fallback retains the existing peer-identification limitation on older
+    kernels; it does not accept a caller-supplied identity.
     """
 
     return Peer(pid=pid, uid=uid, unit=unit_of_process(pid, proc_root=proc_root), pinned=False)
@@ -141,10 +142,14 @@ def authorize(
 ) -> None:
     """Raise `Denied` unless every condition holds. Silence means allowed."""
 
-    if request.verb not in VERBS:
-        raise Denied(f"verb {request.verb!r} is not appliable", "verb")
-    if request.unit not in allowed_units:
-        raise Denied(f"unit {request.unit!r} is not a managed unit", "unit")
+    if request.verb in POWER_VERBS:
+        if request.unit != HOST_POWER_TARGET:
+            raise Denied("power operations require the fixed @host target", "unit")
+    else:
+        if request.verb not in VERBS:
+            raise Denied(f"verb {request.verb!r} is not appliable", "verb")
+        if request.unit not in allowed_units:
+            raise Denied(f"unit {request.unit!r} is not a managed unit", "unit")
     if peer.unit != caller_unit:
         raise Denied(
             f"caller pid {peer.pid} runs under {peer.unit or 'no known unit'}, "

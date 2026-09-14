@@ -15,6 +15,10 @@ from dataclasses import dataclass
 #: disable, daemon-reload, mask — is an install-time concern that Ops performs
 #: as root, not a runtime one the manager may reach for.
 VERBS = frozenset({"start", "stop", "restart"})
+# Machine power is a separate fixed-target capability, never a unit verb.
+# power-status only probes availability; poweroff never takes caller arguments.
+POWER_VERBS = frozenset({"power-status", "poweroff"})
+HOST_POWER_TARGET = "@host"
 
 #: A request or response line, cap included. The frame carries two short
 #: identifiers; anything larger is a caller that has lost the protocol, and

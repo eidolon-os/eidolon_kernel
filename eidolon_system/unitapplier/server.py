@@ -88,6 +88,7 @@ class UnitApplier:
         identify: Callable[[socket.socket], Peer] = peer_of,
         command_timeout_seconds: float = 30.0,
     ) -> None:
+        self._power_off_started = False
         self.allowed_units = allowed_units
         self.systemctl = systemctl
         self.caller_unit = caller_unit
@@ -124,7 +125,38 @@ class UnitApplier:
                 exc,
             )
             return Response(ok=False, error=str(exc))
+        if request.verb in {"power-status", "poweroff"}:
+            return self._power(request, peer.pid)
         return self._apply(request, peer.pid)
+
+    def _power(self, request: Request, pid: int) -> Response:
+        # This process already runs as root. No caller controls the executable,
+        # arguments, or target; shutdown -f / arbitrary unit names are impossible.
+        executable = next((p for p in ("/usr/sbin/poweroff", "/sbin/poweroff")
+                           if Path(p).is_file() and os.access(p, os.X_OK)), None)
+        if executable is None:
+            return Response(ok=False, error="poweroff command unavailable")
+        if self._power_off_started:
+            return Response(ok=False, error="poweroff already requested; check Host state")
+        if request.verb == "power-status":
+            return Response(ok=True)
+        self._power_off_started = True
+        try:
+            result = subprocess.run([executable], capture_output=True, text=True,
+                                    timeout=min(self.command_timeout_seconds, 8), check=False)
+        except subprocess.TimeoutExpired:
+            _log.error("poweroff outcome unknown for pid %d: timed out", pid)
+            return Response(ok=False, error="poweroff outcome unknown")
+        except OSError:
+            self._power_off_started = False
+            _log.exception("poweroff unavailable for pid %d", pid)
+            return Response(ok=False, error="poweroff unavailable")
+        if result.returncode != 0:
+            self._power_off_started = False
+            _log.error("poweroff rejected for pid %d, exit %d", pid, result.returncode)
+            return Response(ok=False, error="poweroff rejected")
+        _log.info("poweroff accepted for pid %d", pid)
+        return Response(ok=True)
 
     def _apply(self, request: Request, pid: int) -> Response:
         try:

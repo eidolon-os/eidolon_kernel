@@ -29,5 +29,9 @@ class IdempotencyConflict(Conflict):
     pass
 
 
+class PowerOffRejected(SystemManagerError):
+    """Power operation was refused before a successful command acceptance."""
+
+
 class HostOperationFailed(SystemManagerError):
     pass
