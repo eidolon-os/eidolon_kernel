@@ -318,3 +318,32 @@ git show eb79e63:eidolon/livekit/agent/observability/turn_events.py > /tmp/old.p
 git show d622069:eidolon/livekit/agent/observability/turn_events.py > /tmp/new.py
 python3 probe.py /tmp/old.py /tmp/new.py
 ```
+
+## 验收结果（2026-09-17）
+
+`d622069` 随 release `rk3588-claim-window-20260916` 发布到 opi5max，
+kernel 00:03:09 / channel 00:03:44 起来（两者 `NRestarts=0`）。00:08:15 一次真机设备会话。
+
+**四条全过，同一块板、同一个 device、同一个 Owner、同一个 Companion——是真正的前后对照，
+不是在另一台机器上另证一遍。**
+
+1. **部署确认**（按内容核，不只看 md5）：新兜底串 `which names no Companion` 1 处；
+   旧兜底串 `the Kernel mount has no Companion answering` **0 处**；
+   直读 `getattr(resolved, "companion_id")` 1 处。md5 `348b3b0e…`，与本地修复后一致。
+2. **trace 归属正确**：
+   `owner_129153685f855ff3b2062301fb3ceda0__c_129153685f855ff3b2062301fb3ceda0__esp32-67931301-18aa2b1f-00000001.ndjson`
+   ——不再是 `unknown-owner__unknown-companion`。
+   会话头记录里 `owner_id` / `companion_id` 也都是对的（即 `_base_payload()` 正常）。
+3. **无 `turn events disabled` 警告**（发布后至今）。
+4. **Tier B turn-event 流确实在走**——这是正面证据，不是"没报错"：
+   `channel.turn.phase_changed` ×3、`channel.turn.milestone` ×9、
+   `channel.turn.completed` ×1、`channel.session.ended` ×1。
+   原症状说 phase_changed / milestone / terminal 三族**全部早退**，现在三族都在。
+
+这次会话读的 Body 正是诊断里那一个：
+`device-instance-d170051f11b4d1a4b7eb53a4a9bde5c11cbe81e24874cb905694b1a9079bffe4`，
+Kernel 答 200。
+
+第 3 条单独不算数（没开会话也不会有警告），是第 2、4 条把它坐实的。
+
+ADR 0018 仍是 Proposed，未执行——它本来就不负责修这次，见该文"各条对本次 bug 的实际作用"。
