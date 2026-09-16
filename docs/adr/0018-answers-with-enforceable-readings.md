@@ -8,7 +8,8 @@ Status: Accepted，已落地（第二稿。第一稿提了五条决定，其中�
 ——那一节同样是本 ADR 的一部分。
 
 落地提交：`eidolon_sdk` 声明读契约、`eidolon_kernel` 改为生产 canonical 类型、
-`eidolon_channel` 改为以消费方身份 import。三者是 lockstep：SDK 先行，否则另两个仓不可编译。
+`eidolon_channel` 与 `eidolon_admin` 改为以消费方身份 import。四者是 lockstep：
+SDK 先行，否则另三个仓不可编译。
 
 触发事件：[2026-09-16 opi5max 设备会话归属诊断](../diagnosis/2026-09-16-device-session-effective-companion.md)
 
@@ -200,7 +201,7 @@ canonical 的端点声明只有 `endpoint_id` / `roles` / `assignment_policy` /
 因为下一次有人拿这条先例往里放东西时，判据仍然是"跨权威 wire 事实"，
 不是"Kernel 发出去的东西"。
 
-### 5. 消费方是三个，不是两个
+### 5. Python 消费方是三个，不是两个（**已补做**）
 
 `eidolon_admin` 也把读路径完整重新声明了一遍——
 `server/eidolon_admin_server/app/control_plane/contracts.py` 里的
@@ -208,8 +209,29 @@ canonical 的端点声明只有 `endpoint_id` / `roles` / `assignment_policy` /
 同样靠一个 `.get("effective_companion_id")` 的 property 把散文变成读法。
 它也已经依赖 eidolon_sdk（`pyproject.toml` 里是 editable path 依赖）。
 
-**本次没有改它**，因为 ADR 和执行委托都只写了三仓三步，扩大范围不是执行者的决定。
-它是现成的第四步，代价与第 3 步同量级。
+最初按"ADR 和委托都只写了三仓三步"没有动它，后经指示补做，作为第 4 步落地。
+两个本地声明换成 import；两个 property 不是权威陈述的事实，所以没有跟着进 canonical
+类型——`effective_companion_id` 变成对 `assignment.status` 的直接带类型读取，
+`assignment_revision` 变成模型旁边一个具名函数。分页信封留在本地。
+
+补做时另外发现一处：`server/tests/body_mesh_support.py` 的 docstring 声称
+"消费方契约测试会拿这个形状和生产方的 schema 比对"——**body-mesh 从来没有这样一条测试**，
+`test_control_plane_contract.py` 只比对 device-mount。也就是说这一仓对读路径的跨仓校验
+一直是零，而注释让它读起来像有。已改正，并补了两条测试钉住旧的无类型 `status` 看不见的漂移。
+
+### 5b. 非 Python 消费方仍然只能镜像
+
+`eidolon_admin/web/src/api/controlPlane.ts` 里还有第四份 `KernelBodyEndpoint` /
+`KernelBodyAssignment`——TypeScript 接口，结构化、不校验、只声明页面读哪几个字段，
+**完全没有 `status`**。它没有被改，而且用现在这套机制也改不了：接第 3 条，
+读路径没有 canonical JSON Schema，而 Dart / C++ 绑定生成器只覆盖有 `$def` 的类型
+（`generation/generate.py` 的三语言符号闸门只读 admission / delivery-port / events）。
+
+所以本次消除的是**Python 消费方**的重复声明，不是全部。任何非 Python 消费方要摆脱手抄，
+前提是读路径先有一份 canonical schema——那正是第 1 条里被推迟的那个取舍。
+这一份今天不是缺陷：那一列叫 "Body assignment"，显示的是 assignment 记录本身
+（revision / generation / spec 的 companion / provenance），而 mount 的 active 与否
+就在紧邻的一列。但它读的是 spec 而不是 status，与本 ADR 起因的那次读法只隔一个意图。
 
 ### 6. `consumer-matrix.json` 现在是过期的
 
