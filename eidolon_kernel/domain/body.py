@@ -44,8 +44,10 @@ from datetime import datetime
 from typing import Any
 
 from eidolon_sdk.device_foundation.v1 import (
+    DERIVED_ENDPOINT_ID,
     AssignmentCondition,
     AssignmentMode,
+    BodyAssignmentStatus,
     DeviceRef,
     SelectionProvenance,
 )
@@ -57,10 +59,11 @@ from eidolon_kernel.domain.model import (
     require_utc,
 )
 
-#: The single endpoint every mounted device has until a Manifest says otherwise.
-#: Named rather than spelled inline so the derivation has one definition and the
-#: reader of an identifier in a log can find where it came from.
-DERIVED_ENDPOINT_ID = "body"
+#: ``DERIVED_ENDPOINT_ID`` is re-exported, not defined here. Composing
+#: ``<device_id>:body`` is what any consumer must do to address a Body, so the
+#: word belongs with the contract they read rather than in this authority's
+#: private domain — where the one consumer that needed it resorted to
+#: substring-matching this file.
 
 #: Where an endpoint's declaration came from. ``derived`` is the Host filling in
 #: for a Manifest vocabulary that has no endpoints in it; ``manifest`` is a
@@ -246,8 +249,12 @@ class BodyAssignment:
             "change_reason": self.change_reason,
         }
 
-    def status(self, *, endpoint: BodyEndpoint | None) -> dict[str, Any]:
+    def status(self, *, endpoint: BodyEndpoint | None) -> BodyAssignmentStatus:
         """What is true about this assignment, from facts this authority holds.
+
+        Returns the canonical type rather than a dictionary shaped like one, so
+        that "which field says who is answering" is settled here and cannot be
+        answered differently by the transport, by a consumer, or by prose.
 
         Two of the canonical conditions are deliberately never emitted here.
         ``CompanionMissing`` would require asking the Companion authority on
@@ -257,24 +264,21 @@ class BodyAssignment:
         anything on this Host.
         """
 
-        conditions: list[str] = []
-        if endpoint is None or not endpoint.present:
-            conditions.append(AssignmentCondition.CAPABILITY_MISSING.value)
+        in_force = endpoint is not None and endpoint.present
+        conditions: list[AssignmentCondition] = []
+        if not in_force:
+            conditions.append(AssignmentCondition.CAPABILITY_MISSING)
         elif self.companion_id is not None:
-            conditions.append(AssignmentCondition.REALIZED.value)
-        return {
+            conditions.append(AssignmentCondition.REALIZED)
+        return BodyAssignmentStatus(
             # Equal to ``generation`` because this authority commits the spec and
             # its realization in one transaction — there is no second actor to
             # lag behind. The field is here so the day there is one, a consumer
             # already knows where to look.
-            "observed_generation": self.generation,
-            "effective_companion_id": (
-                self.companion_id
-                if endpoint is not None and endpoint.present
-                else None
-            ),
-            "conditions": conditions,
-        }
+            observed_generation=self.generation,
+            effective_companion_id=self.companion_id if in_force else None,
+            conditions=tuple(conditions),
+        )
 
     @classmethod
     def first(

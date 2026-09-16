@@ -58,6 +58,20 @@ def _document(model) -> dict:
     return model.model_dump(mode="json")
 
 
+def _canonical_body_document(model, document: dict) -> None:
+    """Prove the document that actually leaves here re-enters its definition.
+
+    This used to be a JSON Schema kept beside the binding. The schema said
+    ``status: {"type": "object"}``, so the one field a consumer reads to decide
+    who answers through a Body was outside it — a check that could not fail for
+    the drift it existed to catch. The canonical type can fail for it, and is
+    the same definition the consumers on the other side validate with, so this
+    stays a runtime gate on every response rather than becoming a no-op.
+    """
+
+    type(model).model_validate(document)
+
+
 def _raise_http(exc: Exception) -> None:
     if isinstance(exc, NotFound):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -222,7 +236,7 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
                     )
                 )
             )
-            services.contracts.validate("body-mesh/page.schema.json", _document(wire))
+            _canonical_body_document(wire, _document(wire))
             return wire
         except Exception as exc:
             _raise_http(exc)
@@ -247,7 +261,7 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
             wire = endpoint_to_wire(
                 endpoint, services.body_endpoints.assignment(endpoint)
             )
-            services.contracts.validate("body-mesh/endpoint.schema.json", _document(wire))
+            _canonical_body_document(wire, _document(wire))
             return wire
         except Exception as exc:
             _raise_http(exc)
@@ -289,7 +303,7 @@ def create_kernel_router(*, services: KernelHttpServices) -> APIRouter:
                 owner_id=owner_id, body_endpoint_id=body_endpoint_id
             )
             wire = endpoint_to_wire(endpoint, result.assignment)
-            services.contracts.validate("body-mesh/endpoint.schema.json", _document(wire))
+            _canonical_body_document(wire, _document(wire))
             return wire
         except Exception as exc:
             _raise_http(exc)

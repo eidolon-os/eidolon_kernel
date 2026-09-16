@@ -1,7 +1,7 @@
 import dataclasses
 
 import pytest
-from eidolon_sdk.device_foundation.v1 import SelectionProvenance
+from eidolon_sdk.device_foundation.v1 import AssignmentCondition, SelectionProvenance
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 from eidolon_kernel.adapters.projection.memory import InMemoryMountProjection
@@ -203,7 +203,7 @@ async def test_an_assignment_outlives_the_mount_it_was_made_through() -> None:
     assert assignment is not None
     assert assignment.companion_id == "companion-1"
     assert assignment.revision == 1
-    assert assignment.status(endpoint=endpoint)["conditions"] == ["Realized"]
+    assert assignment.status(endpoint=endpoint).conditions == (AssignmentCondition.REALIZED,)
 
 
 @pytest.mark.asyncio
@@ -225,8 +225,10 @@ async def test_an_unmounted_body_reports_capability_missing_and_refuses_a_new_ei
     endpoint = endpoints.resolve(owner_id="owner-1", body_endpoint_id=_BODY_1)
     assignment = endpoints.assignment(endpoint)
     assert endpoint.present is False
-    assert assignment.status(endpoint=endpoint)["conditions"] == ["CapabilityMissing"]
-    assert assignment.status(endpoint=endpoint)["effective_companion_id"] is None
+    assert assignment.status(endpoint=endpoint).conditions == (
+        AssignmentCondition.CAPABILITY_MISSING,
+    )
+    assert assignment.status(endpoint=endpoint).effective_companion_id is None
 
     with pytest.raises(NotFound):
         await replace.execute(

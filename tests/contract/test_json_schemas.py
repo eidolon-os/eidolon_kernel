@@ -32,7 +32,13 @@ SCHEMAS = ROOT / "eidolon_kernel/contracts/schemas"
 def test_every_json_schema_is_valid_and_registered() -> None:
     registry = ContractRegistry()
     files = tuple(SCHEMAS.rglob("*.schema.json"))
-    assert len(files) == len(registry.schema_names) == 14
+    # Eleven, not fourteen. The Body Mesh read documents are no longer described
+    # twice: their definition is the canonical type the consumers also validate
+    # with, and the router checks every response against that instead. What is
+    # left here is the shapes this Host alone owns — including the replace
+    # request, which is not the canonical command but this authority's transport
+    # for it, carrying the ``origin`` the provenance is derived from.
+    assert len(files) == len(registry.schema_names) == 11
     for path in files:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 

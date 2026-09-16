@@ -6,6 +6,12 @@ from datetime import datetime
 from typing import Any, Literal
 
 from eidolon_sdk.device_foundation.v1 import DeviceRef
+# The Body Mesh read path, imported rather than redeclared. These were written
+# out again here, and the copy could not say what a consumer most needed: its
+# ``status`` was ``dict[str, Any]``, so the one field that answers "who is
+# answering through this Body" was outside every shape check on both sides.
+from eidolon_sdk.device_foundation.v1 import BodyAssignment as BodyAssignmentWire
+from eidolon_sdk.device_foundation.v1 import BodyEndpoint as BodyEndpointWire
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -57,57 +63,15 @@ class ReplaceAssignmentRequestWire(ContractModel):
     change_reason: str | None = Field(default=None, min_length=1, max_length=256)
 
 
-class BodyAssignmentWire(ContractModel):
-    """What is committed for one Body, in the canonical result's shape plus the
-    facts a consumer needs to address it again."""
-
-    operation: Literal["kernel.body-assignment"] = "kernel.body-assignment"
-    assignment_id: str = Field(min_length=1, max_length=160)
-    body_endpoint_id: str = Field(min_length=1, max_length=128)
-    device_id: str = Field(min_length=1, max_length=128)
-    endpoint_id: str = Field(min_length=1, max_length=64)
-    owner_id: str = Field(min_length=1, max_length=64)
-    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    selection_provenance: Literal[
-        "user_selected", "user_cleared", "companion_deleted", "policy_reconciled"
-    ]
-    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
-    mode: Literal["default"] = "default"
-    policy_refs: tuple[str, ...] = Field(default=(), max_length=16)
-    revision: int = Field(ge=1)
-    generation: int = Field(ge=1)
-    updated_at: datetime
-    #: The canonical result's ``status``: observed generation, the Companion
-    #: actually answering, and the conditions this authority can state.
-    status: dict[str, Any]
-
-    @field_validator("policy_refs", mode="before")
-    @classmethod
-    def _arrays(cls, value):
-        return tuple(value) if isinstance(value, list) else value
-
-
-class BodyEndpointWire(ContractModel):
-    operation: Literal["kernel.body-endpoint"] = "kernel.body-endpoint"
-    body_endpoint_id: str = Field(min_length=1, max_length=128)
-    device_id: str = Field(min_length=1, max_length=128)
-    owner_id: str = Field(min_length=1, max_length=64)
-    endpoint_id: str = Field(min_length=1, max_length=64)
-    device_ref: DeviceRef
-    mount_revision: int = Field(ge=1)
-    roles: tuple[str, ...] = Field(min_length=1, max_length=8)
-    assignment_policy: Literal["required", "optional", "forbidden"]
-    risk_class: Literal["safe", "sensitive", "hazardous"]
-    concurrency: Literal["shared", "exclusive", "leased"]
-    #: ``derived`` says this Host filled in for a Manifest vocabulary that
-    #: declares no endpoints. A consumer that shows capability detail must not
-    #: present a derived declaration as the device's own word.
-    source: Literal["derived", "manifest"]
-    present: bool
-    assignment: BodyAssignmentWire | None = None
-
-
 class BodyEndpointPageWire(ContractModel):
+    """This Host's pagination envelope around the canonical endpoint document.
+
+    Stays here on purpose. How one authority chunks a listing is not a fact
+    other authorities have to agree on, and moving it next to the contract
+    would start the shared package down the road of holding whatever any one
+    producer happens to serve.
+    """
+
     operation: Literal["kernel.body-endpoint-page"] = "kernel.body-endpoint-page"
     endpoints: tuple[BodyEndpointWire, ...] = Field(default=(), max_length=100)
 

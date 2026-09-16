@@ -271,3 +271,77 @@ async def test_http_hides_other_owner_mounts_and_rejects_revoked_hub_device() ->
             "/api/kernel/v1/device-mounts", headers=headers(), json=mount_body()
         )
         assert rejected.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_adopting_the_canonical_read_types_changes_no_byte_of_the_response():
+    """The whole document, written out, because "no-op" is the claim being made.
+
+    Sharing the read contract tightened it: ``status`` is closed, its fields are
+    required, and its conditions come from the canonical vocabulary. That is
+    only safe if it refuses nothing this Host already serves — so this pins the
+    response literally rather than field by field. A diff here is the useful
+    outcome: either the tightening rejected something real, or this authority
+    had been emitting a document nobody had written down.
+    """
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app()), base_url="http://kernel.test"
+    ) as client:
+        await client.post("/api/kernel/v1/device-mounts", headers=headers(), json=mount_body())
+        assigned = await client.put(
+            f"/api/kernel/v1/body-endpoints/{_BODY_1}/assignment",
+            headers=headers(),
+            json={
+                "operation": "body.replace-assignment",
+                "request_id": "assign-1",
+                "expected_assignment_revision": 0,
+                "companion_id": "companion-1",
+                "origin": "owner",
+            },
+        )
+        mount = await client.get(
+            f"/api/kernel/v1/device-mounts/devices/{_DEVICE_1}", headers=headers()
+        )
+
+    assert assigned.status_code == 200
+    document = assigned.json()
+    device_ref = mount.json()["device_ref"]
+    updated_at = document["assignment"]["updated_at"]
+
+    assert document == {
+        "operation": "kernel.body-endpoint",
+        "body_endpoint_id": _BODY_1,
+        "device_id": _DEVICE_1,
+        "owner_id": "owner-1",
+        "endpoint_id": "body",
+        "device_ref": device_ref,
+        "mount_revision": 1,
+        "roles": ["body"],
+        "assignment_policy": "optional",
+        "risk_class": "safe",
+        "concurrency": "exclusive",
+        "source": "derived",
+        "present": True,
+        "assignment": {
+            "operation": "kernel.body-assignment",
+            "assignment_id": f"assignment:{_BODY_1}",
+            "body_endpoint_id": _BODY_1,
+            "device_id": _DEVICE_1,
+            "endpoint_id": "body",
+            "owner_id": "owner-1",
+            "companion_id": "companion-1",
+            "selection_provenance": "user_selected",
+            "change_reason": None,
+            "mode": "default",
+            "policy_refs": [],
+            "revision": 1,
+            "generation": 1,
+            "updated_at": updated_at,
+            "status": {
+                "observed_generation": 1,
+                "effective_companion_id": "companion-1",
+                "conditions": ["Realized"],
+            },
+        },
+    }
