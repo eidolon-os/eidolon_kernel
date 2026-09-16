@@ -1,7 +1,14 @@
 # ADR 0018: Body Mesh 的读契约放回它已经在的地方
 
-Status: Proposed（第二稿。第一稿提了五条决定，其中三条经复核撤回——撤回理由见文末
+Status: Accepted，已落地（第二稿。第一稿提了五条决定，其中三条经复核撤回——撤回理由见文末
 "撤回的第一稿"，那一节是本 ADR 的一部分，不是附录）
+
+决定 1 的一处子条款在执行中被证伪并据此修正：`ReplaceAssignmentResult.status`
+**没有**一并收紧。理由与其余六项与假设不符之处，见文末"执行时发现的与 ADR 假设不符的地方"
+——那一节同样是本 ADR 的一部分。
+
+落地提交：`eidolon_sdk` 声明读契约、`eidolon_kernel` 改为生产 canonical 类型、
+`eidolon_channel` 改为以消费方身份 import。三者是 lockstep：SDK 先行，否则另两个仓不可编译。
 
 触发事件：[2026-09-16 opi5max 设备会话归属诊断](../diagnosis/2026-09-16-device-session-effective-companion.md)
 
@@ -118,3 +125,102 @@ Status: Proposed（第二稿。第一稿提了五条决定，其中三条经复�
 并且我自己在表里承认五条里有四条拦不住它。
 **当一份架构方案里的大多数条目都拦不住触发它的那个缺陷时，
 先要怀疑的不是缺陷太小，而是方案在借题发挥。**
+
+
+## 执行时发现的与 ADR 假设不符的地方
+
+七条。第一条推翻了决定 1 的一处子条款，其余六条不改变决定，但改变这份 ADR
+对现状的描述——而那份描述正是决定的依据。
+
+### 1. `ReplaceAssignmentResult.status` 不能收紧（**决定被修正**）
+
+决定 1 要求把它和读路径的 `status` 收成同一个受约束的类型，理由是"只改 Kernel
+私有那份会让 Kernel 比 canonical 更严"。**这两个 `status` 不是同一份文档**，
+本仓之外的证据是 canonical 契约自己发布的一致性向量
+`DF-BODY-REPLACE-ASSIGNMENT-RESULT-VALID`
+（`eidolon_sdk/contracts/device_foundation/v1/examples/valid/body-mesh.json`）：
+
+```json
+"status": { "observed_generation": 0, "conditions": ["PendingRealization"] }
+```
+
+三处与 ADR 开出的约束冲突：**没有 `effective_companion_id` 这个键**
+（`grep -rn effective_companion_id contracts/` 在 SDK 里零命中——它根本不是
+canonical 词汇，是 `domain/body.py` 自己造的字）；`PendingRealization`
+不在 `AssignmentCondition` 里；`observed_generation: 0` 落后于 `generation: 1`。
+
+第一点和第三点不是两个巧合：canonical 的 `status` 描述的是**实现滞后于 spec**
+的资源，读路径描述的是一次事务里同时提交两者的资源。本 ADR 的"一个必须一并记下的冗余"
+一节已经引了 `domain/body.py` 的 "there is no second actor to lag behind"，
+但把它读成了一笔要知情支付的成本，没读出它正是"这两个 status 形状不同"的证据。
+
+照字面执行会让 canonical 绑定拒绝本仓自己发布的向量，而且**不会有任何测试报警**：
+一致性 runner 只拿 JSON Schema 校验 fixture，从不拿 Python 绑定校验
+（`conformance/run.py:191`）。
+
+落地取的是不动冻结契约的一路：`BodyAssignmentStatus` 是新增的严格读路径类型，
+`ReplaceAssignmentResult.status` 仍是开放对象，旁边写明原因，并有一条测试把这处分叉
+钉住——fixture 哪天与词表对齐，那条测试会失败，这个决定就会被重新做一次而不是被忘记。
+
+顺带：撤回第一稿决定 1 的那句理由（"会让 Kernel 比 canonical 更严"）本身也不准确。
+轴不是严格程度，是这两份文档根本不同。
+
+### 2. 写路径并没有被"重新声明"
+
+事实 2 说 `ReplaceAssignment` 在本仓被重新声明为 `ReplaceAssignmentRequestWire`。
+两者只共享 `expected_assignment_revision` 一个字段。canonical 命令有
+`body_endpoint_id` / `mode` / `policy_refs`，Kernel 的请求都没有；Kernel 的请求有
+`operation` / `request_id` / `origin` / `change_reason`，canonical 命令都没有。
+而 `origin` 正是 SDK 模块自己那段 docstring 解释过的东西——provenance 由写入权威
+从"谁在改"推导，调用方不得断言。**这不是副本，是本 Host 承载那条命令的传输形状。**
+它和 `replace-assignment-request.schema.json` 因此保留。
+
+真正断掉的只有读路径一刀，不是两刀。
+
+### 3. canonical 契约里从来没有过读路径
+
+不止 SDK 的 Python 模块没有：`body-mesh/schemas.schema.json` 的 `$defs` 只有
+`EnsureMount` / `EnsureMountResult` / `ReconcileEndpoints` / `ReplaceAssignment` /
+`ReplaceAssignmentResult`——**全是命令和命令结果，没有任何读资源**。所以标题里的
+"放回它已经在的地方"是不准确的：读契约从未在 canonical 里待过。
+
+这不影响决定的可执行性——`SelectionProvenance` 和 `AssignmentCondition`
+本来就只以 Python 词表存在、没有对应 `$def`，新增读类型是照着同一个先例走。
+但"机制已经存在、已经发布、缺的只是把它用完"这句定性只对**机制**成立，
+对**内容**不成立：这次确实发布了一块新的公共面，只是没有新造机制。
+
+### 4. Kernel 的读文档是投影，不是 canonical 端点
+
+canonical 的端点声明只有 `endpoint_id` / `roles` / `assignment_policy` /
+`risk_class` / `concurrency` 五个字段。Kernel 的 `kernel.body-endpoint` 另外带了
+`device_id` / `owner_id` / `device_ref` / `mount_revision` / `source` / `present`
+和整个 `assignment`——这些是 mount 的事实。它是**跨权威的 wire 事实**，所以按 ADR
+写死的判据可以进 `device_foundation/v1`；但它是 Kernel 形状的，不是 canonical
+资源本身，所以进去的类型上带着 `operation: "kernel.*"` 判别符。这一点值得记下来，
+因为下一次有人拿这条先例往里放东西时，判据仍然是"跨权威 wire 事实"，
+不是"Kernel 发出去的东西"。
+
+### 5. 消费方是三个，不是两个
+
+`eidolon_admin` 也把读路径完整重新声明了一遍——
+`server/eidolon_admin_server/app/control_plane/contracts.py` 里的
+`KernelBodyEndpoint` / `KernelBodyAssignment`，同样是 `status: dict[str, Any]`，
+同样靠一个 `.get("effective_companion_id")` 的 property 把散文变成读法。
+它也已经依赖 eidolon_sdk（`pyproject.toml` 里是 editable path 依赖）。
+
+**本次没有改它**，因为 ADR 和执行委托都只写了三仓三步，扩大范围不是执行者的决定。
+它是现成的第四步，代价与第 3 步同量级。
+
+### 6. `consumer-matrix.json` 现在是过期的
+
+`requirements/consumer-matrix.json` 里 `eidolon_channel` 的 `contracts` 是
+`["common", "delivery-port"]`，不含 `body-mesh`。第 3 步之后不再成立。
+没有一并改，因为那份清单在冻结契约目录里、其摘要进了 `generated/catalog.json`，
+改它属于"动冻结契约"那一类——与第 1 条同一个已经做出的取舍。
+
+### 7. 假设成立的部分（一条）
+
+"收紧对当前 wire 输出是 no-op"——**成立，且已被证明**。
+`tests/functional/test_device_mount_http.py` 新增的一条测试把整份响应文档按字面写死，
+第一次运行即通过，没有改动过任何一个字段。所以这次收紧没有拒绝本 Host 已经在发的东西，
+也没有发现"有人一直在发不合规的东西"。
