@@ -219,19 +219,27 @@ canonical 的端点声明只有 `endpoint_id` / `roles` / `assignment_policy` /
 `test_control_plane_contract.py` 只比对 device-mount。也就是说这一仓对读路径的跨仓校验
 一直是零，而注释让它读起来像有。已改正，并补了两条测试钉住旧的无类型 `status` 看不见的漂移。
 
-### 5b. 非 Python 消费方仍然只能镜像
+### 5b. 非 Python 消费方够不着这套机制——处理方式是缩小声明，不是加机制
 
 `eidolon_admin/web/src/api/controlPlane.ts` 里还有第四份 `KernelBodyEndpoint` /
-`KernelBodyAssignment`——TypeScript 接口，结构化、不校验、只声明页面读哪几个字段，
-**完全没有 `status`**。它没有被改，而且用现在这套机制也改不了：接第 3 条，
-读路径没有 canonical JSON Schema，而 Dart / C++ 绑定生成器只覆盖有 `$def` 的类型
+`KernelBodyAssignment`——TypeScript 接口，结构化、不校验。它够不着这套机制：接第 3 条，
+读路径没有 canonical JSON Schema，而绑定生成器只覆盖有 `$def` 的类型
 （`generation/generate.py` 的三语言符号闸门只读 admission / delivery-port / events）。
 
-所以本次消除的是**Python 消费方**的重复声明，不是全部。任何非 Python 消费方要摆脱手抄，
-前提是读路径先有一份 canonical schema——那正是第 1 条里被推迟的那个取舍。
-这一份今天不是缺陷：那一列叫 "Body assignment"，显示的是 assignment 记录本身
-（revision / generation / spec 的 companion / provenance），而 mount 的 active 与否
-就在紧邻的一列。但它读的是 spec 而不是 status，与本 ADR 起因的那次读法只隔一个意图。
+能走的路只有两条：给读路径补一份 canonical schema 再写一个 TS 生成器（admin 只有
+Management v1 有 OpenAPI 文档，control-plane 没有，所以这是**新造两样东西**）；
+或者承认这两个接口本来就不是契约副本。取了后者：它们已缩到那一列真正渲染的字段
+（`device_id` / `assignment` 与其 `revision` / `generation` / `companion_id` /
+`selection_provenance`），并在旁边写明这是页面视图而不是文档镜像。
+
+**`status` 明确留在外面，并写明理由**：那一列叫 "Body assignment"，显示的是 assignment
+记录本身，而 mount 的 active 与否就在紧邻的一列；真要说"此刻谁在应答"，得读
+`status.effective_companion_id`，那会是另一列、另一个名字。写下来是因为一个没有 `status`
+的接口看起来像疏漏，而它是决定。
+
+所以本次消除的重复声明是**Python 消费方的全部**；剩下这一份不再是需要同步的副本，
+而是一个只声明自己所读的视图。要让非 Python 消费方也共享定义，前提仍是读路径先有
+canonical schema——那正是第 1 条里被知情推迟的取舍。
 
 ### 6. `consumer-matrix.json` 现在是过期的
 
