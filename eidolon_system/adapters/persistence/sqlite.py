@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import sqlite3
 import threading
+from dataclasses import asdict
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
-from eidolon_system.domain.errors import IdempotencyConflict, NotFound, RevisionConflict
+from eidolon_system.domain.errors import (
+    IdempotencyConflict,
+    NotFound,
+    RevisionConflict,
+    StateStoreFailed,
+)
 from eidolon_system.domain.model import (
     DesiredServiceState,
+    RuntimeIntent,
     ServiceDefinition,
     StoredMutation,
     SystemAuditEvent,
@@ -78,6 +87,17 @@ def _state_from_document(document: dict[str, object]) -> DesiredServiceState:
     )
 
 
+def _storage_errors(method):
+    @wraps(method)
+    def guarded(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except sqlite3.Error as exc:
+            raise StateStoreFailed(f"system state storage failed: {exc}") from exc
+
+    return guarded
+
+
 class SqliteSystemStateStore:
     def __init__(self, path: Path) -> None:
         self.path = path.resolve()
@@ -89,9 +109,7 @@ class SqliteSystemStateStore:
             self._lock_file.close()
             raise RuntimeError(f"system state database is already owned: {self.path}") from exc
         self._mutex = threading.RLock()
-        self._connection = sqlite3.connect(
-            self.path, isolation_level=None, check_same_thread=False
-        )
+        self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA foreign_keys=ON")
@@ -145,6 +163,15 @@ class SqliteSystemStateStore:
                 """
             )
         self._validate_schema()
+        # Execution metadata extends the existing durable request receipt. The
+        # public outcome (desired state + audit position) remains immutable.
+        # A partial unique index enforces one unfinished operation per service;
+        # completed receipts do not participate or slow down reconciliation.
+        self._connection.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS system_pending_runtime
+            ON system_requests(json_extract(outcome_json, '$.service_id'))
+            WHERE json_type(outcome_json, '$.runtime_intent') = 'object'
+        """)
 
     def _validate_schema(self) -> None:
         tables = {
@@ -154,11 +181,11 @@ class SqliteSystemStateStore:
             )
         }
         if tables != set(_EXPECTED_COLUMNS):
-            raise RuntimeError("system SQLite schema is partial or unknown; migrations are unsupported")
+            raise RuntimeError(
+                "system SQLite schema is partial or unknown; migrations are unsupported"
+            )
         for table, expected in _EXPECTED_COLUMNS.items():
-            actual = {
-                row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")
-            }
+            actual = {row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")}
             if actual != expected:
                 raise RuntimeError(f"system SQLite table {table} does not match schema v1")
         versions = self._connection.execute(
@@ -177,9 +204,8 @@ class SqliteSystemStateStore:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             lock_file.close()
 
-    def ensure_services(
-        self, definitions: tuple[ServiceDefinition, ...], *, now: datetime
-    ) -> None:
+    @_storage_errors
+    def ensure_services(self, definitions: tuple[ServiceDefinition, ...], *, now: datetime) -> None:
         with self._mutex:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -201,6 +227,7 @@ class SqliteSystemStateStore:
                 self._connection.execute("ROLLBACK")
                 raise
 
+    @_storage_errors
     def get(self, service_id: str) -> DesiredServiceState:
         with self._mutex:
             row = self._connection.execute(
@@ -210,6 +237,7 @@ class SqliteSystemStateStore:
             raise NotFound(f"system desired state not found: {service_id}")
         return _state_from_row(row)
 
+    @_storage_errors
     def list_states(self) -> tuple[DesiredServiceState, ...]:
         with self._mutex:
             rows = self._connection.execute(
@@ -217,6 +245,7 @@ class SqliteSystemStateStore:
             ).fetchall()
         return tuple(_state_from_row(row) for row in rows)
 
+    @_storage_errors
     def get_request(
         self, *, request_id: str, operation: str, fingerprint: str
     ) -> StoredMutation | None:
@@ -259,7 +288,11 @@ class SqliteSystemStateStore:
         request_id: str,
         fingerprint: str,
         now: datetime,
+        intent: RuntimeIntent | None = None,
     ) -> StoredMutation:
+        document = _state_document(state)
+        if intent is not None:
+            document["runtime_intent"] = asdict(intent)
         cursor = self._connection.execute(
             """
             INSERT INTO system_audit_events(
@@ -288,7 +321,7 @@ class SqliteSystemStateStore:
                 request_id,
                 operation,
                 fingerprint,
-                json.dumps(_state_document(state), separators=(",", ":"), sort_keys=True),
+                json.dumps(document, separators=(",", ":"), sort_keys=True),
                 position,
                 _timestamp(now),
             ),
@@ -300,6 +333,7 @@ class SqliteSystemStateStore:
             audit_position=position,
         )
 
+    @_storage_errors
     def set_enabled(
         self,
         *,
@@ -353,6 +387,7 @@ class SqliteSystemStateStore:
                 self._connection.execute("ROLLBACK")
                 raise
 
+    @_storage_errors
     def record_operation(
         self,
         *,
@@ -362,6 +397,7 @@ class SqliteSystemStateStore:
         request_id: str,
         fingerprint: str,
         now: datetime,
+        intent: RuntimeIntent | None = None,
     ) -> StoredMutation:
         replay = self.get_request(
             request_id=request_id, operation=operation, fingerprint=fingerprint
@@ -372,12 +408,17 @@ class SqliteSystemStateStore:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 state = self._current_in_transaction(service_id, expected_revision)
+                if intent is not None and (
+                    intent.service_id != service_id or intent.request_id != request_id
+                ):
+                    raise ValueError("runtime intent must belong to this request")
                 result = self._write_request_and_audit(
                     state=state,
                     operation=operation,
                     request_id=request_id,
                     fingerprint=fingerprint,
                     now=now,
+                    intent=intent,
                 )
                 self._connection.execute("COMMIT")
                 return result
@@ -385,9 +426,54 @@ class SqliteSystemStateStore:
                 self._connection.execute("ROLLBACK")
                 raise
 
-    def list_audit(
-        self, *, after_position: int, limit: int
-    ) -> tuple[SystemAuditEvent, ...]:
+    @_storage_errors
+    def pending_intent(self, service_id: str) -> RuntimeIntent | None:
+        with self._mutex:
+            row = self._connection.execute(
+                "SELECT outcome_json FROM system_requests "
+                "WHERE json_type(outcome_json, '$.runtime_intent') = 'object' "
+                "AND json_extract(outcome_json, '$.service_id') = ?",
+                (service_id,),
+            ).fetchone()
+        return RuntimeIntent(**json.loads(row[0])["runtime_intent"]) if row else None
+
+    @_storage_errors
+    def put_intent(self, intent: RuntimeIntent, *, now: datetime) -> None:
+        state = self.get(intent.service_id)
+        payload = json.dumps(asdict(intent), sort_keys=True).encode()
+        self.record_operation(
+            service_id=intent.service_id,
+            operation=f"system.runtime.{intent.action}",
+            expected_revision=state.revision,
+            request_id=intent.request_id,
+            fingerprint="sha256:" + hashlib.sha256(payload).hexdigest(),
+            now=now,
+            intent=intent,
+        )
+
+    @_storage_errors
+    def update_intent(self, intent: RuntimeIntent) -> None:
+        with self._mutex:
+            cursor = self._connection.execute(
+                "UPDATE system_requests SET outcome_json = "
+                "json_set(outcome_json, '$.runtime_intent', json(?)) "
+                "WHERE request_id = ? AND json_type(outcome_json, '$.runtime_intent') = 'object'",
+                (json.dumps(asdict(intent)), intent.request_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("cannot update a missing runtime intent")
+
+    @_storage_errors
+    def finish_intent(self, intent: RuntimeIntent) -> None:
+        with self._mutex:
+            self._connection.execute(
+                "UPDATE system_requests SET outcome_json = json_remove(outcome_json, '$.runtime_intent') "
+                "WHERE request_id = ?",
+                (intent.request_id,),
+            )
+
+    @_storage_errors
+    def list_audit(self, *, after_position: int, limit: int) -> tuple[SystemAuditEvent, ...]:
         with self._mutex:
             rows = self._connection.execute(
                 """

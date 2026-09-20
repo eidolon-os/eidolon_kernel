@@ -35,3 +35,7 @@ class PowerOffRejected(SystemManagerError):
 
 class HostOperationFailed(SystemManagerError):
     pass
+
+
+class StateStoreFailed(SystemManagerError):
+    """The durable operation could not be read or committed."""

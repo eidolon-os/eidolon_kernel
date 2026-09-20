@@ -40,7 +40,7 @@ class SystemctlUnitMutator:
         self.systemctl = systemctl
 
     async def apply(self, verb: str, unit: str) -> None:
-        result = await self.runner.run(self.systemctl, verb, unit)
+        result = await self.runner.run(self.systemctl, "--no-block", verb, "--", unit)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
             raise HostOperationFailed(f"systemd {verb} failed for {unit}: {detail}")
@@ -70,6 +70,7 @@ class SystemdHostSupervisor:
             "--property=ActiveState",
             "--property=SubState",
             "--property=InvocationID",
+            "--property=Job",
             "--no-pager",
         )
         if result.returncode != 0:
@@ -82,10 +83,16 @@ class SystemdHostSupervisor:
         )
         active = values.get("ActiveState", "unknown")
         sub = values.get("SubState", "unknown")
+        if active not in {"active", "inactive", "failed", "activating", "deactivating",
+                          "reloading", "refreshing", "maintenance"} or sub == "unknown":
+            raise HostOperationFailed(f"systemd returned unrecognized state for {target}")
         return HostServiceState(
             active=active == "active",
             state=f"{active}/{sub}",
             instance_id=values.get("InvocationID") or None,
+            transitioning=(active in {"activating", "deactivating", "reloading", "refreshing", "maintenance"}
+                           or sub == "auto-restart"
+                           or (values.get("Job") or "0").split()[0] not in {"0", ""}),
         )
 
     async def start(self, target: str) -> None:

@@ -6,9 +6,10 @@ from datetime import datetime
 from typing import Protocol
 
 from eidolon_system.domain.model import (
-    HostVitals,
     DesiredServiceState,
     HostServiceState,
+    HostVitals,
+    RuntimeIntent,
     ServiceDefinition,
     ServiceEndpoint,
     ServiceStatus,
@@ -22,6 +23,11 @@ class Clock(Protocol):
 
 
 class HostServiceSupervisor(Protocol):
+    """Mutations submit work; only inspect establishes execution outcomes.
+
+    Adapters must report queued/running transitions even if the old instance is
+    still active. A timeout leaves the outcome unknown, not undone.
+    """
     @property
     def driver_name(self) -> str: ...
 
@@ -95,7 +101,16 @@ class SystemStateStore(Protocol):
         request_id: str,
         fingerprint: str,
         now: datetime,
+        intent: RuntimeIntent | None = None,
     ) -> StoredMutation: ...
+
+    def pending_intent(self, service_id: str) -> RuntimeIntent | None: ...
+
+    def put_intent(self, intent: RuntimeIntent, *, now: datetime) -> None: ...
+
+    def update_intent(self, intent: RuntimeIntent) -> None: ...
+
+    def finish_intent(self, intent: RuntimeIntent) -> None: ...
 
     def list_audit(
         self, *, after_position: int, limit: int

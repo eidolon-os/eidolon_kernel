@@ -8,7 +8,8 @@ import json
 import logging
 import time
 
-from eidolon_system.domain.errors import Conflict, HostOperationFailed, NotFound
+from eidolon_system.application.runtime_coordinator import RuntimeCoordinator
+from eidolon_system.domain.errors import Conflict, HostOperationFailed, NotFound, StateStoreFailed
 from eidolon_system.domain.model import (
     ServiceCatalog,
     ServiceDefinition,
@@ -60,12 +61,8 @@ class ServiceManager:
         self.readiness = readiness
         self.clock = clock
         self.network = network
-        self.monotonic = monotonic
         self._network_snapshot: str | None = None
-        self._network_retry_after: dict[str, float] = {}
-        # A timed-out host call may still replace the process. Retain the input
-        # and old instance until observation establishes the outcome.
-        self._network_refresh_attempts: dict[str, tuple[str, str | None]] = {}
+        self.runtime = RuntimeCoordinator(store, host, monotonic=monotonic)
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -114,19 +111,7 @@ class ServiceManager:
                 self.directory.get(dependency).runtime_state == "ready"
                 for dependency in definition.dependencies
             )
-            if not dependencies_ready:
-                self._publish(
-                    ServiceStatus(
-                        service_id=definition.service_id,
-                        required=definition.required,
-                        desired=state,
-                        runtime_state="blocked",
-                        detail="dependency is not ready",
-                        observed_at=self.clock.now(),
-                    )
-                )
-                continue
-            await self._start_or_observe(definition, state)
+            await self._start_or_observe(definition, state, can_start=dependencies_ready)
 
     async def _stop_disabled(self, definition: ServiceDefinition, state) -> None:
         driver = self.host.driver_name
@@ -148,11 +133,31 @@ class ServiceManager:
         target = definition.target_for(driver)
         try:
             observed = await self.host.inspect(target)
-            if observed.active:
-                await self.host.stop(target)
-            runtime_state = "inactive"
-            detail = None
-        except HostOperationFailed as exc:
+            observed, pending = await self.runtime.advance(
+                service_id=definition.service_id,
+                target=target,
+                enabled=False,
+                observed=observed,
+                network_input=self._network_snapshot,
+                can_start=False,
+                network=self.network,
+            )
+            if not pending and observed.active:
+                intent = self.runtime.prepare(definition.service_id, "stop", observed, None)
+                self.runtime.enqueue(intent, now=self.clock.now())
+                self._transition(definition, state, "stopping")
+                observed, pending = await self.runtime.advance(
+                    service_id=definition.service_id,
+                    target=target,
+                    enabled=False,
+                    observed=observed,
+                    network_input=self._network_snapshot,
+                    can_start=False,
+                    network=self.network,
+                )
+            runtime_state = "degraded" if pending or observed.active else "inactive"
+            detail = "waiting for host stop" if runtime_state != "inactive" else None
+        except (HostOperationFailed, OSError, StateStoreFailed) as exc:
             runtime_state = "failed"
             detail = str(exc)
         self._publish(
@@ -199,128 +204,126 @@ class ServiceManager:
             f" ({status.detail})" if status.detail else "",
         )
 
-    async def _start_or_observe(self, definition: ServiceDefinition, state) -> None:
+    def _transition(self, definition, state, detail, runtime_state="starting") -> None:
+        self._publish(
+            ServiceStatus(
+                service_id=definition.service_id,
+                required=definition.required,
+                desired=state,
+                runtime_state=runtime_state,
+                detail=detail,
+                observed_at=self.clock.now(),
+            )
+        )
+
+    async def _start_or_observe(
+        self, definition: ServiceDefinition, state, *, can_start: bool = True
+    ) -> None:
         driver = self.host.driver_name
         if not definition.manages(driver):
-            await self._observe_external(definition, state)
+            if can_start:
+                await self._observe_external(definition, state)
+            else:
+                self._transition(definition, state, "dependency is not ready", "blocked")
             return
         target = definition.target_for(driver)
         try:
             observed = await self.host.inspect(target)
             fingerprint = self._network_snapshot
             network_bound = definition.restart_on_network_change
-            if network_bound and (self.network is None or fingerprint is None):
-                self._network_refresh_attempts.pop(definition.service_id, None)
-                self._publish(
-                    ServiceStatus(
-                        service_id=definition.service_id,
-                        required=definition.required,
-                        desired=state,
-                        runtime_state="degraded",
-                        detail="local network unavailable or settling",
-                        observed_at=self.clock.now(),
-                    )
+            network_available = not network_bound or (
+                self.network is not None and fingerprint is not None
+            )
+            # Observe completion even when dependencies/network became unavailable.
+            observed, pending = await self.runtime.advance(
+                service_id=definition.service_id,
+                target=target,
+                enabled=True,
+                observed=observed,
+                network_input=fingerprint if network_bound else None,
+                can_start=can_start and network_available,
+                network=self.network,
+            )
+            if not can_start:
+                self._transition(definition, state, "dependency is not ready", "blocked")
+                return
+            if not network_available:
+                self._transition(
+                    definition, state, "local network unavailable or settling", "degraded"
+                )
+                return
+            if pending:
+                self._transition(definition, state, "waiting for host operation")
+                return
+            if network_bound and await self.network.snapshot() != fingerprint:
+                self._transition(
+                    definition, state, "local network changed while observing", "degraded"
                 )
                 return
             applied_input = json.dumps([fingerprint, observed.instance_id])
             if network_bound and observed.active and observed.instance_id is None:
                 raise HostOperationFailed("cannot observe process instance for network refresh")
-            attempt = self._network_refresh_attempts.get(definition.service_id)
-            if attempt is not None and attempt[0] != fingerprint:
-                # A replacement from another network cannot acknowledge this one.
-                self._network_refresh_attempts.pop(definition.service_id, None)
-                attempt = None
-            if (network_bound and attempt is not None and observed.active
-                    and observed.instance_id != attempt[1]):
-                # systemd owns the job, not the caller's timeout. Observe its
-                # completed replacement before deciding to submit another job.
-                if await self.network.snapshot() == fingerprint:
-                    self.network.record(definition.service_id, applied_input)
-                    self._network_refresh_attempts.pop(definition.service_id, None)
-                    self._network_retry_after.pop(definition.service_id, None)
-                else:
-                    self._network_refresh_attempts.pop(definition.service_id, None)
-                    self._publish(ServiceStatus(
-                        service_id=definition.service_id, required=definition.required,
-                        desired=state, runtime_state="degraded",
-                        detail="local network changed while observing restart",
-                        observed_at=self.clock.now(),
-                    ))
-                    return
             stale = network_bound and self.network.applied(definition.service_id) != applied_input
-            if stale and self.monotonic() < self._network_retry_after.get(definition.service_id, 0):
-                self._publish(
-                    ServiceStatus(
-                        service_id=definition.service_id,
-                        required=definition.required,
-                        desired=state,
-                        runtime_state="degraded",
-                        detail="waiting to retry network refresh",
-                        observed_at=self.clock.now(),
-                    )
+            if not observed.active or stale:
+                intent = self.runtime.prepare(
+                    definition.service_id,
+                    "restart" if observed.active else "start",
+                    observed,
+                    fingerprint if network_bound else None,
+                )
+                self.runtime.enqueue(intent, now=self.clock.now())
+                self._transition(definition, state, "waiting for host operation")
+                observed, pending = await self.runtime.advance(
+                    service_id=definition.service_id,
+                    target=target,
+                    enabled=True,
+                    observed=observed,
+                    network_input=fingerprint if network_bound else None,
+                    can_start=True,
+                    network=self.network,
+                )
+            if pending or observed.transitioning or not observed.active:
+                self._transition(definition, state, "waiting for host operation")
+                return
+            if network_bound and (
+                await self.network.snapshot() != fingerprint
+                or self.network.applied(definition.service_id)
+                != json.dumps([fingerprint, observed.instance_id])
+            ):
+                self._transition(
+                    definition, state, "local network changed while starting", "degraded"
                 )
                 return
-            if not observed.active or stale:
-                if network_bound:
-                    self._network_retry_after[definition.service_id] = self.monotonic() + 30
-                    self._network_refresh_attempts[definition.service_id] = (
-                        fingerprint, observed.instance_id
-                    )
-                if observed.active:
-                    _log.info(
-                        "service %s: refreshing changed or unobserved network input",
-                        definition.service_id,
-                    )
-                    await self.host.restart(target)
-                else:
-                    await self.host.start(target)
-                observed = await self.host.inspect(target)
-                if observed.active and network_bound:
-                    # Re-read after the operation: a move during start must not
-                    # be acknowledged as if that process captured the new LAN.
-                    if await self.network.snapshot() != fingerprint:
-                        self._publish(
-                            ServiceStatus(
-                                service_id=definition.service_id,
-                                required=definition.required,
-                                desired=state,
-                                runtime_state="degraded",
-                                detail="local network changed while starting",
-                                observed_at=self.clock.now(),
-                            )
-                        )
-                        return
-                    if observed.instance_id is None:
-                        raise HostOperationFailed("cannot observe refreshed process instance")
-                    self.network.record(
-                        definition.service_id, json.dumps([fingerprint, observed.instance_id])
-                    )
-                    self._network_retry_after.pop(definition.service_id, None)
-                    self._network_refresh_attempts.pop(definition.service_id, None)
-            if not observed.active:
-                status = ServiceStatus(
-                    service_id=definition.service_id,
-                    required=definition.required,
-                    desired=state,
-                    runtime_state="starting",
-                    detail=observed.detail or observed.state,
-                    observed_at=self.clock.now(),
+            checks = await asyncio.gather(
+                *(self.readiness.check(url) for url in self._health_urls(definition))
+            )
+            ready = all(checks)
+            # Health belongs to the instance we probed, not a replacement or a
+            # queued job that appeared while the probe was in flight.
+            after_probe = await self.host.inspect(target)
+            if (
+                after_probe.transitioning
+                or not after_probe.active
+                or after_probe.instance_id != observed.instance_id
+            ):
+                self._transition(definition, state, "process changed during readiness probe")
+                return
+            if network_bound and await self.network.snapshot() != fingerprint:
+                self._transition(
+                    definition, state, "local network changed during readiness probe", "degraded"
                 )
-            else:
-                health_urls = self._health_urls(definition)
-                checks = await asyncio.gather(*(self.readiness.check(url) for url in health_urls))
-                ready = all(checks)
-                status = ServiceStatus(
-                    service_id=definition.service_id,
-                    required=definition.required,
-                    desired=state,
-                    runtime_state="ready" if ready else "degraded",
-                    detail=None if ready else "readiness probe failed",
-                    observed_at=self.clock.now(),
-                    endpoints=definition.endpoints if ready else (),
-                    network_current=True if network_bound else None,
-                )
-        except (HostOperationFailed, OSError) as exc:
+                return
+            status = ServiceStatus(
+                service_id=definition.service_id,
+                required=definition.required,
+                desired=state,
+                runtime_state="ready" if ready else "degraded",
+                detail=None if ready else "readiness probe failed",
+                observed_at=self.clock.now(),
+                endpoints=definition.endpoints if ready else (),
+                network_current=True if network_bound else None,
+            )
+        except (HostOperationFailed, OSError, StateStoreFailed) as exc:
             status = ServiceStatus(
                 service_id=definition.service_id,
                 required=definition.required,
@@ -433,6 +436,7 @@ class ServiceManager:
                 fingerprint=fingerprint,
                 now=self.clock.now(),
             )
+            self._transition(definition, result.state, "desired state changed")
             await self._reconcile_unlocked()
             return result
 
@@ -454,17 +458,17 @@ class ServiceManager:
                 raise Conflict(f"disabled system service cannot be restarted: {service_id}")
             if not definition.manages(self.host.driver_name):
                 raise Conflict(f"external system service cannot be restarted here: {service_id}")
+            if self.store.pending_intent(service_id) is not None:
+                raise Conflict(f"system service already has a pending operation: {service_id}")
+            observed = await self.host.inspect(definition.target_for(self.host.driver_name))
+            if observed.transitioning:
+                raise Conflict(f"system service is transitioning: {service_id}")
             before = (
                 await self.network.snapshot()
                 if self.network and definition.restart_on_network_change
                 else None
             )
-            await self.host.restart(definition.target_for(self.host.driver_name))
-            if before is not None and await self.network.snapshot() == before:
-                observed = await self.host.inspect(definition.target_for(self.host.driver_name))
-                if observed.active and observed.instance_id is not None:
-                    self.network.record(service_id, json.dumps([before, observed.instance_id]))
-                    self._network_retry_after.pop(service_id, None)
+            intent = self.runtime.prepare(service_id, "restart", observed, before, request_id)
             result = self.store.record_operation(
                 service_id=service_id,
                 operation=operation,
@@ -472,7 +476,10 @@ class ServiceManager:
                 request_id=request_id,
                 fingerprint=fingerprint,
                 now=self.clock.now(),
+                intent=intent,
             )
+            self.runtime.accepted(intent)
+            self._transition(definition, state, "restart requested")
             await self._reconcile_unlocked()
             return result
 

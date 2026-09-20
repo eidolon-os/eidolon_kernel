@@ -217,7 +217,7 @@ def test_an_authorised_request_applies_the_verb_and_says_so(tmp_path: Path) -> N
     # `--` because a unit name is data: it arrives over a socket and must never
     # be able to present itself to systemctl as an option.
     assert argv.read_text(encoding="utf-8").split() == [
-        "restart",
+        "--no-block",        "restart",
         "--",
         "eidolon-kernel.service",
     ]
@@ -259,7 +259,7 @@ def test_every_outcome_is_logged(
     messages = [record.getMessage() for record in caplog.records]
     # The whole reason this replaced a polkit rule: an operator reading the
     # journal can see the decision and its cause.
-    assert any("applied start eidolon-nats.service" in line for line in messages)
+    assert any("accepted start eidolon-nats.service" in line for line in messages)
     assert any(
         "refused start eidolon-nats.service" in line and "caller" in line
         for line in messages
@@ -338,7 +338,7 @@ def test_the_manager_start_verb_crosses_the_socket_and_root_applies_it(
     thread.join(timeout=5)
 
     assert argv.read_text(encoding="utf-8").split() == [
-        "start",
+        "--no-block",        "start",
         "--",
         "eidolon-nats.service",
     ]

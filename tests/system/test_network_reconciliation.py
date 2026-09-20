@@ -346,3 +346,100 @@ async def test_late_restart_completion_for_previous_network_is_not_adopted(setup
     inputs.now += 30
     await manager.reconcile()
     assert json.loads(network.applied("media"))[0] == "lan-c"
+
+
+async def test_network_job_owns_transition_across_daemon_restart_and_another_network_move(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    original_inspect, original_restart = host.inspect, host.restart
+    busy = [False]
+
+    async def inspect(target):
+        return replace(await original_inspect(target), transitioning=busy[0] and target == "media")
+
+    async def restart(target):
+        assert not busy[0]
+        host.calls.append(("restart", target))
+        busy[0] = True
+        raise HostOperationFailed("reply lost")
+
+    host.inspect, host.restart = inspect, restart
+    await manager.reconcile()
+    replacement = factory()
+    await replacement.initialize()
+    inputs.value = "lan-c"
+    for _ in range(8):
+        inputs.now += 30
+        await replacement.reconcile()
+    assert host.calls.count(("restart", "media")) == 1
+    assert json.loads(network.applied("media"))[0] == "lan-a"
+    # The old-network job finishes; one refresh against the new network is
+    # required. The previous completion must not acknowledge the newer input.
+    busy[0] = False
+    host.generation += 1
+    host.restart = original_restart
+    await replacement.reconcile()
+    assert json.loads(network.applied("media"))[0] == "lan-c"
+    assert host.calls.count(("restart", "media")) == 2
+    await replacement.reconcile()
+    assert host.calls.count(("restart", "media")) == 2
+
+
+async def test_retry_captures_latest_stable_network_before_dispatch(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    host.fail = True
+    await manager.reconcile()
+    inputs.value = "lan-c"
+    await manager.reconcile()
+    inputs.now += 30
+    host.fail = False
+    await manager.reconcile()
+    assert json.loads(network.applied("media"))[0] == "lan-c"
+    # Only one successful restart, not one with stale metadata then another.
+    assert host.calls.count(("restart", "media")) == 1
+    await manager.reconcile()
+    assert host.calls.count(("restart", "media")) == 1
+
+
+async def test_network_move_during_health_probe_unpublishes_without_acknowledging_it(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    previous = network.applied("media")
+    async def check(url):
+        inputs.value = "lan-b"
+        return True
+    manager.readiness.check = check
+    await manager.reconcile()
+    assert manager.get_service("media").endpoints == ()
+    assert network.applied("media") == previous
+
+
+async def test_disable_after_completed_restart_does_not_wait_for_network_cache_write(setup, monkeypatch):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    async def lost_reply(target):
+        host.calls.append(("restart", target))
+        raise HostOperationFailed("reply lost")
+    host.restart = lost_reply
+    await manager.reconcile()
+    host.generation += 1  # replacement completed after the lost reply
+    def failed_cache(*args):
+        raise OSError("cache is unwritable")
+    monkeypatch.setattr(network, "record", failed_cache)
+    await manager.set_enabled(service_id="media", enabled=False, expected_revision=1, request_id="off")
+    assert host.calls[-1] == ("stop", "media")
+    assert manager.get_service("media").runtime_state == "inactive"

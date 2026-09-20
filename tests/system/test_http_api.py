@@ -68,7 +68,11 @@ async def test_versioned_http_api_resolves_and_mutates_without_owner_scope(tmp_p
     assert disabled.status_code == 200
     assert disabled.json()["state"]["enabled"] is False
     assert missing.status_code == 404
-    assert audit.json()["next_position"] == 1
+    # Runtime starts/stops now have durable intent and audit, too.
+    assert audit.json()["next_position"] == 4
+    assert [event["operation"] for event in audit.json()["events"]] == [
+        "system.runtime.start", "system.runtime.start", "system.service.disable", "system.runtime.stop",
+    ]
     assert wrong_operation.status_code == 422
     assert forbidden.status_code == 409
     store.close()

@@ -51,6 +51,7 @@ class SupervisordHostSupervisor:
             len(fields) > 1
             and fields[0] in self._names_for(target)
             and state in self._STATUS_VALUES
+            and state != "unknown"
         )
         if not observed:
             detail = result.stderr.strip() or output
@@ -67,6 +68,7 @@ class SupervisordHostSupervisor:
             state=state,
             detail=output or None,
             instance_id=instance_id,
+            transitioning=state in {"starting", "stopping", "backoff"},
         )
 
     @staticmethod

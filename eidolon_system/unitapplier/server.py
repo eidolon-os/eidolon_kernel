@@ -1,7 +1,7 @@
 """The root-side applier: the only place a unit verb runs with privilege.
 
 Socket-activated, serial, and loud. Every request is logged with its outcome —
-applied, refused with the condition that failed, or failed with systemctl's own
+accepted for asynchronous execution, refused with the condition that failed, or failed with systemctl's own
 message — because the failure this replaces was a refusal nothing recorded.
 
 The allowlist is not a list. It is derived, on every start, from the same
@@ -161,7 +161,7 @@ class UnitApplier:
     def _apply(self, request: Request, pid: int) -> Response:
         try:
             result = subprocess.run(
-                [self.systemctl, request.verb, "--", request.unit],
+                [self.systemctl, "--no-block", request.verb, "--", request.unit],
                 capture_output=True,
                 text=True,
                 timeout=self.command_timeout_seconds,
@@ -185,7 +185,7 @@ class UnitApplier:
                 request.verb, request.unit, pid, result.returncode, detail,
             )
             return Response(ok=False, error=detail)
-        _log.info("applied %s %s for pid %d", request.verb, request.unit, pid)
+        _log.info("accepted %s %s for pid %d", request.verb, request.unit, pid)
         return Response(ok=True)
 
     def serve(self, listener: socket.socket) -> None:

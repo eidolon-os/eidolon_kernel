@@ -40,9 +40,10 @@ async def test_systemd_adapter_parses_state_and_never_uses_a_shell() -> None:
             "--property=ActiveState",
             "--property=SubState",
             "--property=InvocationID",
+            "--property=Job",
             "--no-pager",
         ),
-        ("/bin/systemctl", "restart", "eidolon-kernel.service"),
+        ("/bin/systemctl", "--no-block", "restart", "--", "eidolon-kernel.service"),
     ]
 
 
@@ -156,3 +157,37 @@ async def test_supervisord_instance_uses_pid_and_creation_time(monkeypatch, tmp_
     first = await host.inspect("media")
     created[0] = 200.0
     assert first.instance_id != (await host.inspect("media")).instance_id
+
+
+@pytest.mark.parametrize("active,sub,job,transitioning", [
+    ("active", "running", "42", True),
+    ("active", "running", "42 /org/freedesktop/systemd1/job/42", True),
+    ("active", "running", "0", False),
+    ("active", "running", "", False),
+    ("activating", "start", "0", True),
+    ("deactivating", "stop-sigterm", "0", True),
+    ("reloading", "reload", "0", True),
+    ("activating", "auto-restart", "0", True),
+    ("inactive", "dead", "0", False),
+    ("failed", "failed", "0", False),
+])
+async def test_systemd_reports_queued_and_running_jobs(active, sub, job, transitioning):
+    host = SystemdHostSupervisor(runner=FakeRunner([
+        CommandResult(0, f"ActiveState={active}\nSubState={sub}\nJob={job}\n", ""),
+    ]))
+    assert (await host.inspect("media.service")).transitioning == transitioning
+
+
+@pytest.mark.parametrize("state", ["STARTING", "STOPPING", "BACKOFF"])
+async def test_supervisor_owns_transient_states(tmp_path, state):
+    host = SupervisordHostSupervisor(config_path=tmp_path / "supervisor.conf", runner=FakeRunner([
+        CommandResult(3, f"media {state}", ""),
+    ]))
+    assert (await host.inspect("media")).transitioning
+
+
+@pytest.mark.parametrize("output", ["", "ActiveState=unknown\nSubState=unknown\n"])
+async def test_unrecognized_systemd_state_is_not_treated_as_stopped(output):
+    host = SystemdHostSupervisor(runner=FakeRunner([CommandResult(0, output, "")]))
+    with pytest.raises(HostOperationFailed, match="unrecognized state"):
+        await host.inspect("media.service")

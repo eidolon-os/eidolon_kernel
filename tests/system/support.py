@@ -10,15 +10,18 @@ class FakeHostSupervisor:
 
     def __init__(self) -> None:
         self.active: dict[str, bool] = {}
+        self.instances: dict[str, int] = {}
         self.calls: list[tuple[str, str]] = []
 
     async def inspect(self, target: str) -> HostServiceState:
         active = self.active.get(target, False)
-        return HostServiceState(active=active, state="running" if active else "stopped")
+        return HostServiceState(active=active, state="running" if active else "stopped",
+                                instance_id=str(self.instances.get(target, 0)) if active else None)
 
     async def start(self, target: str) -> None:
         self.calls.append(("start", target))
         self.active[target] = True
+        self.instances[target] = self.instances.get(target, 0) + 1
 
     async def stop(self, target: str) -> None:
         self.calls.append(("stop", target))
@@ -27,6 +30,7 @@ class FakeHostSupervisor:
     async def restart(self, target: str) -> None:
         self.calls.append(("restart", target))
         self.active[target] = True
+        self.instances[target] = self.instances.get(target, 0) + 1
 
 
 class FakeReadinessProbe:

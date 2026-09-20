@@ -36,6 +36,8 @@ No Mobile-only route, token claim, companion resolver, enrolment operation or
 Room protocol is added. Host discovery still establishes management access;
 media has its own readiness within the existing service directory.
 
+Operation submission/completion is now governed by [ADR 0019](0019-observed-service-operation-convergence.md).
+
 ## Decision
 
 1. Mac and Linux launchers stop injecting automatically detected `node_ip`.

@@ -308,6 +308,34 @@ class HostServiceState:
     state: str
     detail: str | None = None
     instance_id: str | None = None
+    transitioning: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeIntent:
+    """One durable, unfinished host operation; independent of readiness."""
+
+    service_id: str
+    request_id: str
+    action: str
+    before_instance_id: str | None
+    network_input: str | None
+
+    def __post_init__(self) -> None:
+        if self.action not in {"start", "stop", "restart"}:
+            raise ValueError(f"unsupported runtime action: {self.action}")
+
+    def completed_by(self, observed: HostServiceState) -> bool:
+        if observed.transitioning:
+            return False
+        if self.action == "stop":
+            return not observed.active
+        if not observed.active:
+            return False
+        if self.action == "start":
+            return True
+        return (observed.instance_id is not None
+                and observed.instance_id != self.before_instance_id)
 
 
 @dataclass(frozen=True, slots=True)
