@@ -63,6 +63,9 @@ class ServiceManager:
         self.monotonic = monotonic
         self._network_snapshot: str | None = None
         self._network_retry_after: dict[str, float] = {}
+        # A timed-out host call may still replace the process. Retain the input
+        # and old instance until observation establishes the outcome.
+        self._network_refresh_attempts: dict[str, tuple[str, str | None]] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -207,6 +210,7 @@ class ServiceManager:
             fingerprint = self._network_snapshot
             network_bound = definition.restart_on_network_change
             if network_bound and (self.network is None or fingerprint is None):
+                self._network_refresh_attempts.pop(definition.service_id, None)
                 self._publish(
                     ServiceStatus(
                         service_id=definition.service_id,
@@ -221,6 +225,28 @@ class ServiceManager:
             applied_input = json.dumps([fingerprint, observed.instance_id])
             if network_bound and observed.active and observed.instance_id is None:
                 raise HostOperationFailed("cannot observe process instance for network refresh")
+            attempt = self._network_refresh_attempts.get(definition.service_id)
+            if attempt is not None and attempt[0] != fingerprint:
+                # A replacement from another network cannot acknowledge this one.
+                self._network_refresh_attempts.pop(definition.service_id, None)
+                attempt = None
+            if (network_bound and attempt is not None and observed.active
+                    and observed.instance_id != attempt[1]):
+                # systemd owns the job, not the caller's timeout. Observe its
+                # completed replacement before deciding to submit another job.
+                if await self.network.snapshot() == fingerprint:
+                    self.network.record(definition.service_id, applied_input)
+                    self._network_refresh_attempts.pop(definition.service_id, None)
+                    self._network_retry_after.pop(definition.service_id, None)
+                else:
+                    self._network_refresh_attempts.pop(definition.service_id, None)
+                    self._publish(ServiceStatus(
+                        service_id=definition.service_id, required=definition.required,
+                        desired=state, runtime_state="degraded",
+                        detail="local network changed while observing restart",
+                        observed_at=self.clock.now(),
+                    ))
+                    return
             stale = network_bound and self.network.applied(definition.service_id) != applied_input
             if stale and self.monotonic() < self._network_retry_after.get(definition.service_id, 0):
                 self._publish(
@@ -237,6 +263,9 @@ class ServiceManager:
             if not observed.active or stale:
                 if network_bound:
                     self._network_retry_after[definition.service_id] = self.monotonic() + 30
+                    self._network_refresh_attempts[definition.service_id] = (
+                        fingerprint, observed.instance_id
+                    )
                 if observed.active:
                     _log.info(
                         "service %s: refreshing changed or unobserved network input",
@@ -267,6 +296,7 @@ class ServiceManager:
                         definition.service_id, json.dumps([fingerprint, observed.instance_id])
                     )
                     self._network_retry_after.pop(definition.service_id, None)
+                    self._network_refresh_attempts.pop(definition.service_id, None)
             if not observed.active:
                 status = ServiceStatus(
                     service_id=definition.service_id,

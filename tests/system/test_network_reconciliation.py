@@ -294,3 +294,55 @@ async def test_network_fact_is_explicit_and_validates_in_service_contract(setup)
     inputs.value = None
     await manager.reconcile()
     assert manager.get_service("media").network_current is None
+
+
+async def test_timed_out_restart_observes_late_completion_without_restarting_again(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    previous = network.applied("media")
+
+    async def pending_restart(target):
+        host.calls.append(("restart", target))
+        raise HostOperationFailed("applier response timed out; systemd job continues")
+
+    host.restart = pending_restart
+    await manager.reconcile()
+    assert network.applied("media") == previous
+    assert manager.get_service("media").runtime_state == "failed"
+    # Completion happens after the caller's timeout, but before the retry budget.
+    host.generation += 1
+    inputs.now += 5
+    await manager.reconcile()
+    assert manager.get_service("media").runtime_state == "ready"
+    assert json.loads(network.applied("media")) == ["lan-b", str(host.generation)]
+    for _ in range(12):
+        inputs.now += 5
+        await manager.reconcile()
+    assert host.calls.count(("restart", "media")) == 1
+
+
+async def test_late_restart_completion_for_previous_network_is_not_adopted(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    previous = network.applied("media")
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    host.fail = True
+    await manager.reconcile()
+    host.generation += 1
+    inputs.value = "lan-c"
+    await manager.reconcile()
+    inputs.now += 10
+    await manager.reconcile()
+    assert network.applied("media") == previous
+    assert manager.get_service("media").endpoints == ()
+    host.fail = False
+    inputs.now += 30
+    await manager.reconcile()
+    assert json.loads(network.applied("media"))[0] == "lan-c"

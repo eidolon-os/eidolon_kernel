@@ -130,7 +130,9 @@ services:
     description: Device onboarding, registry and policy authority
     required: true
     enabled_by_default: true
-    dependencies: [livekit, channel-provider]
+    # Claim/registry reads do not need media. Channel allocation checks its own
+    # provider at the operation boundary; a media outage must not hide identity.
+    dependencies: []
     host_targets:
       systemd: eidolon-hub.service
       supervisord: hub:hub-api

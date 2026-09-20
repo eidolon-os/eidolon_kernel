@@ -245,3 +245,27 @@ async def test_disabling_an_external_service_reports_the_gap_rather_than_a_stop(
     assert status.runtime_state == "degraded"
     assert "disable it where it actually runs" in status.detail
     store.close()
+
+
+async def test_product_device_authority_remains_readable_during_media_outage(tmp_path):
+    from pathlib import Path
+
+    from eidolon_system.adapters.manifest.yaml_file import YamlServiceManifest
+
+    catalog = YamlServiceManifest(Path("config/system-services.yaml")).load()
+    host = FakeHostSupervisor()
+    host.driver_name = "systemd"
+    store = SqliteSystemStateStore(tmp_path / "system.sqlite3")
+    manager = ServiceManager(catalog=catalog, store=store,
+        directory=InMemoryServiceDirectory(), host=host,
+        readiness=FakeReadinessProbe(), clock=FixedClock())
+    try:
+        await manager.initialize()
+        await manager.reconcile()
+        # No network observation: LiveKit must fail closed, while Hub reads work.
+        assert manager.get_service("livekit").runtime_state == "degraded"
+        assert manager.get_service("channel-provider").runtime_state == "blocked"
+        assert manager.get_service("hub").runtime_state == "ready"
+        assert manager.resolve("hub", "device-authority.http").endpoint_id == "device-authority.http"
+    finally:
+        store.close()
