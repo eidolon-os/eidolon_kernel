@@ -674,6 +674,9 @@ def _dependency_input_key(
         "platform": _PYTHON_PLATFORM,
         "build_requirements": list(_BUILD_REQUIREMENTS),
         "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
+        # A pre-partition artifact may contain wheels from a different model
+        # selection even with the same locks. Never reuse it for this release.
+        "cache_scope": "model-capabilities-v1",
         "capabilities": sorted(capabilities),
     }
     digest.update(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode())
@@ -736,7 +739,11 @@ def _build_dependency_cache(
         raise BundleError(f"dependency cache requires uv {_UV_VERSION}, got {version}")
     projects = workspace / ".python-projects"
     environments = workspace / ".python-environments"
-    kept = _kept_dependency_cache()
+    kept_root = _kept_dependency_cache()
+    kept = (
+        _profile_dependency_cache(kept_root, capabilities)
+        if kept_root is not None else None
+    )
     notes: tuple[str, ...] = ()
     if kept is not None:
         notes = _bind_kept_cache_to_its_location(kept)
@@ -822,11 +829,21 @@ def _build_dependency_cache(
 #:
 #: This cannot change what a release installs. That is fixed by each source's
 #: lockfile, which pins exact versions and hashes uv verifies on use; a cache
-#: only decides whether those bytes come off local disk or the network. What it
-#: does change is that the packaged cache may carry entries from earlier builds
-#: — inert weight, since the target resolves against the same lockfiles. Leave
+#: only decides whether those bytes come off local disk or the network. Each
+#: selected model capability set gets its own cache below this root, so an ASR
+#: build cannot leave ASR wheels in a later Laya-only release archive. Leave
 #: the variable unset to build from an empty disk and prove that.
 KEPT_DEPENDENCY_CACHE_ENV = "EIDOLON_RELEASE_UV_CACHE"
+
+_MODEL_CACHE_CAPABILITIES = frozenset({"local_asr", "local_tts", "local_llm", "local_laya"})
+
+
+def _profile_dependency_cache(root: Path, capabilities: frozenset[str]) -> Path:
+    """Keep different model selections from contaminating each other's cache."""
+
+    selected = sorted(capabilities & _MODEL_CACHE_CAPABILITIES)
+    name = "-".join(selected) if selected else "baseline"
+    return root / "profiles" / name
 
 
 def _kept_dependency_cache() -> Path | None:

@@ -810,7 +810,10 @@ def _prefetch_harness(tmp_path: Path, monkeypatch):
     return source_dir
 
 
-def _prefetch(tmp_path: Path, source_dir: Path, name: str) -> Path:
+def _prefetch(
+    tmp_path: Path, source_dir: Path, name: str,
+    capabilities: frozenset[str] = frozenset(),
+) -> Path:
     workspace = tmp_path / name
     workspace.mkdir()
     destination = tmp_path / f"{name}.tar.gz"
@@ -820,6 +823,7 @@ def _prefetch(tmp_path: Path, source_dir: Path, name: str) -> Path:
         destination=destination,
         workspace=workspace,
         project_ids=bundle.bundle_project_ids(frozenset()),
+        capabilities=capabilities,
     )
     return destination
 
@@ -837,13 +841,14 @@ def test_a_build_starts_from_what_this_machine_already_fetched(tmp_path, monkeyp
 
     _prefetch(tmp_path, source_dir, "first")
 
-    assert (kept / "archive-v0" / "fetched").is_file()
+    baseline = bundle._profile_dependency_cache(kept, frozenset())
+    assert (baseline / "archive-v0" / "fetched").is_file()
 
     # The second build finds it still there rather than reaching for the index.
-    (kept / "archive-v0" / "from-the-first-build").write_text("wheel", encoding="utf-8")
+    (baseline / "archive-v0" / "from-the-first-build").write_text("wheel", encoding="utf-8")
     _prefetch(tmp_path, source_dir, "second")
 
-    assert (kept / "archive-v0" / "from-the-first-build").is_file()
+    assert (baseline / "archive-v0" / "from-the-first-build").is_file()
 
 
 def test_the_kept_cache_stays_where_uv_built_it(tmp_path, monkeypatch) -> None:
@@ -864,7 +869,25 @@ def test_the_kept_cache_stays_where_uv_built_it(tmp_path, monkeypatch) -> None:
     # The build workspace is disposable; the cache must not live inside it.
     assert kept.is_dir()
     assert kept not in workspace_before
+    assert bundle._profile_dependency_cache(kept, frozenset()).is_dir()
     assert not (tmp_path / "first" / ".python-dependency-cache").exists()
+
+
+def test_a_laya_only_bundle_does_not_ship_cached_asr_wheels(tmp_path, monkeypatch) -> None:
+    source_dir = _prefetch_harness(tmp_path, monkeypatch)
+    kept = tmp_path / "uv-cache"
+    monkeypatch.setenv(bundle.KEPT_DEPENDENCY_CACHE_ENV, str(kept))
+    asr = bundle._profile_dependency_cache(kept, frozenset({"local_asr"}))
+    (asr / "archive-v0").mkdir(parents=True)
+    (asr / "archive-v0" / "asr-only-wheel").write_text("funasr", encoding="utf-8")
+
+    laya_archive = _prefetch(
+        tmp_path, source_dir, "laya-only", frozenset({"rknpu2", "local_laya"})
+    )
+    with tarfile.open(laya_archive, "r:gz") as archive:
+        names = set(archive.getnames())
+    assert not any("asr-only-wheel" in name for name in names)
+    assert (asr / "archive-v0" / "asr-only-wheel").is_file()
 
 
 def test_a_kept_cache_cannot_change_what_a_release_installs(tmp_path, monkeypatch) -> None:
