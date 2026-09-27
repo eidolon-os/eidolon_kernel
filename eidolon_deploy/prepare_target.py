@@ -66,6 +66,7 @@ _REVISION_FLAGS = {
     "eidolon_sdk": "--sdk-revision",
     "eidolon_models": "--models-revision",
 }
+_MODEL_SOURCE_DIRECTORIES = {"asr": "local_asr", "tts": "local_tts"}
 
 
 def _source_ids(capabilities: Sequence[str]) -> tuple[str, ...]:
@@ -202,8 +203,11 @@ def prepare_target_release(
                 ]
                 if source_id == "eidolon_data":
                     command.extend(("--extra", "api"))
-                if source_id == "eidolon_models" and "local_laya" in document.get("capabilities", []):
-                    command.extend(("--extra", "laya"))
+                if source_id == "eidolon_models":
+                    if "local_asr" in document.get("capabilities", []):
+                        command.extend(("--extra", "asr"))
+                    if "local_laya" in document.get("capabilities", []):
+                        command.extend(("--extra", "laya"))
                 _run("native environment preparation", *command)
 
             sealer = release_root / "eidolon_kernel/.venv/bin/eidolon-release"
@@ -391,6 +395,23 @@ def _validate_bundle(root: Path) -> dict:
             or _file_sha256(archive_path) != value["sha256"]
         ):
             raise TargetPreparationError(f"bundle source archive checksum mismatch: {source_id}")
+        if source_id == "eidolon_models":
+            try:
+                with tarfile.open(archive_path, "r:") as stream:
+                    names = {
+                        PurePosixPath(member.name).as_posix().removeprefix("./")
+                        for member in stream.getmembers()
+                    }
+            except (OSError, tarfile.TarError) as exc:
+                raise TargetPreparationError("model source archive is unreadable") from exc
+            for directory, capability in _MODEL_SOURCE_DIRECTORIES.items():
+                present = any(
+                    name == directory or name.startswith(f"{directory}/") for name in names
+                )
+                if present != (capability in capabilities):
+                    raise TargetPreparationError(
+                        f"model source archive selection mismatch: {directory} requires {capability}"
+                    )
     preparer = document.get("preparer")
     if (
         not isinstance(preparer, dict)

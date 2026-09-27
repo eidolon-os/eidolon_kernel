@@ -53,6 +53,15 @@ _REVISION_BY_SOURCE = {
     "eidolon_models": "models",
 }
 
+# These directories contain the Git/LFS-backed model payloads. The service
+# code remains in the Python project, but a Host never receives the weights
+# for a model it did not select. LLM and Laya weights are separate artifacts
+# already selected by their own capabilities.
+_MODEL_SOURCE_DIRECTORIES = {
+    "asr": "local_asr",
+    "tts": "local_tts",
+}
+
 
 #: Carried so components can import it, and not a project of its own: it has
 #: no lock and gets no environment built for it.
@@ -233,6 +242,15 @@ def build_source_bundle(
                 raise BundleError(f"revision is not the exact commit object: {source_id}")
             archive_relative = f"sources/{source_id}.tar"
             archive = temporary / archive_relative
+            model_paths = (
+                ("--", ".", *(
+                    f":(exclude){directory}"
+                    for directory, capability in _MODEL_SOURCE_DIRECTORIES.items()
+                    if capability not in declared
+                ))
+                if source_id == "eidolon_models"
+                else ()
+            )
             _git_run(
                 git,
                 "-C",
@@ -241,6 +259,7 @@ def build_source_bundle(
                 "--format=tar",
                 f"--output={archive}",
                 revision,
+                *model_paths,
             )
             if source_id == "eidolon_channel":
                 for record in _externalize_channel_archive(
@@ -777,8 +796,11 @@ def _build_dependency_cache(
         ]
         if source_id == "eidolon_data":
             command.extend(("--extra", "api"))
-        if source_id == "eidolon_models" and "local_laya" in capabilities:
-            command.extend(("--extra", "laya"))
+        if source_id == "eidolon_models":
+            if "local_asr" in capabilities:
+                command.extend(("--extra", "asr"))
+            if "local_laya" in capabilities:
+                command.extend(("--extra", "laya"))
         _dependency_run(tuple(command), env=environment)
         shutil.rmtree(project_environment)
         shutil.rmtree(project)
@@ -1036,6 +1058,15 @@ def _validate_source_archive(
     missing = sorted(required - names)
     if missing:
         raise BundleError(f"source archive is incomplete: {source_id}: {', '.join(missing)}")
+    if source_id == "eidolon_models":
+        for directory, capability in _MODEL_SOURCE_DIRECTORIES.items():
+            present = any(
+                name == directory or name.startswith(f"{directory}/") for name in names
+            )
+            if present != (capability in capabilities):
+                raise BundleError(
+                    f"model source archive selection mismatch: {directory} requires {capability}"
+                )
     if lfs_pointers:
         raise BundleError("Channel model artifact is missing or is an unhydrated LFS pointer")
     if source_id == "eidolon_channel" and channel_artifacts is not None:

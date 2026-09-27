@@ -93,6 +93,11 @@ def _repositories(
                 model = repository / relative
                 model.parent.mkdir(parents=True, exist_ok=True)
                 model.write_bytes(b"model" * 1024)
+        if source_id == "eidolon_models":
+            for directory in ("asr", "tts"):
+                model = repository / directory / "weights.bin"
+                model.parent.mkdir(parents=True, exist_ok=True)
+                model.write_bytes(f"{directory}-weights".encode())
         _run("git", "-C", str(repository), "add", ".")
         _run("git", "-C", str(repository), "commit", "-qm", "fixture")
         revisions[revision_name] = _run("git", "-C", str(repository), "rev-parse", "HEAD")
@@ -1061,6 +1066,129 @@ def test_a_bundle_for_a_declaring_host_carries_and_prepares_the_extra_source(
     assert prepare_target._validate_bundle(output)["capabilities"] == ["local_asr"]
     assert "eidolon_models" in prepare_target._project_ids(["local_asr"])
     assert "eidolon_sdk" not in prepare_target._project_ids(["local_asr"])
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "expected"),
+    [
+        (frozenset({"local_laya"}), frozenset()),
+        (frozenset({"local_asr"}), frozenset({"asr"})),
+        (frozenset({"local_tts"}), frozenset({"tts"})),
+        (frozenset({"local_asr", "local_tts"}), frozenset({"asr", "tts"})),
+    ],
+)
+def test_models_source_carries_only_selected_git_model_payloads(
+    tmp_path: Path, capabilities: frozenset[str], expected: frozenset[str]
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories", capabilities)
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="models-selection",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+        capabilities=capabilities,
+    )
+
+    with tarfile.open(output / "sources/eidolon_models.tar", "r:") as archive:
+        names = archive.getnames()
+    assert {
+        directory
+        for directory in ("asr", "tts")
+        if any(name.startswith(f"{directory}/") for name in names)
+    } == expected
+    validate_source_bundle(output)
+    prepare_target._validate_bundle(output)
+
+
+def test_model_selection_is_checked_again_on_the_target(tmp_path: Path) -> None:
+    capabilities = frozenset({"local_laya"})
+    repositories, revisions = _repositories(tmp_path / "repositories", capabilities)
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="models-selection-tamper",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+        capabilities=capabilities,
+    )
+    archive_path = output / "sources/eidolon_models.tar"
+    with tarfile.open(archive_path, "a:") as archive:
+        payload = b"unselected weights"
+        entry = tarfile.TarInfo("asr/weights.bin")
+        entry.size = len(payload)
+        archive.addfile(entry, io.BytesIO(payload))
+    manifest = output / "bundle.json"
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["sources"][-1]["sha256"] = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(BundleError, match="selection mismatch"):
+        validate_source_bundle(output)
+    with pytest.raises(TargetPreparationError, match="selection mismatch"):
+        prepare_target._validate_bundle(output)
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "extras"),
+    [
+        (frozenset({"local_laya"}), ("laya",)),
+        (frozenset({"local_asr"}), ("asr",)),
+        (frozenset({"local_asr", "local_laya"}), ("asr", "laya")),
+    ],
+)
+def test_target_installs_only_selected_model_runtime_extras(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capabilities: frozenset[str],
+    extras: tuple[str, ...],
+) -> None:
+    repositories, revisions = _repositories(tmp_path / "repositories", capabilities)
+    output = tmp_path / "bundle"
+    build_source_bundle(
+        release_id="models-extras",
+        repositories=repositories,
+        revisions=revisions,
+        output=output,
+        capabilities=capabilities,
+    )
+    root = tmp_path / "host"
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\n", encoding="utf-8")
+    uv.chmod(0o755)
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(operation: str, *command: str) -> None:
+        if operation == "native environment preparation" and command[
+            command.index("--project") + 1
+        ].endswith("eidolon_models"):
+            calls.append(command)
+        if operation == "native environment preparation" and command[-1].endswith(
+            "eidolon_kernel"
+        ):
+            sealer = root / "opt/eidolon/releases/models-extras/eidolon_kernel/.venv/bin/eidolon-release"
+            sealer.parent.mkdir(parents=True, exist_ok=True)
+            sealer.write_text("#!/bin/sh\n", encoding="utf-8")
+            sealer.chmod(0o755)
+        if operation == "release sealing":
+            release = root / "opt/eidolon/releases/models-extras"
+            (release / "release.json").write_text("{}\n", encoding="utf-8")
+            (release / "release.json.sha256").write_text("test\n", encoding="utf-8")
+
+    monkeypatch.setattr(prepare_target, "_run", fake_run)
+    prepare_target_release(
+        output,
+        uv=uv,
+        host_root=root,
+        system="linux",
+        machine="aarch64",
+        require_root=False,
+    )
+
+    assert len(calls) == 1
+    assert tuple(
+        calls[0][index + 1] for index, value in enumerate(calls[0]) if value == "--extra"
+    ) == extras
 
 
 def test_the_preparer_refuses_a_capability_it_does_not_know(tmp_path: Path) -> None:
