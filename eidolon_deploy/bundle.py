@@ -39,6 +39,7 @@ _CAPABILITY_SOURCE_IDS = {
     "local_asr": ("eidolon_models",),
     "local_tts": ("eidolon_models",),
     "local_llm": ("eidolon_models",),
+    "local_laya": ("eidolon_models",),
 }
 _REVISION_BY_SOURCE = {
     "eidolon_kernel": "kernel",
@@ -275,6 +276,7 @@ def build_source_bundle(
             bundle_artifact_root=bundle_artifact_root,
             persistent_artifact_root=persistent_artifact_root,
             project_ids=bundle_project_ids(declared),
+            capabilities=declared,
         )
         artifact_records.append(dependency_object)
         dependency_record = {
@@ -592,8 +594,9 @@ def _dependency_artifact(
     bundle_artifact_root: Path,
     persistent_artifact_root: Path | None,
     project_ids: tuple[str, ...],
+    capabilities: frozenset[str] = frozenset(),
 ) -> tuple[tuple[str, ...], dict[str, object]]:
-    key = _dependency_input_key(source_dir, project_ids)
+    key = _dependency_input_key(source_dir, project_ids, capabilities)
     if persistent_artifact_root is not None:
         record_path = persistent_artifact_root / _DEPENDENCY_KEY_DIRECTORY / f"{key}.json"
         cached = _read_dependency_key(record_path, persistent_artifact_root, key)
@@ -615,6 +618,7 @@ def _dependency_artifact(
         destination=destination,
         workspace=workspace,
         project_ids=project_ids,
+        capabilities=capabilities,
     )
     record = _artifact_record(
         artifact_id="python-dependencies",
@@ -640,7 +644,9 @@ def _dependency_artifact(
     return notes, record
 
 
-def _dependency_input_key(source_dir: Path, project_ids: tuple[str, ...]) -> str:
+def _dependency_input_key(
+    source_dir: Path, project_ids: tuple[str, ...], capabilities: frozenset[str] = frozenset()
+) -> str:
     digest = hashlib.sha256()
     inputs = {
         "schema_version": 1,
@@ -649,6 +655,7 @@ def _dependency_input_key(source_dir: Path, project_ids: tuple[str, ...]) -> str
         "platform": _PYTHON_PLATFORM,
         "build_requirements": list(_BUILD_REQUIREMENTS),
         "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
+        "capabilities": sorted(capabilities),
     }
     digest.update(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode())
     for source_id in project_ids:
@@ -703,6 +710,7 @@ def _build_dependency_cache(
     destination: Path,
     workspace: Path,
     project_ids: tuple[str, ...],
+    capabilities: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
     version = _dependency_run((uv, "--version")).stdout.strip()
     if version != f"uv {_UV_VERSION}" and not version.startswith(f"uv {_UV_VERSION} "):
@@ -769,6 +777,8 @@ def _build_dependency_cache(
         ]
         if source_id == "eidolon_data":
             command.extend(("--extra", "api"))
+        if source_id == "eidolon_models" and "local_laya" in capabilities:
+            command.extend(("--extra", "laya"))
         _dependency_run(tuple(command), env=environment)
         shutil.rmtree(project_environment)
         shutil.rmtree(project)

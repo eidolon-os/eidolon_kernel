@@ -39,6 +39,7 @@ CAPABILITY_COMPONENTS: dict[str, tuple[str, ...]] = {
     "local_asr": ("eidolon_models",),
     "local_tts": ("eidolon_models",),
     "local_llm": ("eidolon_models",),
+    "local_laya": ("eidolon_models",),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (
@@ -229,6 +230,11 @@ V2_AFFECTED_UNITS = (
 #: one reviewed list: a Host that declares nothing gets exactly what every Host
 #: got before any of this existed.
 CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
+    "local_laya": {
+        Path("/etc/systemd/system/eidolon-laya.service"): (
+            "eidolon_models", Path("deploy/systemd/eidolon-laya.service"),
+        ),
+    },
     "local_asr": {
         Path("/etc/systemd/system/eidolon-asr.service"): (
             "eidolon_models",
@@ -270,12 +276,16 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
 }
 
 CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
+    "local_laya": ("eidolon-laya.service",),
     "local_asr": ("eidolon-asr.service",),
     "local_llm": ("eidolon-llm.service",),
     "local_tts": ("eidolon-tts.service",),
 }
 
 CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
+    "local_laya": {
+        "laya": ("http", "http://127.0.0.1:8771/readyz", None, "http_2xx"),
+    },
     "local_asr": {
         # The service's own readiness route, not a bare socket check. A port
         # that is merely bound says a process started; `/readyz` answers only

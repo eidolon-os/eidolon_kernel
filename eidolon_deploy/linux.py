@@ -72,6 +72,7 @@ _READINESS_UNITS = {
     "asr": "eidolon-asr.service",
     "llm": "eidolon-llm.service",
     "tts": "eidolon-tts.service",
+    "laya": "eidolon-laya.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",

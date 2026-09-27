@@ -65,7 +65,7 @@
     "system_assets": {
       "type": "array",
       "minItems": 24,
-      "maxItems": 29,
+      "maxItems": 30,
       "items": {
         "$ref": "#/$defs/systemAsset"
       }
@@ -81,7 +81,7 @@
     "affected_units": {
       "type": "array",
       "minItems": 18,
-      "maxItems": 21,
+      "maxItems": 22,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -104,6 +104,7 @@
           "eidolon-channel-provider.service",
           "eidolon-channel.service",
           "eidolon-asr.service",
+          "eidolon-laya.service",
           "eidolon-llm.service",
           "eidolon-tts.service"
         ]
@@ -112,7 +113,7 @@
     "readiness_checks": {
       "type": "array",
       "minItems": 15,
-      "maxItems": 18,
+      "maxItems": 19,
       "items": {
         "$ref": "#/$defs/readinessCheck"
       }
@@ -134,11 +135,12 @@
           "local_asr",
           "local_llm",
           "local_tts",
+          "local_laya",
           "rknpu2"
         ]
       },
       "uniqueItems": true,
-      "maxItems": 4
+      "maxItems": 5
     }
   },
   "$defs": {

@@ -243,6 +243,23 @@ services:
         address: 127.0.0.1:8770
         contract: eidolon.models.tts.v1
         health_url: http://127.0.0.1:8770/readyz
+  - service_id: laya
+    description: Local decision suggestions for Agent shadow interpretation
+    required: true
+    enabled_by_default: true
+    requires_capability: local_laya
+    dependencies: []
+    host_targets:
+      systemd: eidolon-laya.service
+      # macOS keeps the existing standalone laya source launcher; an explicit
+      # local_laya opt-in still probes it, but eidolond does not own its process.
+      supervisord: external
+    endpoints:
+      - endpoint_id: decision.laya.http
+        protocol: http
+        address: http://127.0.0.1:8771
+        contract: eidolon.models.laya.systemone.v1
+        health_url: http://127.0.0.1:8771/readyz
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true

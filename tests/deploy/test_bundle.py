@@ -32,7 +32,7 @@ _REAL_BUILD_DEPENDENCY_CACHE = bundle._build_dependency_cache
 
 @pytest.fixture(autouse=True)
 def isolated_dependency_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_build(*, uv, source_dir, destination, workspace, project_ids) -> tuple[str, ...]:
+    def fake_build(*, uv, source_dir, destination, workspace, project_ids, capabilities=frozenset()) -> tuple[str, ...]:
         assert uv
         assert source_dir.is_dir()
         assert workspace.is_dir()
@@ -145,7 +145,7 @@ def test_unchanged_locked_inputs_reuse_one_dependency_artifact(
     monkeypatch.setenv(bundle._ARTIFACT_STORE_ENV, str(store))
     calls = 0
 
-    def fake_build(*, uv, source_dir, destination, workspace, project_ids) -> tuple[str, ...]:
+    def fake_build(*, uv, source_dir, destination, workspace, project_ids, capabilities=frozenset()) -> tuple[str, ...]:
         nonlocal calls
         calls += 1
         with tarfile.open(destination, "w:") as archive:
