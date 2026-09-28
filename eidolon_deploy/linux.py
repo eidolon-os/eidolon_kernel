@@ -334,6 +334,11 @@ class LinuxDeploymentHost:
             raise LinuxDeploymentError("component current links are a partial topology expansion")
 
         components = release.components_by_id
+        self._verify_data_migration_history(
+            current_data=Path(previous_targets["eidolon_data"]),
+            release_data=self._host_path(components["eidolon_data"].release_path),
+            cutover_mode=release.cutover_mode,
+        )
         current_admin = self._validate_component_target(
             "eidolon_admin",
             self._host_path(components["eidolon_admin"].current_link),
@@ -883,6 +888,34 @@ class LinuxDeploymentHost:
             detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
             raise LinuxDeploymentError(f"{operation} failed: {detail}")
         return result
+
+    def _verify_data_migration_history(
+        self, *, current_data: Path, release_data: Path, cutover_mode: str,
+    ) -> None:
+        """Data owns Alembic execution; deployment protects the rollback boundary.
+
+        Published migrations are immutable. Adding one requires the existing
+        forward-only barrier because old Data rejects unfamiliar schema tables.
+        Removing or rewriting history cannot be made safe by a cutover flag.
+        """
+        def history(component: Path) -> dict[str, str]:
+            directory = component / "eidolon_data/db/migrations/versions"
+            scripts = {
+                p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in directory.glob("*.py") if p.name != "__init__.py" and p.is_file()
+            }
+            if not scripts:
+                raise LinuxDeploymentError("Data migration history is missing")
+            return scripts
+
+        before, after = history(current_data), history(release_data)
+        if any(after.get(name) != digest for name, digest in before.items()):
+            raise LinuxDeploymentError("Data migration history rollback or rewrite is refused")
+        if before != after and cutover_mode != "forward-only":
+            raise LinuxDeploymentError(
+                "Data schema advance requires --cutover-mode forward-only; "
+                "its published Alembic gate runs before the candidate Data service starts"
+            )
 
     def _verify_bootstrap_schema_compatibility(
         self,

@@ -1,6 +1,7 @@
 [Unit]
 Description=Eidolon System Data workspace onboarding authority
-After=local-fs.target
+After=local-fs.target eidolon-data.service
+Requires=eidolon-data.service
 StartLimitIntervalSec=0
 
 [Service]

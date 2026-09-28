@@ -81,6 +81,12 @@ def test_network_observers_allow_linux_interface_discovery() -> None:
 
 
 def test_data_unit_uses_dedicated_authority_store_and_secret_file() -> None:
+    data = _unit("eidolon-data.service")["Service"]
+    workspace = _unit("eidolon-data-workspace.service")["Unit"]
+    assert data["WorkingDirectory"] == "/opt/eidolon/current/eidolon_data"
+    assert data["ExecStartPre"] == "/opt/eidolon/current/eidolon_data/.venv/bin/alembic -c alembic.ini upgrade head"
+    assert "eidolon-data.service" in workspace["After"]
+    assert "eidolon-data.service" in workspace["Requires"]
     for unit in ("eidolon-data.service", "eidolon-data-workspace.service"):
         service = _unit(unit)["Service"]
         text = (SYSTEMD / unit).read_text(encoding="utf-8")
@@ -306,6 +312,7 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
         "llm": "external",
         # And the voice, for the same reason.
         "tts": "external",
+        "laya": "external",
     }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"

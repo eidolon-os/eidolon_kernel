@@ -78,6 +78,31 @@ def _host_path(root: Path, path: str | Path) -> Path:
     return root / value.relative_to("/")
 
 
+@pytest.mark.parametrize("mode", ["reversible", "forward-only"])
+@pytest.mark.parametrize("change", ["append", "rewrite", "remove"])
+def test_data_schema_changes_respect_persistent_state_barrier(tmp_path, mode, change):
+    current, candidate = tmp_path / "current", tmp_path / "candidate"
+    for root in (current, candidate):
+        path = root / "eidolon_data/db/migrations/versions"
+        path.mkdir(parents=True)
+        (path / "0001.py").write_text("initial migration")
+    path = candidate / "eidolon_data/db/migrations/versions"
+    if change == "append":
+        (path / "0002.py").write_text("new schema")
+    elif change == "rewrite":
+        (path / "0001.py").write_text("rewritten schema")
+    else:
+        (path / "0001.py").unlink()
+        (path / "0002.py").write_text("replacement history")
+    host = LinuxDeploymentHost()
+    args = dict(current_data=current, release_data=candidate, cutover_mode=mode)
+    if change == "append" and mode == "forward-only":
+        host._verify_data_migration_history(**args)
+    else:
+        with pytest.raises(LinuxDeploymentError, match="Data"):
+            host._verify_data_migration_history(**args)
+
+
 def prepared_release(tmp_path: Path, capability: str | None = None):
     root = tmp_path / "root"
     document = release_document()
@@ -112,6 +137,11 @@ def prepared_release(tmp_path: Path, capability: str | None = None):
             f"/opt/eidolon/releases/old/{component['component_id']}",
         )
         old_target.mkdir(parents=True)
+        if component["component_id"] == "eidolon_data":
+            for target in (old_target, release_path):
+                migrations = target / "eidolon_data/db/migrations/versions"
+                migrations.mkdir(parents=True)
+                (migrations / "0001_initial.py").write_text("# immutable Data migration\n")
         if component["component_id"] == "eidolon_admin":
             old_python = old_target / ".venv/bin/python"
             old_python.parent.mkdir(parents=True)
