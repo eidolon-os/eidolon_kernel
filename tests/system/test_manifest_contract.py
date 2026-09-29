@@ -73,12 +73,11 @@ def test_all_system_schemas_are_valid() -> None:
 #: why. Anything else added here is a deliberate edit with a reason attached,
 #: which is the whole point: the previous arrangement let a service go missing
 #: from one Host's manifest by simply never being written into the other file.
-EXTERNAL_BY_DESIGN = {
-    ("nats", "supervisord"): (
-        "a macOS source run shares one already-listening NATS with whatever "
-        "started it, so there is no supervisord program to target"
-    ),
-}
+#
+#: There are none today. NATS under supervisord was the one: a macOS source run
+#: shared "whatever had started one", nothing else ever used it, and when that
+#: process was stopped nothing on the Host brought it back.
+EXTERNAL_BY_DESIGN: dict[tuple[str, str], str] = {}
 
 HOST_DRIVERS = ("supervisord", "systemd")
 

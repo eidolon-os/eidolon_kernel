@@ -291,7 +291,7 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
     assert {
         service_id: item["host_targets"]["supervisord"] for service_id, item in services.items()
     } == {
-        "nats": "external",
+        "nats": "nats:nats-server",
         "livekit": "livekit:livekit-server",
             "memory-supervisor": "memory:memory-supervisor",
             "memory-embedder": "memory:memory-embedder",

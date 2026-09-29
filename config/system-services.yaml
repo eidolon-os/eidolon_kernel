@@ -26,9 +26,13 @@ services:
     dependencies: []
     host_targets:
       systemd: eidolon-nats.service
-      # A macOS source run shares one already-listening NATS with whatever
-      # started it; run_all.sh gates on port 4222 rather than owning a process.
-      supervisord: external
+      # Owned on a macOS source run too, as systemd owns it on a product Host.
+      # It was `external` — shared with whatever had started one, checked only
+      # when the stack started — and nothing else ever used it. When that
+      # process was stopped (2026-09-22), nothing brought it back: Agent,
+      # Channel and both Memory services sat blocked behind it for a week,
+      # every one of them RUNNING.
+      supervisord: nats:nats-server
     endpoints:
       - endpoint_id: messaging.nats
         protocol: nats
