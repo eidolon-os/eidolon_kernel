@@ -40,6 +40,7 @@ _CAPABILITY_SOURCE_IDS = {
     "local_tts": ("eidolon_models",),
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
+    "local_laya_participation": ("eidolon_models",),
 }
 _REVISION_BY_SOURCE = {
     "eidolon_kernel": "kernel",
@@ -806,7 +807,7 @@ def _build_dependency_cache(
         if source_id == "eidolon_models":
             if "local_asr" in capabilities:
                 command.extend(("--extra", "asr"))
-            if "local_laya" in capabilities:
+            if {"local_laya", "local_laya_participation"} & capabilities:
                 command.extend(("--extra", "laya"))
         _dependency_run(tuple(command), env=environment)
         shutil.rmtree(project_environment)
@@ -835,7 +836,9 @@ def _build_dependency_cache(
 #: the variable unset to build from an empty disk and prove that.
 KEPT_DEPENDENCY_CACHE_ENV = "EIDOLON_RELEASE_UV_CACHE"
 
-_MODEL_CACHE_CAPABILITIES = frozenset({"local_asr", "local_tts", "local_llm", "local_laya"})
+_MODEL_CACHE_CAPABILITIES = frozenset(
+    {"local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation"}
+)
 
 
 def _profile_dependency_cache(root: Path, capabilities: frozenset[str]) -> Path:

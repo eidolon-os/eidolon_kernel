@@ -39,7 +39,9 @@ _BASE_SOURCE_IDS = (
 #: membership against the table's keys instead of against this set is a mistake
 #: that has already been made once — a legitimate `rknpu2` was refused on the
 #: Host as "unknown" after the whole bundle had been transferred.
-_HOST_CAPABILITIES = frozenset({"rknpu2", "local_asr", "local_tts", "local_llm", "local_laya"})
+_HOST_CAPABILITIES = frozenset(
+    {"rknpu2", "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation"}
+)
 
 #: What a capability adds to the sources. A fifth statement of the pairing
 #: eidolon_ops, eidolon_deploy and each component's contract also make — this
@@ -51,6 +53,7 @@ _CAPABILITY_SOURCE_IDS = {
     "local_tts": ("eidolon_models",),
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
+    "local_laya_participation": ("eidolon_models",),
 }
 #: Carried so components can import it, and not a project of its own: no lock,
 #: and no environment built for it.
@@ -206,7 +209,7 @@ def prepare_target_release(
                 if source_id == "eidolon_models":
                     if "local_asr" in document.get("capabilities", []):
                         command.extend(("--extra", "asr"))
-                    if "local_laya" in document.get("capabilities", []):
+                    if {"local_laya", "local_laya_participation"} & set(document.get("capabilities", [])):
                         command.extend(("--extra", "laya"))
                 _run("native environment preparation", *command)
 

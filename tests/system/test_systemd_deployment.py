@@ -313,6 +313,8 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
         # And the voice, for the same reason.
         "tts": "external",
         "laya": "external",
+        # The role team's participation model beside it, a service of its own.
+        "laya-participation": "external",
     }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"

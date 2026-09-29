@@ -73,6 +73,7 @@ _READINESS_UNITS = {
     "llm": "eidolon-llm.service",
     "tts": "eidolon-tts.service",
     "laya": "eidolon-laya.service",
+    "laya-participation": "eidolon-laya-participation.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",

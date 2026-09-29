@@ -264,6 +264,25 @@ services:
         address: http://127.0.0.1:8771
         contract: eidolon.models.laya.systemone.v1
         health_url: http://127.0.0.1:8771/readyz
+  - service_id: laya-participation
+    description: Local participation decisions for companion and role-team rounds
+    required: true
+    enabled_by_default: true
+    # A service of its own beside the smart-home one: its own unit, port, model
+    # and NPU cores, so either runs, updates or rolls back alone.
+    requires_capability: local_laya_participation
+    dependencies: []
+    host_targets:
+      systemd: eidolon-laya-participation.service
+      supervisord: external
+    endpoints:
+      - endpoint_id: decision.laya.participation.http
+        protocol: http
+        address: http://127.0.0.1:8773
+        contract: eidolon.biz.participation.v2
+        # The task route: 200 only once the pinned participation profile is
+        # loaded against its model revision.
+        health_url: http://127.0.0.1:8773/participation/readyz
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true

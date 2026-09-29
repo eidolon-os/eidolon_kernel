@@ -40,6 +40,7 @@ CAPABILITY_COMPONENTS: dict[str, tuple[str, ...]] = {
     "local_tts": ("eidolon_models",),
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
+    "local_laya_participation": ("eidolon_models",),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (
@@ -234,6 +235,23 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
         Path("/etc/systemd/system/eidolon-laya.service"): (
             "eidolon_models", Path("deploy/systemd/eidolon-laya.service"),
         ),
+        # The same core-allocation file the other local models declare: it also
+        # holds the NPU cores the two Laya services split between them.
+        Path("/etc/eidolon/cpu-allocation.env"): (
+            "eidolon_models",
+            Path("deploy/cpu-allocation.env"),
+        ),
+    },
+    # The role team's participation model: a unit of its own, not a route on
+    # the smart-home service, so either runs, updates or rolls back alone.
+    "local_laya_participation": {
+        Path("/etc/systemd/system/eidolon-laya-participation.service"): (
+            "eidolon_models", Path("deploy/systemd/eidolon-laya-participation.service"),
+        ),
+        Path("/etc/eidolon/cpu-allocation.env"): (
+            "eidolon_models",
+            Path("deploy/cpu-allocation.env"),
+        ),
     },
     "local_asr": {
         Path("/etc/systemd/system/eidolon-asr.service"): (
@@ -277,6 +295,7 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
 
 CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
     "local_laya": ("eidolon-laya.service",),
+    "local_laya_participation": ("eidolon-laya-participation.service",),
     "local_asr": ("eidolon-asr.service",),
     "local_llm": ("eidolon-llm.service",),
     "local_tts": ("eidolon-tts.service",),
@@ -285,6 +304,13 @@ CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
 CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = {
     "local_laya": {
         "laya": ("http", "http://127.0.0.1:8771/readyz", None, "http_2xx"),
+    },
+    "local_laya_participation": {
+        # The task route, not the generic one: it answers 200 only once the
+        # pinned participation profile is loaded against its model revision.
+        "laya-participation": (
+            "http", "http://127.0.0.1:8773/participation/readyz", None, "http_2xx",
+        ),
     },
     "local_asr": {
         # The service's own readiness route, not a bare socket check. A port
