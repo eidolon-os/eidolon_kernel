@@ -5,6 +5,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.device_foundation.v1 import ClaimEventCursor, ClaimEventPage, DeviceProblem
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
@@ -38,7 +39,7 @@ class HubHttpDeviceAuthority:
         self._token = bearer_token.strip()
         self._contracts = contracts
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
+        self._client = client or create_async_client(
             timeout=timeout_seconds,
             trust_env=False,
         )

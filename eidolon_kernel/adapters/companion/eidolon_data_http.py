@@ -5,6 +5,7 @@ from __future__ import annotations
 from urllib.parse import quote, urlparse
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
@@ -34,7 +35,7 @@ class EidolonDataHttpCompanionAuthority:
         self._token = bearer_token.strip()
         self._contracts = contracts
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
+        self._client = client or create_async_client(
             timeout=timeout_seconds,
             trust_env=False,
         )

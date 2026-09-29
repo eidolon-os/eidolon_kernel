@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from jsonschema import ValidationError
 from pydantic import ValidationError as PydanticValidationError
 
@@ -42,7 +43,7 @@ class EidolondHttpServiceDirectory:
                 if uds_path is not None
                 else None
             )
-            self._client = httpx.AsyncClient(
+            self._client = create_async_client(
                 timeout=timeout_seconds,
                 transport=transport,
                 trust_env=False,

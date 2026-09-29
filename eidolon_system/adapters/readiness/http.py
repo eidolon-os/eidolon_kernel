@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 
 
 class HttpReadinessProbe:
     def __init__(self, *, timeout_seconds: float = 3.0) -> None:
-        self._client = httpx.AsyncClient(timeout=timeout_seconds, trust_env=False)
+        self._client = create_async_client(timeout=timeout_seconds, trust_env=False)
 
     async def check(self, url: str) -> bool:
         try:

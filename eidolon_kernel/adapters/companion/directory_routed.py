@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 
 from eidolon_kernel.adapters.companion.eidolon_data_http import (
     EidolonDataHttpCompanionAuthority,
@@ -37,7 +38,7 @@ class DirectoryRoutedEidolonDataCompanionAuthority:
         self._token = bearer_token.strip()
         self._contracts = contracts
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
+        self._client = client or create_async_client(
             timeout=timeout_seconds,
             trust_env=False,
         )
