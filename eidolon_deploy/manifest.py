@@ -232,14 +232,10 @@ V2_AFFECTED_UNITS = (
 #: got before any of this existed.
 CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
     "local_laya": {
+        # Its settings (NPU cores included) are laya/deploy/services.toml in the release
+        # itself, so the unit is the whole of what a Laya Host is sent.
         Path("/etc/systemd/system/eidolon-laya.service"): (
             "eidolon_models", Path("deploy/systemd/eidolon-laya.service"),
-        ),
-        # The same core-allocation file the other local models declare: it also
-        # holds the NPU cores the two Laya services split between them.
-        Path("/etc/eidolon/cpu-allocation.env"): (
-            "eidolon_models",
-            Path("deploy/cpu-allocation.env"),
         ),
     },
     # The role team's participation model: a unit of its own, not a route on
@@ -247,10 +243,6 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
     "local_laya_participation": {
         Path("/etc/systemd/system/eidolon-laya-participation.service"): (
             "eidolon_models", Path("deploy/systemd/eidolon-laya-participation.service"),
-        ),
-        Path("/etc/eidolon/cpu-allocation.env"): (
-            "eidolon_models",
-            Path("deploy/cpu-allocation.env"),
         ),
     },
     "local_asr": {
