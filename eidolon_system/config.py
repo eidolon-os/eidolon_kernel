@@ -52,6 +52,7 @@ class InterfaceSettings(SettingsModel):
     port: int = Field(default=8090, ge=1, le=65535)
     uds: Path | None = None
     uds_mode: Literal["0600", "0660"] = "0600"
+    uds_group: str | None = Field(default=None, pattern=r"^[a-z_][a-z0-9_-]{0,63}$")
 
     @field_validator("host")
     @classmethod

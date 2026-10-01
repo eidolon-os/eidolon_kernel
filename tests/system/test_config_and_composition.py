@@ -127,7 +127,7 @@ def test_main_runner_prebinds_uds_with_configured_mode(monkeypatch, tmp_path) ->
     listener = FakeListener()
     socket_path = tmp_path / "system.sock"
     settings = SystemSettings(
-        interface=InterfaceSettings(uds=socket_path, uds_mode="0660")
+        interface=InterfaceSettings(uds=socket_path, uds_mode="0660", uds_group="staff")
     )
     bind_calls = []
     run_calls = []
@@ -135,13 +135,13 @@ def test_main_runner_prebinds_uds_with_configured_mode(monkeypatch, tmp_path) ->
     monkeypatch.setattr(
         main,
         "_bind_unix_socket",
-        lambda path, mode: bind_calls.append((path, mode)) or listener,
+        lambda path, mode, group: bind_calls.append((path, mode, group)) or listener,
     )
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: run_calls.append(kwargs))
 
     main.run()
 
-    assert bind_calls == [(socket_path, 0o660)]
+    assert bind_calls == [(socket_path, 0o660, "staff")]
     assert run_calls == [{"factory": True, "fd": 42}]
     assert listener.closed is True
 
@@ -181,3 +181,29 @@ def test_uds_binder_applies_restrictive_permissions() -> None:
             _remove_unix_socket(socket_path)
         assert not socket_path.exists()
         _remove_unix_socket(socket_path)
+
+
+def test_uds_group_applies_only_to_the_bound_socket():
+    import grp
+    import os
+
+    from eidolon_system.main import _bind_unix_socket, _remove_unix_socket
+
+    group = grp.getgrgid(os.getgid()).gr_name
+    with tempfile.TemporaryDirectory(prefix="es-", dir="/tmp") as temp_dir:
+        root = Path(temp_dir)
+        untouched = root / "private"
+        untouched.write_text("private")
+        before = untouched.stat()
+        path = root / "system.sock"
+        try:
+            listener = _bind_unix_socket(path, 0o660, group)
+        except PermissionError:
+            pytest.skip("sandbox forbids Unix sockets")
+        try:
+            assert path.stat().st_gid == grp.getgrnam(group).gr_gid
+            assert stat.S_IMODE(path.stat().st_mode) == 0o660
+            assert (untouched.stat().st_gid, untouched.stat().st_mode) == (before.st_gid, before.st_mode)
+        finally:
+            listener.close()
+            _remove_unix_socket(path)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import grp
+import os
 import socket
 import stat
 from pathlib import Path
@@ -16,7 +18,7 @@ def create_app() -> FastAPI:
     return create_production_app().app
 
 
-def _bind_unix_socket(path: Path, mode: int) -> socket.socket:
+def _bind_unix_socket(path: Path, mode: int, group: str | None = None) -> socket.socket:
     """Bind a local listener without uvicorn's unconditional 0666 chmod."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -41,6 +43,8 @@ def _bind_unix_socket(path: Path, mode: int) -> socket.socket:
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         listener.bind(str(path))
+        if group is not None:
+            os.chown(path, -1, grp.getgrnam(group).gr_gid)
         path.chmod(mode)
         listener.set_inheritable(True)
     except Exception:
@@ -69,6 +73,7 @@ def run() -> None:
         listener = _bind_unix_socket(
             socket_path,
             settings.interface.uds_mode_bits,
+            settings.interface.uds_group,
         )
         arguments["fd"] = listener.fileno()
     else:
