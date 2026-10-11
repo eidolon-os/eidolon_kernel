@@ -298,6 +298,7 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
             "memory-discovery": "memory:memory-discovery",
         "data": "data:data-api",
         "data-workspace": "data:data-workspace-api",
+        "hub-discovery": "hub:hub-discovery",
         "hub": "hub:hub-api",
         "kernel": "kernel:kernel-api",
         "agent": "agent:agent",

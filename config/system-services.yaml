@@ -130,6 +130,15 @@ services:
         address: http://127.0.0.1:8085
         contract: https://eidolon.live/contracts/system-data/workspace/onboarding-operation-v1.schema.json
         health_url: http://127.0.0.1:8085/health
+  - service_id: hub-discovery
+    description: Host discovery independent of Hub application readiness
+    required: true
+    enabled_by_default: true
+    dependencies: []
+    host_targets:
+      systemd: eidolon-hub-discovery.service
+      supervisord: hub:hub-discovery
+    endpoints: []
   - service_id: hub
     description: Device onboarding, registry and policy authority
     required: true

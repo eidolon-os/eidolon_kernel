@@ -65,7 +65,7 @@
     "system_assets": {
       "type": "array",
       "minItems": 24,
-      "maxItems": 31,
+      "maxItems": 32,
       "items": {
         "$ref": "#/$defs/systemAsset"
       }
@@ -81,7 +81,7 @@
     "affected_units": {
       "type": "array",
       "minItems": 18,
-      "maxItems": 23,
+      "maxItems": 24,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -93,6 +93,7 @@
           "eidolon-unit-applier.service",
           "eidolon-data.service",
           "eidolon-data-workspace.service",
+          "eidolon-hub-discovery.service",
           "eidolon-hub.service",
           "eidolon-kernel.service",
           "eidolon-nats.service",

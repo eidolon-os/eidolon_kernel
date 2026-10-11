@@ -243,7 +243,7 @@ def test_preflight_verifies_target_release_and_returns_current_targets(tmp_path:
     verify_call = next(
         call for call in runner.calls if call[:2] == ("/usr/bin/systemd-analyze", "verify")
     )
-    assert len(verify_call[2:]) == 19
+    assert len(verify_call[2:]) == 20
     assert not any("/etc/avahi/" in item for item in verify_call)
     assert not any(call[:2] == ("/usr/bin/systemctl", "stop") for call in runner.calls)
 
@@ -382,6 +382,7 @@ def test_quiesce_and_start_order_prevents_competing_restart_authorities(
         ("stop", "eidolon-nats.service"),
         ("stop", "eidolon-kernel.service"),
         ("stop", "eidolon-hub.service"),
+        ("stop", "eidolon-hub-discovery.service"),
         ("stop", "eidolon-data-workspace.service"),
         ("stop", "eidolon-data.service"),
         # Last down: the manager is the applier's only caller, and stopping the
@@ -463,7 +464,7 @@ def test_doctor_requires_the_sealed_release_to_be_active(tmp_path: Path) -> None
     active_checks = [
         call for call in runner.calls if call[:3] == ("/usr/bin/systemctl", "is-active", "--quiet")
     ]
-    assert len(active_checks) == 18
+    assert len(active_checks) == 19
 
 
 def test_preflight_fails_closed_on_source_or_secret_drift(tmp_path: Path) -> None:

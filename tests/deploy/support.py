@@ -204,6 +204,12 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
                 ),
                 (
                     "eidolon_kernel",
+                    "deploy/systemd/eidolon-hub-discovery.service",
+                    "/etc/systemd/system/eidolon-hub-discovery.service",
+                    "d",
+                ),
+                (
+                    "eidolon_kernel",
                     "deploy/systemd/eidolon-hub.service",
                     "/etc/systemd/system/eidolon-hub.service",
                     "3",
@@ -361,6 +367,7 @@ def release_document(release_id: str = "20260806-m2d-test") -> dict:
             "eidolon-unit-applier.service",
             "eidolon-data.service",
             "eidolon-data-workspace.service",
+            "eidolon-hub-discovery.service",
             "eidolon-hub.service",
             "eidolon-kernel.service",
             "eidolon-nats.service",

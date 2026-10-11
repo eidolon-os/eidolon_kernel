@@ -94,6 +94,10 @@ V2_SYSTEM_ASSETS = {
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-data-workspace.service"),
     ),
+    Path("/etc/systemd/system/eidolon-hub-discovery.service"): (
+        "eidolon_kernel",
+        Path("deploy/systemd/eidolon-hub-discovery.service"),
+    ),
     Path("/etc/systemd/system/eidolon-hub.service"): (
         "eidolon_kernel",
         Path("deploy/systemd/eidolon-hub.service"),
@@ -215,6 +219,7 @@ V2_AFFECTED_UNITS = (
     "eidolon-unit-applier.service",
     "eidolon-data.service",
     "eidolon-data-workspace.service",
+    "eidolon-hub-discovery.service",
     "eidolon-hub.service",
     "eidolon-kernel.service",
     "eidolon-nats.service",

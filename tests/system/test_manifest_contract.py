@@ -162,6 +162,7 @@ def test_service_set_is_the_full_product_topology() -> None:
         "data",
         "data-workspace",
         "hub",
+        "hub-discovery",
         "kernel",
         "livekit",
         "memory-discovery",
