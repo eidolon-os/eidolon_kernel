@@ -444,7 +444,7 @@ async def test_disable_after_completed_restart_does_not_wait_for_network_cache_w
     assert host.calls[-1] == ("stop", "media")
     assert manager.get_service("media").runtime_state == "inactive"
 
-async def test_network_refresh_stops_consumers_before_transport_and_preserves_desired(setup):
+async def test_network_refresh_preserves_consumers_for_native_reconnection_and_preserves_desired(setup):
     inputs, network, host, factory = setup
     host.inspect = FakeHostSupervisor.inspect.__get__(host, type(host))
     manager = factory()
@@ -461,35 +461,13 @@ async def test_network_refresh_stops_consumers_before_transport_and_preserves_de
     inputs.now += 10
     await manager.reconcile()
     calls = host.calls[before:]
-    restart = calls.index(("restart", "media"))
+    assert calls == [("restart", "media")]
     for name in ("provider", "channel"):
-        assert calls.index(("stop", name)) < restart < calls.index(("start", name))
         assert manager.store.get(name).enabled
         assert manager.store.get(name).revision == 1
-    assert all(target != "nats" for _, target in calls)
+        assert manager.get_service(name).runtime_state == "ready"
     await manager.reconcile()
     assert host.calls.count(("restart", "media")) == 1
-
-
-async def test_failed_consumer_stop_blocks_transport_refresh(setup):
-    inputs, network, host, factory = setup
-    host.inspect = FakeHostSupervisor.inspect.__get__(host, type(host))
-    manager = factory()
-    manager.catalog = ServiceCatalog((
-        replace(service("media"), restart_on_network_change=True),
-        replace(service("provider"), dependencies=("media",)),
-        service("nats"),
-    ))
-    await ready(inputs, manager)
-    async def fail_stop(target):
-        raise HostOperationFailed("still connected")
-    host.stop = fail_stop
-    inputs.value = "lan-b"
-    await manager.reconcile()
-    inputs.now += 10
-    await manager.reconcile()
-    assert ("restart", "media") not in host.calls
-    assert manager.get_service("media").runtime_state != "ready"
 
 
 async def test_recovery_polling_is_fast_only_during_bounded_recovery(setup):

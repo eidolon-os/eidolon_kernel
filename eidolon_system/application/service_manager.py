@@ -109,8 +109,6 @@ class ServiceManager:
                 continue
             await self._stop_disabled(definition, state)
 
-        blocked_refreshes = await self._quiesce_network_consumers(desired)
-
         for definition in self.catalog.start_order:
             state = desired[definition.service_id]
             if not state.enabled:
@@ -119,7 +117,7 @@ class ServiceManager:
                 self.directory.get(dependency).runtime_state == "ready"
                 for dependency in definition.dependencies
             )
-            await self._start_or_observe(definition, state, can_start=dependencies_ready and definition.service_id not in blocked_refreshes)
+            await self._start_or_observe(definition, state, can_start=dependencies_ready)
 
     @property
     def network_recovery_pending(self) -> bool:
@@ -136,43 +134,6 @@ class ServiceManager:
             and self.directory.get(service_id).runtime_state != "ready"
             for service_id in affected
         )
-
-    async def _quiesce_network_consumers(self, desired) -> set[str]:
-        """Release transport consumers before refreshing a stable network input.
-
-        Reuse persisted stop intents without changing the user's desired state.
-        Normal dependency reconciliation starts consumers after the refreshed
-        transport is ready. A daemon restart can therefore resume this sequence.
-        """
-        blocked = set()
-        if self.network is None or self._network_snapshot is None:
-            return blocked
-        for root in self.catalog.start_order:
-            if not root.restart_on_network_change or not desired[root.service_id].enabled:
-                continue
-            if not root.manages(self.host.driver_name):
-                continue
-            try:
-                observed = await self.host.inspect(root.target_for(self.host.driver_name))
-                stamp = json.dumps([self._network_snapshot, observed.instance_id])
-                if not observed.active or self.network.applied(root.service_id) == stamp:
-                    continue
-                consumers = {root.service_id}
-                for definition in self.catalog.start_order:
-                    if any(dep in consumers for dep in definition.dependencies):
-                        consumers.add(definition.service_id)
-                consumers.remove(root.service_id)
-                for definition in self.catalog.stop_order:
-                    if definition.service_id not in consumers:
-                        continue
-                    state = desired[definition.service_id]
-                    await self._stop_disabled(definition, state)
-                    if self.directory.get(definition.service_id).runtime_state != "inactive":
-                        blocked.add(root.service_id)
-                # Keep the transport gated while any consumer stop is pending.
-            except (HostOperationFailed, OSError, StateStoreFailed):
-                blocked.add(root.service_id)
-        return blocked
 
     async def _stop_disabled(self, definition: ServiceDefinition, state) -> None:
         driver = self.host.driver_name
