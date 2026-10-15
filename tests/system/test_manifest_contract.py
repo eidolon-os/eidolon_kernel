@@ -177,3 +177,14 @@ def test_network_policy_is_shared_by_host_drivers_and_opt_in():
     assert catalog.get("livekit").restart_on_network_change is True
     assert catalog.get("nats").restart_on_network_change is False
     assert {d.service_id for d in catalog.definitions if d.restart_on_network_change} == {"livekit"}
+
+
+def test_memory_supervisor_waits_for_authoritative_roster():
+    from pathlib import Path
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    rows = yaml.safe_load((root / "config/system-services.yaml").read_text())["services"]
+    memory = next(row for row in rows if row["service_id"] == "memory-supervisor")
+    assert "data" in memory["dependencies"]
+    unit = (root / "deploy/systemd/eidolon-memory-supervisor.service").read_text()
+    assert "eidolon-data.service" in next(line for line in unit.splitlines() if line.startswith("After="))

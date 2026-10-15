@@ -443,3 +443,50 @@ async def test_disable_after_completed_restart_does_not_wait_for_network_cache_w
     await manager.set_enabled(service_id="media", enabled=False, expected_revision=1, request_id="off")
     assert host.calls[-1] == ("stop", "media")
     assert manager.get_service("media").runtime_state == "inactive"
+
+async def test_network_refresh_stops_consumers_before_transport_and_preserves_desired(setup):
+    inputs, network, host, factory = setup
+    host.inspect = FakeHostSupervisor.inspect.__get__(host, type(host))
+    manager = factory()
+    manager.catalog = ServiceCatalog((
+        replace(service("media"), restart_on_network_change=True),
+        replace(service("provider"), dependencies=("media",)),
+        replace(service("channel"), dependencies=("media",)),
+        service("nats"),
+    ))
+    await ready(inputs, manager)
+    before = len(host.calls)
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    await manager.reconcile()
+    calls = host.calls[before:]
+    restart = calls.index(("restart", "media"))
+    for name in ("provider", "channel"):
+        assert calls.index(("stop", name)) < restart < calls.index(("start", name))
+        assert manager.store.get(name).enabled
+        assert manager.store.get(name).revision == 1
+    assert all(target != "nats" for _, target in calls)
+    await manager.reconcile()
+    assert host.calls.count(("restart", "media")) == 1
+
+
+async def test_failed_consumer_stop_blocks_transport_refresh(setup):
+    inputs, network, host, factory = setup
+    host.inspect = FakeHostSupervisor.inspect.__get__(host, type(host))
+    manager = factory()
+    manager.catalog = ServiceCatalog((
+        replace(service("media"), restart_on_network_change=True),
+        replace(service("provider"), dependencies=("media",)),
+        service("nats"),
+    ))
+    await ready(inputs, manager)
+    async def fail_stop(target):
+        raise HostOperationFailed("still connected")
+    host.stop = fail_stop
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    inputs.now += 10
+    await manager.reconcile()
+    assert ("restart", "media") not in host.calls
+    assert manager.get_service("media").runtime_state != "ready"

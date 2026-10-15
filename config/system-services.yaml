@@ -59,7 +59,7 @@ services:
     description: Memory Realm process reconciliation owner
     required: true
     enabled_by_default: true
-    dependencies: [nats, memory-embedder]
+    dependencies: [nats, memory-embedder, data]
     host_targets:
       systemd: eidolon-memory-supervisor.service
       supervisord: memory:memory-supervisor

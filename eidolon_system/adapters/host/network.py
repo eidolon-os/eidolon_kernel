@@ -57,7 +57,7 @@ class LocalNetworkEnvironment:
         *,
         read=network_fingerprint,
         monotonic=time.monotonic,
-        settle_seconds: float = 10.0,
+        settle_seconds: float = 3.0,
     ):
         self.path = path
         self.read = read
