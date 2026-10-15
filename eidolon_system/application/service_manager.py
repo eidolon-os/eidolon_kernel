@@ -62,6 +62,7 @@ class ServiceManager:
         self.clock = clock
         self.network = network
         self._network_snapshot: str | None = None
+        self._network_recovery_until = 0.0
         self.runtime = RuntimeCoordinator(store, host, monotonic=monotonic)
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -95,7 +96,12 @@ class ServiceManager:
             await self._reconcile_unlocked()
 
     async def _reconcile_unlocked(self) -> None:
+        previous_network = self._network_snapshot
         self._network_snapshot = await self.network.snapshot() if self.network else None
+        if previous_network != self._network_snapshot:
+            # A bounded burst avoids one normal polling interval per stop/start
+            # phase. Failed/offline recovery returns to the normal cadence.
+            self._network_recovery_until = self.runtime.monotonic() + 30.0
         desired = {state.service_id: state for state in self.store.list_states()}
         for definition in self.catalog.stop_order:
             state = desired[definition.service_id]
@@ -114,6 +120,22 @@ class ServiceManager:
                 for dependency in definition.dependencies
             )
             await self._start_or_observe(definition, state, can_start=dependencies_ready and definition.service_id not in blocked_refreshes)
+
+    @property
+    def network_recovery_pending(self) -> bool:
+        if self.runtime.monotonic() >= self._network_recovery_until:
+            return False
+        affected = set()
+        for definition in self.catalog.start_order:
+            if definition.restart_on_network_change or any(
+                dependency in affected for dependency in definition.dependencies
+            ):
+                affected.add(definition.service_id)
+        return any(
+            self.store.get(service_id).enabled
+            and self.directory.get(service_id).runtime_state != "ready"
+            for service_id in affected
+        )
 
     async def _quiesce_network_consumers(self, desired) -> set[str]:
         """Release transport consumers before refreshing a stable network input.

@@ -26,9 +26,12 @@ class PeriodicServiceReconciler:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
+            delay = self.interval_seconds
+            if getattr(self.manager, "network_recovery_pending", False):
+                delay = min(delay, 1.0)
             try:
                 await asyncio.wait_for(
-                    self._stopping.wait(), timeout=self.interval_seconds
+                    self._stopping.wait(), timeout=delay
                 )
             except TimeoutError:
                 try:

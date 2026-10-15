@@ -490,3 +490,18 @@ async def test_failed_consumer_stop_blocks_transport_refresh(setup):
     await manager.reconcile()
     assert ("restart", "media") not in host.calls
     assert manager.get_service("media").runtime_state != "ready"
+
+
+async def test_recovery_polling_is_fast_only_during_bounded_recovery(setup):
+    inputs, network, host, factory = setup
+    manager = factory()
+    await ready(inputs, manager)
+    assert not manager.network_recovery_pending
+    inputs.value = "lan-b"
+    await manager.reconcile()
+    assert manager.network_recovery_pending
+    inputs.now += 31
+    assert not manager.network_recovery_pending
+    await manager.reconcile()
+    assert manager.get_service("media").runtime_state == "ready"
+    assert not manager.network_recovery_pending
