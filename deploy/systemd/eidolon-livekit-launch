@@ -6,6 +6,40 @@ from __future__ import annotations
 import json
 import ipaddress
 import os
+import select
+import signal
+import sys
+
+
+def stop_server(pid: int) -> None:
+    """Bound native draining without changing the pinned LiveKit server.
+
+    LiveKit treats its second termination signal as a request to force its
+    normal shutdown even when device participants remain in rooms. A pidfd
+    keeps both signals attached to the original process across PID reuse.
+    """
+    try:
+        descriptor = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return
+    try:
+        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+        if select.select([descriptor], [], [], 3.0)[0]:
+            return
+        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+        if not select.select([descriptor], [], [], 6.0)[0]:
+            raise SystemExit("LiveKit did not finish its bounded native shutdown")
+    except ProcessLookupError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--stop":
+    if len(sys.argv) != 3 or not sys.argv[2].isdigit() or int(sys.argv[2]) <= 1:
+        raise SystemExit("usage: eidolon-livekit-launch --stop PID")
+    stop_server(int(sys.argv[2]))
+    raise SystemExit(0)
 
 
 def required(name: str) -> str:

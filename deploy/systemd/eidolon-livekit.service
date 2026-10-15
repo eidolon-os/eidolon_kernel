@@ -12,6 +12,7 @@ UMask=0007
 EnvironmentFile=/etc/eidolon/livekit.env
 EnvironmentFile=/etc/eidolon/host.env
 ExecStart=/usr/bin/python3 /usr/local/libexec/eidolon-livekit-launch
+ExecStop=/usr/bin/python3 /usr/local/libexec/eidolon-livekit-launch --stop $MAINPID
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM
