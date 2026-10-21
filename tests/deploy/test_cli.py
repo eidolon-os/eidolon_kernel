@@ -12,9 +12,26 @@ from eidolon_deploy.activation import (
     ActivationStatus,
     RollbackFailed,
 )
-from eidolon_deploy.bundle import BuiltBundle
+from eidolon_deploy.bundle import BuiltBundle, BundleError
 from eidolon_deploy.ports import DeploymentSnapshot
 from tests.deploy.support import release_document, write_release_document
+
+
+def test_verify_bundle_reports_success_only_after_contract_validation(monkeypatch, capsys, tmp_path):
+    checked = []
+    monkeypatch.setattr(cli, 'validate_source_bundle', lambda path: checked.append(path))
+    assert cli.main(['verify-bundle', str(tmp_path)]) == 0
+    assert checked == [tmp_path]
+    assert json.loads(capsys.readouterr().out) == {'status': 'verified'}
+
+    def invalid(_path):
+        raise BundleError('required model is missing')
+
+    monkeypatch.setattr(cli, 'validate_source_bundle', invalid)
+    assert cli.main(['verify-bundle', str(tmp_path)]) == 1
+    output = capsys.readouterr()
+    assert not output.out
+    assert json.loads(output.err)['error'] == 'required model is missing'
 
 
 class FakeHost:

@@ -17,7 +17,7 @@ from eidolon_deploy.activation import (
     RollbackFailed,
     receipt_to_document,
 )
-from eidolon_deploy.bundle import BundleError, build_source_bundle
+from eidolon_deploy.bundle import BundleError, build_source_bundle, validate_source_bundle
 from eidolon_deploy.capabilities import require_known_capabilities
 from eidolon_deploy.contract import contract_document
 from eidolon_deploy.linux import LinuxDeploymentError, LinuxDeploymentHost
@@ -35,6 +35,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.operation == "contract":
             _print_json(contract_document())
+            return 0
+        if arguments.operation == "verify-bundle":
+            validate_source_bundle(arguments.path)
+            _print_json({"status": "verified"})
             return 0
         if arguments.operation == "bundle":
             revisions = ReleaseRevisions(
@@ -159,6 +163,10 @@ def _parser() -> argparse.ArgumentParser:
         "contract",
         help="report the release formats this activator speaks",
     )
+    verify_bundle = operations.add_parser(
+        "verify-bundle", help="validate a source bundle against Kernel's artifact contract"
+    )
+    verify_bundle.add_argument("path", type=Path)
     bundle = operations.add_parser(
         "bundle", help="archive exact reviewed commits for target-native preparation"
     )
