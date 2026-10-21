@@ -41,6 +41,7 @@ CAPABILITY_COMPONENTS: dict[str, tuple[str, ...]] = {
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
+    "local_speaker_verification": ("eidolon_models",),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (

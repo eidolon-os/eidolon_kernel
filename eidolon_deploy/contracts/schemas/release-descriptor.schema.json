@@ -139,11 +139,12 @@
           "local_tts",
           "local_laya",
           "local_laya_participation",
+          "local_speaker_verification",
           "rknpu2"
         ]
       },
       "uniqueItems": true,
-      "maxItems": 6
+      "maxItems": 7
     }
   },
   "$defs": {

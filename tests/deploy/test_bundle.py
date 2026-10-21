@@ -1091,6 +1091,19 @@ def test_a_bundle_for_a_declaring_host_carries_and_prepares_the_extra_source(
     assert "eidolon_sdk" not in prepare_target._project_ids(["local_asr"])
 
 
+def test_speaker_asset_host_can_build_and_prepare_without_extra_services(tmp_path):
+    capabilities = frozenset({'local_speaker_verification'})
+    repositories, revisions = _repositories(tmp_path / 'repositories', capabilities)
+    output = tmp_path / 'bundle'
+    build_source_bundle(release_id='speaker-assets', repositories=repositories,
+                        revisions=revisions, output=output, capabilities=capabilities)
+    assert prepare_target._validate_bundle(output)['capabilities'] == ['local_speaker_verification']
+    assert 'eidolon_models' in prepare_target._project_ids(list(capabilities))
+    # CAM++ comes from Models' checksum-verified component artifact, never Channel's archive.
+    assert not any('campplus' in path for path in bundle._CHANNEL_MODEL_PATHS)
+    assert bundle._CHANNEL_MODEL_PATHS == prepare_target._CHANNEL_MODEL_PATHS
+
+
 @pytest.mark.parametrize(
     ("capabilities", "expected"),
     [
@@ -1155,6 +1168,7 @@ def test_model_selection_is_checked_again_on_the_target(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("capabilities", "extras"),
     [
+        (frozenset({"local_speaker_verification"}), ()),
         (frozenset({"local_laya"}), ("laya",)),
         (frozenset({"local_asr"}), ("asr",)),
         (frozenset({"local_asr", "local_laya"}), ("asr", "laya")),

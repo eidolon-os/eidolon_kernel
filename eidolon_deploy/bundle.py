@@ -41,6 +41,7 @@ _CAPABILITY_SOURCE_IDS = {
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
+    "local_speaker_verification": ("eidolon_models",),
 }
 _REVISION_BY_SOURCE = {
     "eidolon_kernel": "kernel",
@@ -126,8 +127,6 @@ _CHANNEL_MODEL_PATHS = {
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/embedding_model.ckpt",
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/label_encoder.ckpt",
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/mean_var_norm_emb.ckpt",
-    "eidolon/livekit/plugins/speaker_verification/resources/3dspeaker/"
-    "campplus_zh_16k_common/campplus_cn_common.bin",
 }
 
 
@@ -837,7 +836,7 @@ def _build_dependency_cache(
 KEPT_DEPENDENCY_CACHE_ENV = "EIDOLON_RELEASE_UV_CACHE"
 
 _MODEL_CACHE_CAPABILITIES = frozenset(
-    {"local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation"}
+    {"local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation", "local_speaker_verification"}
 )
 
 

@@ -43,6 +43,8 @@ HOST_CAPABILITIES: frozenset[str] = frozenset(
         #: The companion / role-team participation model runs on this Host, a
         #: service of its own beside the smart-home one.
         "local_laya_participation",
+        # Assets used by Channel; no new model daemon or per-device permission.
+        "local_speaker_verification",
     }
 )
 

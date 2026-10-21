@@ -40,7 +40,7 @@ _BASE_SOURCE_IDS = (
 #: that has already been made once — a legitimate `rknpu2` was refused on the
 #: Host as "unknown" after the whole bundle had been transferred.
 _HOST_CAPABILITIES = frozenset(
-    {"rknpu2", "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation"}
+    {"rknpu2", "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation", "local_speaker_verification"}
 )
 
 #: What a capability adds to the sources. A fifth statement of the pairing
@@ -54,6 +54,7 @@ _CAPABILITY_SOURCE_IDS = {
     "local_llm": ("eidolon_models",),
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
+    "local_speaker_verification": ("eidolon_models",),
 }
 #: Carried so components can import it, and not a project of its own: no lock,
 #: and no environment built for it.
@@ -124,8 +125,6 @@ _CHANNEL_MODEL_PATHS = {
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/embedding_model.ckpt",
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/label_encoder.ckpt",
     "eidolon/livekit/plugins/vad/firered/resources/spkrec-ecapa-voxceleb/mean_var_norm_emb.ckpt",
-    "eidolon/livekit/plugins/speaker_verification/resources/3dspeaker/"
-    "campplus_zh_16k_common/campplus_cn_common.bin",
 }
 
 
