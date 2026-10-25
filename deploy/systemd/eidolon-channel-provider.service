@@ -12,6 +12,7 @@ UMask=0007
 EnvironmentFile=/etc/eidolon/channel.env
 EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_CHANNEL_PROVIDER_SETTINGS_YAML=/opt/eidolon/current/eidolon_channel/config/channel-provider.yaml
+Environment=EIDOLON_CHANNEL_SETTINGS_YAML=/etc/eidolon/channel.yaml
 ExecStart=/opt/eidolon/current/eidolon_channel/.venv/bin/eidolon-channel-provider
 Restart=on-failure
 RestartSec=3s
