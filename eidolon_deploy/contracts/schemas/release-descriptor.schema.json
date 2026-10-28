@@ -38,7 +38,7 @@
           "const": "linux"
         },
         "machine": {
-          "const": "aarch64"
+          "enum": ["aarch64", "x86_64"]
         },
         "python": {
           "type": "string",

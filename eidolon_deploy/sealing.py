@@ -144,10 +144,14 @@ def seal_prepared_release(
         raise PreparationError("release id is invalid")
     actual_system = (system or platform.system()).lower()
     actual_machine = (machine or platform.machine()).lower()
-    if actual_system != "linux" or actual_machine != "aarch64":
+    if actual_machine in {"arm64", "aarch64"}:
+        actual_machine = "aarch64"
+    elif actual_machine in {"amd64", "x86_64"}:
+        actual_machine = "x86_64"
+    if actual_system != "linux" or actual_machine not in {"aarch64", "x86_64"}:
         raise PreparationError(
-            f"release must be sealed on the linux/aarch64 target host, got "
-            f"{actual_system}/{actual_machine}"
+            f"release must be sealed on the linux/aarch64 or linux/x86_64 target host, "
+            f"got {actual_system}/{actual_machine}"
         )
 
     declared = frozenset() if capabilities is None else frozenset(capabilities)
@@ -308,7 +312,7 @@ def seal_prepared_release(
         "release_id": release_id,
         "target": {
             "system": "linux",
-            "machine": "aarch64",
+            "machine": actual_machine,
             "python": python_version,
         },
         "capabilities": sorted(declared),

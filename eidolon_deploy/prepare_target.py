@@ -112,6 +112,7 @@ _ARTIFACT_STORE_ROOT = Path("/var/cache/eidolon/release-artifacts-v1/sha256")
 _UV_VERSION = "0.11.15"
 _PYTHON_VERSION = "3.13"
 _PYTHON_PLATFORM = "aarch64-manylinux_2_40"
+_SUPPORTED_MACHINES = frozenset({"aarch64", "x86_64"})
 _BUILD_REQUIREMENTS = (
     "setuptools==80.9.0",
     "wheel==0.45.1",
@@ -132,6 +133,19 @@ class TargetPreparationError(RuntimeError):
     """The transferred bundle or target preparation failed closed."""
 
 
+def _normalize_machine(machine: str) -> str:
+    name = machine.lower()
+    if name in {"arm64", "aarch64"}:
+        return "aarch64"
+    if name in {"amd64", "x86_64"}:
+        return "x86_64"
+    return name
+
+
+def _python_platform(machine: str) -> str:
+    return f"{machine}-manylinux_2_40"
+
+
 def prepare_target_release(
     bundle: Path,
     *,
@@ -144,10 +158,11 @@ def prepare_target_release(
     """Extract, build native environments and seal one new release."""
 
     actual_system = (system or platform.system()).lower()
-    actual_machine = (machine or platform.machine()).lower()
-    if actual_system != "linux" or actual_machine != "aarch64":
+    actual_machine = _normalize_machine(machine or platform.machine())
+    if actual_system != "linux" or actual_machine not in _SUPPORTED_MACHINES:
         raise TargetPreparationError(
-            f"target preparation requires linux/aarch64, got {actual_system}/{actual_machine}"
+            f"target preparation requires linux/aarch64 or linux/x86_64, "
+            f"got {actual_system}/{actual_machine}"
         )
     if require_root and os.geteuid() != 0:
         raise TargetPreparationError("target preparation requires root privileges")
@@ -158,6 +173,7 @@ def prepare_target_release(
     bundle_root = bundle.resolve()
     document = _validate_bundle(bundle_root)
     release_id = document["release_id"]
+    platform_str = _python_platform(document["target"]["machine"])
     releases = _host_path(root, _RELEASES)
     release_root = releases / release_id
     lock = _host_path(root, _LOCK)
@@ -204,7 +220,7 @@ def prepare_target_release(
                     "--no-editable",
                     "--offline",
                     "--python-platform",
-                    _PYTHON_PLATFORM,
+                    platform_str,
                     "--project",
                     str(release_root / source_id),
                 ]
@@ -280,11 +296,14 @@ def _validate_bundle(root: Path) -> dict:
     }:
         raise TargetPreparationError("bundle manifest shape is invalid")
     release_id = document.get("release_id")
+    target = document.get("target")
     if (
         document.get("schema_version") != 3
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
-        or document.get("target") != {"system": "linux", "machine": "aarch64"}
+        or not isinstance(target, dict)
+        or target.get("system") != "linux"
+        or target.get("machine") not in _SUPPORTED_MACHINES
         or document.get("cutover_mode") not in {"reversible", "forward-only"}
     ):
         raise TargetPreparationError("bundle identity or target is invalid")
@@ -450,7 +469,7 @@ def _validate_bundle(root: Path) -> dict:
         or dependency_cache.get("artifact_id") != "python-dependencies"
         or dependency_cache.get("uv_version") != _UV_VERSION
         or dependency_cache.get("python_version") != _PYTHON_VERSION
-        or dependency_cache.get("platform") != _PYTHON_PLATFORM
+        or dependency_cache.get("platform") != _python_platform(target["machine"])
         or dependency_cache.get("build_requirements") != list(_BUILD_REQUIREMENTS)
         or not isinstance(dependency_cache.get("index_url"), str)
         or not dependency_cache["index_url"].startswith("https://")

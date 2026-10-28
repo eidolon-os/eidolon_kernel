@@ -73,6 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 uv=arguments.uv,
                 cutover_mode=arguments.cutover_mode,
                 capabilities=capabilities,
+                machine=arguments.machine,
             )
             _print_json(
                 {
@@ -205,6 +206,15 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     bundle.add_argument("--uv", default="uv", help="exact uv 0.11.15 executable")
+    bundle.add_argument(
+        "--machine",
+        choices=("aarch64", "x86_64"),
+        default="aarch64",
+        help=(
+            "the target Host's architecture the dependency cache is resolved for "
+            "(aarch64 or x86_64)"
+        ),
+    )
     bundle.add_argument(
         "--cutover-mode",
         choices=("reversible", "forward-only"),

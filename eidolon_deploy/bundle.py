@@ -107,6 +107,7 @@ _DEPENDENCY_KEY_DIRECTORY = "dependency-keys"
 _UV_VERSION = "0.11.15"
 _PYTHON_VERSION = "3.13"
 _PYTHON_PLATFORM = "aarch64-manylinux_2_40"
+_SUPPORTED_MACHINES = frozenset({"aarch64", "x86_64"})
 _BUILD_REQUIREMENTS = (
     "setuptools==80.9.0",
     "wheel==0.45.1",
@@ -132,6 +133,19 @@ _CHANNEL_MODEL_PATHS = {
 
 class BundleError(RuntimeError):
     """A source revision or bundle invariant failed closed."""
+
+
+def _normalize_machine(machine: str) -> str:
+    name = machine.lower()
+    if name in {"arm64", "aarch64"}:
+        return "aarch64"
+    if name in {"amd64", "x86_64"}:
+        return "x86_64"
+    return name
+
+
+def _python_platform(machine: str) -> str:
+    return f"{machine}-manylinux_2_40"
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +199,7 @@ def build_source_bundle(
     uv: str = "uv",
     cutover_mode: str = "reversible",
     capabilities: frozenset[str] | None = None,
+    machine: str = "aarch64",
 ) -> BuiltBundle:
     """Archive exact Git commits without reading working-tree content.
 
@@ -198,6 +213,13 @@ def build_source_bundle(
         raise BundleError("release id is invalid")
     if cutover_mode not in {"reversible", "forward-only"}:
         raise BundleError("release cutover mode is invalid")
+    actual_machine = _normalize_machine(machine)
+    if actual_machine not in _SUPPORTED_MACHINES:
+        raise BundleError(
+            f"bundle target machine is unsupported: {machine!r} "
+            f"(supported: {', '.join(sorted(_SUPPORTED_MACHINES))})"
+        )
+    platform = _python_platform(actual_machine)
     declared = frozenset() if capabilities is None else frozenset(capabilities)
     try:
         require_known_capabilities(sorted(declared))
@@ -296,13 +318,14 @@ def build_source_bundle(
             persistent_artifact_root=persistent_artifact_root,
             project_ids=bundle_project_ids(declared),
             capabilities=declared,
+            machine=actual_machine,
         )
         artifact_records.append(dependency_object)
         dependency_record = {
             "artifact_id": "python-dependencies",
             "uv_version": _UV_VERSION,
             "python_version": _PYTHON_VERSION,
-            "platform": _PYTHON_PLATFORM,
+            "platform": platform,
             "build_requirements": list(_BUILD_REQUIREMENTS),
             "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
         }
@@ -319,7 +342,7 @@ def build_source_bundle(
             # than the reader assuming a fixed list. Absent on bundles built
             # before this field, which is a Host that declares nothing.
             "capabilities": sorted(declared),
-            "target": {"system": "linux", "machine": "aarch64"},
+            "target": {"system": "linux", "machine": actual_machine},
             "sources": records,
             "preparer": {
                 "path": _PREPARER_NAME,
@@ -371,11 +394,14 @@ def validate_source_bundle(path: Path) -> SourceBundle:
     }:
         raise BundleError("bundle manifest shape is invalid")
     release_id = document.get("release_id")
+    target = document.get("target")
     if (
         document.get("schema_version") != 3
         or not isinstance(release_id, str)
         or _RELEASE_ID.fullmatch(release_id) is None
-        or document.get("target") != {"system": "linux", "machine": "aarch64"}
+        or not isinstance(target, dict)
+        or target.get("system") != "linux"
+        or target.get("machine") not in _SUPPORTED_MACHINES
         or document.get("cutover_mode") not in {"reversible", "forward-only"}
     ):
         raise BundleError("bundle identity or target is invalid")
@@ -519,7 +545,7 @@ def validate_source_bundle(path: Path) -> SourceBundle:
         or dependency_cache.get("artifact_id") != "python-dependencies"
         or dependency_cache.get("uv_version") != _UV_VERSION
         or dependency_cache.get("python_version") != _PYTHON_VERSION
-        or dependency_cache.get("platform") != _PYTHON_PLATFORM
+        or dependency_cache.get("platform") != _python_platform(target["machine"])
         or dependency_cache.get("build_requirements") != list(_BUILD_REQUIREMENTS)
         or not isinstance(dependency_cache.get("index_url"), str)
         or not dependency_cache["index_url"].startswith("https://")
@@ -614,8 +640,9 @@ def _dependency_artifact(
     persistent_artifact_root: Path | None,
     project_ids: tuple[str, ...],
     capabilities: frozenset[str] = frozenset(),
+    machine: str = "aarch64",
 ) -> tuple[tuple[str, ...], dict[str, object]]:
-    key = _dependency_input_key(source_dir, project_ids, capabilities)
+    key = _dependency_input_key(source_dir, project_ids, capabilities, machine)
     if persistent_artifact_root is not None:
         record_path = persistent_artifact_root / _DEPENDENCY_KEY_DIRECTORY / f"{key}.json"
         cached = _read_dependency_key(record_path, persistent_artifact_root, key)
@@ -638,6 +665,7 @@ def _dependency_artifact(
         workspace=workspace,
         project_ids=project_ids,
         capabilities=capabilities,
+        machine=machine,
     )
     record = _artifact_record(
         artifact_id="python-dependencies",
@@ -664,14 +692,17 @@ def _dependency_artifact(
 
 
 def _dependency_input_key(
-    source_dir: Path, project_ids: tuple[str, ...], capabilities: frozenset[str] = frozenset()
+    source_dir: Path,
+    project_ids: tuple[str, ...],
+    capabilities: frozenset[str] = frozenset(),
+    machine: str = "aarch64",
 ) -> str:
     digest = hashlib.sha256()
     inputs = {
         "schema_version": 1,
         "uv_version": _UV_VERSION,
         "python_version": _PYTHON_VERSION,
-        "platform": _PYTHON_PLATFORM,
+        "platform": _python_platform(machine),
         "build_requirements": list(_BUILD_REQUIREMENTS),
         "index_url": os.environ.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),
         # A pre-partition artifact may contain wheels from a different model
@@ -733,10 +764,12 @@ def _build_dependency_cache(
     workspace: Path,
     project_ids: tuple[str, ...],
     capabilities: frozenset[str] = frozenset(),
+    machine: str = "aarch64",
 ) -> tuple[str, ...]:
     version = _dependency_run((uv, "--version")).stdout.strip()
     if version != f"uv {_UV_VERSION}" and not version.startswith(f"uv {_UV_VERSION} "):
         raise BundleError(f"dependency cache requires uv {_UV_VERSION}, got {version}")
+    platform = _python_platform(machine)
     projects = workspace / ".python-projects"
     environments = workspace / ".python-environments"
     kept_root = _kept_dependency_cache()
@@ -766,7 +799,7 @@ def _build_dependency_cache(
             "--python",
             str(seed / "bin/python"),
             "--python-platform",
-            _PYTHON_PLATFORM,
+            platform,
             "--no-python-downloads",
             *_BUILD_REQUIREMENTS,
         ),
@@ -799,7 +832,7 @@ def _build_dependency_cache(
             "--python",
             _PYTHON_VERSION,
             "--python-platform",
-            _PYTHON_PLATFORM,
+            platform,
         ]
         if source_id == "eidolon_data":
             command.extend(("--extra", "api"))
