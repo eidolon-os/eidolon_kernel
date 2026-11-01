@@ -194,6 +194,11 @@ def prepare_target_release(
                     str(uv),
                     "sync",
                     "--frozen",
+                    # Service users cannot write into the root-owned release,
+                    # so bytecode missing here is compiled again by every
+                    # process start, at the Host's own CPU speed. --no-editable
+                    # puts first-party code in site-packages, so this covers it.
+                    "--compile-bytecode",
                     "--no-dev",
                     "--no-python-downloads",
                     "--no-editable",

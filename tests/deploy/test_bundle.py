@@ -582,6 +582,12 @@ def test_target_preparation_extracts_builds_and_seals_atomically(
         for call in calls
         if call[0] == "native environment preparation"
     )
+    # Services cannot write bytecode into the root-owned release; it ships built.
+    assert all(
+        "--compile-bytecode" in call and "--no-editable" in call
+        for call in calls
+        if call[0] == "native environment preparation"
+    )
     assert all(
         "--offline" in call and any(value == "UV_OFFLINE=1" for value in call)
         for call in calls
