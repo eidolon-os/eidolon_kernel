@@ -11,6 +11,20 @@ from eidolon_system.domain.errors import HostOperationFailed
 from eidolon_system.domain.model import HostServiceState
 
 
+def _process_start(pid: int) -> float:
+    """When ``pid`` started, as a value fixed for the life of that process.
+
+    The public ``create_time()`` follows the wall clock: on macOS it is shifted
+    by however far the boot time has drifted since psutil was imported, and on
+    Linux it adds the current boot time. In a long-lived eidolond every NTP or
+    sleep/wake adjustment past a whole second therefore moved the creation time
+    of an unchanged process, the network-bound LiveKit looked like a new
+    instance, and reconciliation restarted it several times a day. psutil forms
+    its own process identity from this clock-independent start for that reason.
+    """
+    return psutil.Process(pid)._proc.create_time(monotonic=True)
+
+
 class SupervisordHostSupervisor:
     driver_name = "supervisord"
     _STATUS_VALUES = {
@@ -60,7 +74,7 @@ class SupervisordHostSupervisor:
         if state == "running" and "pid" in fields:
             try:
                 pid = int(fields[fields.index("pid") + 1].rstrip(","))
-                instance_id = f"{pid}:{psutil.Process(pid).create_time()}"
+                instance_id = f"{pid}:{_process_start(pid)}"
             except (ValueError, IndexError, psutil.Error):
                 pass
         return HostServiceState(

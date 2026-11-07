@@ -145,11 +145,9 @@ async def test_supervisord_adapter_rejects_non_status_error_output(tmp_path) -> 
 
 
 async def test_supervisord_instance_uses_pid_and_creation_time(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-
     from eidolon_system.adapters.host import supervisord
     created = [100.0]
-    monkeypatch.setattr(supervisord.psutil, "Process", lambda pid: SimpleNamespace(create_time=lambda: created[0]))
+    monkeypatch.setattr(supervisord, "_process_start", lambda pid: created[0])
     host = SupervisordHostSupervisor(config_path=tmp_path / "supervisor.conf", runner=FakeRunner([
         CommandResult(0, "media RUNNING pid 1234, uptime 0:00:10", ""),
         CommandResult(0, "media RUNNING pid 1234, uptime 0:00:10", ""),
@@ -157,6 +155,31 @@ async def test_supervisord_instance_uses_pid_and_creation_time(monkeypatch, tmp_
     first = await host.inspect("media")
     created[0] = 200.0
     assert first.instance_id != (await host.inspect("media")).instance_id
+
+
+async def test_supervisord_instance_survives_system_clock_adjustment(monkeypatch, tmp_path):
+    """A clock step must not make the same running process a new instance.
+
+    It did: psutil's public creation time moves with the boot time, so a long-lived
+    eidolond saw LiveKit change instance after NTP or sleep/wake adjustments and
+    restarted it. Exercises the real psutil so a change to its internals fails here.
+    """
+    import os
+
+    import psutil
+
+    pid = os.getpid()
+    status = CommandResult(0, f"media RUNNING pid {pid}, uptime 0:00:10", "")
+    host = SupervisordHostSupervisor(
+        config_path=tmp_path / "supervisor.conf", runner=FakeRunner([status, status])
+    )
+    first = await host.inspect("media")
+    wall_clock = psutil.Process(pid).create_time()
+    booted = psutil._psplatform.boot_time()
+    monkeypatch.setattr(psutil._psplatform, "boot_time", lambda: booted + 2)
+    assert psutil.Process(pid).create_time() != wall_clock  # the adjustment eidolond saw
+
+    assert (await host.inspect("media")).instance_id == first.instance_id
 
 
 @pytest.mark.parametrize("active,sub,job,transitioning", [
