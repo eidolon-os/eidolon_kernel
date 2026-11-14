@@ -49,7 +49,7 @@
     "components": {
       "type": "array",
       "minItems": 7,
-      "maxItems": 8,
+      "maxItems": 9,
       "items": {
         "$ref": "#/$defs/component"
       }
@@ -65,7 +65,7 @@
     "system_assets": {
       "type": "array",
       "minItems": 24,
-      "maxItems": 32,
+      "maxItems": 33,
       "items": {
         "$ref": "#/$defs/systemAsset"
       }
@@ -81,7 +81,7 @@
     "affected_units": {
       "type": "array",
       "minItems": 18,
-      "maxItems": 24,
+      "maxItems": 25,
       "uniqueItems": true,
       "items": {
         "enum": [
@@ -105,6 +105,7 @@
           "eidolon-channel-provider.service",
           "eidolon-channel.service",
           "eidolon-asr.service",
+          "eidolon-vision.service",
           "eidolon-laya.service",
           "eidolon-laya-participation.service",
           "eidolon-llm.service",
@@ -115,7 +116,7 @@
     "readiness_checks": {
       "type": "array",
       "minItems": 15,
-      "maxItems": 20,
+      "maxItems": 21,
       "items": {
         "$ref": "#/$defs/readinessCheck"
       }
@@ -140,11 +141,12 @@
           "local_laya",
           "local_laya_participation",
           "local_speaker_verification",
+          "local_face_identity",
           "rknpu2"
         ]
       },
       "uniqueItems": true,
-      "maxItems": 7
+      "maxItems": 8
     }
   },
   "$defs": {
@@ -161,7 +163,8 @@
         "eidolon_agent",
         "eidolon_channel",
         "eidolon_memory",
-        "eidolon_models"
+        "eidolon_models",
+        "eidolon_vision"
       ]
     },
     "component": {

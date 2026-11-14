@@ -51,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 memory=arguments.memory_revision,
                 sdk=arguments.sdk_revision,
                 models=arguments.models_revision,
+                vision=arguments.vision_revision,
             )
             capabilities = _capabilities(arguments.capability)
             repositories = {
@@ -65,6 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
             if arguments.models_repo is not None:
                 repositories["eidolon_models"] = arguments.models_repo
+            if arguments.vision_repo is not None:
+                repositories["eidolon_vision"] = arguments.vision_repo
             built = build_source_bundle(
                 release_id=arguments.release_id,
                 repositories=repositories,
@@ -95,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     memory=arguments.memory_revision,
                     sdk=arguments.sdk_revision,
                     models=arguments.models_revision,
+                    vision=arguments.vision_revision,
                 ),
                 cutover_mode=arguments.cutover_mode,
                 capabilities=_capabilities(arguments.capability),
@@ -183,6 +187,7 @@ def _parser() -> argparse.ArgumentParser:
     # Required exactly when a declared capability needs it, which argparse
     # cannot express, so it is refused in the operation instead.
     bundle.add_argument("--models-repo", type=Path)
+    bundle.add_argument("--vision-repo", type=Path)
     bundle.add_argument("--kernel-revision", required=True)
     bundle.add_argument("--data-revision", required=True)
     bundle.add_argument("--hub-revision", required=True)
@@ -192,6 +197,7 @@ def _parser() -> argparse.ArgumentParser:
     bundle.add_argument("--memory-revision", required=True)
     bundle.add_argument("--sdk-revision", required=True)
     bundle.add_argument("--models-revision")
+    bundle.add_argument("--vision-revision")
     bundle.add_argument(
         "--capability",
         action="append",
@@ -222,6 +228,7 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--memory-revision", required=True)
     seal.add_argument("--sdk-revision", required=True)
     seal.add_argument("--models-revision")
+    seal.add_argument("--vision-revision")
     seal.add_argument(
         "--capability",
         action="append",

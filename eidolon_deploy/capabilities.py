@@ -45,6 +45,9 @@ HOST_CAPABILITIES: frozenset[str] = frozenset(
         "local_laya_participation",
         # Assets used by Channel; no new model daemon or per-device permission.
         "local_speaker_verification",
+        #: Comparing a camera still with enrolled faces runs on this Host: the
+        #: eidolon_vision service, and the face models eidolon_models carries.
+        "local_face_identity",
     }
 )
 

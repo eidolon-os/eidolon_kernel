@@ -40,7 +40,10 @@ _BASE_SOURCE_IDS = (
 #: that has already been made once — a legitimate `rknpu2` was refused on the
 #: Host as "unknown" after the whole bundle had been transferred.
 _HOST_CAPABILITIES = frozenset(
-    {"rknpu2", "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation", "local_speaker_verification"}
+    {
+        "rknpu2", "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation",
+        "local_speaker_verification", "local_face_identity",
+    }
 )
 
 #: What a capability adds to the sources. A fifth statement of the pairing
@@ -55,6 +58,8 @@ _CAPABILITY_SOURCE_IDS = {
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
     "local_speaker_verification": ("eidolon_models",),
+    # In the builder's order (bundle.py): source records are compared by position.
+    "local_face_identity": ("eidolon_models", "eidolon_vision"),
 }
 #: Carried so components can import it, and not a project of its own: no lock,
 #: and no environment built for it.
@@ -69,6 +74,7 @@ _REVISION_FLAGS = {
     "eidolon_memory": "--memory-revision",
     "eidolon_sdk": "--sdk-revision",
     "eidolon_models": "--models-revision",
+    "eidolon_vision": "--vision-revision",
 }
 _MODEL_SOURCE_DIRECTORIES = {"asr": "local_asr", "tts": "local_tts"}
 

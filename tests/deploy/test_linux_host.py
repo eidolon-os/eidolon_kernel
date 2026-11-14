@@ -1245,6 +1245,26 @@ def test_a_conditional_component_arriving_alone_is_not_a_partial_expansion(
     assert {"eidolon_agent", "eidolon_channel", "eidolon_memory"} <= set(previous)
 
 
+def test_a_second_conditional_component_arrives_on_its_own(tmp_path: Path) -> None:
+    """A Host that already runs local models and has just declared face identity.
+
+    It has an eidolon_models link from the capability it had, and no
+    eidolon_vision link because that component has never been here. Each
+    conditional component is a step of its own, so one present and the other
+    absent is a Host gaining a capability, not an activation that stopped.
+    """
+
+    root, release, host, _ = prepared_release(tmp_path, capability="local_face_identity")
+    vision = release.components_by_id["eidolon_vision"]
+    assert "eidolon_models" in release.components_by_id
+    _host_path(root, vision.current_link).unlink()
+
+    previous = host.preflight(release)
+
+    assert "eidolon_vision" not in previous
+    assert "eidolon_models" in previous
+
+
 def test_a_half_finished_migration_is_still_refused(tmp_path: Path) -> None:
     """What the all-or-none rule is actually for, kept per step.
 

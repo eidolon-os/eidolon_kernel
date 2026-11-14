@@ -58,9 +58,14 @@ class ReleaseRevisions:
     #: is not "unknown" — it is a Host that reaches a provider for speech and
     #: carries none of the weights, which is most of them.
     models: str | None = None
+    #: Likewise conditional: the face identity service's repository.
+    vision: str | None = None
 
     def __post_init__(self) -> None:
-        if self.models is not None and _REVISION.fullmatch(self.models) is None:
+        if any(
+            value is not None and _REVISION.fullmatch(value) is None
+            for value in (self.models, self.vision)
+        ):
             raise PreparationError("release revision is invalid")
         if any(
             _REVISION.fullmatch(value) is None
@@ -167,6 +172,17 @@ def seal_prepared_release(
             "release would carry about 720 MB of weights no unit on this Host loads: "
             f"declared capabilities are {sorted(declared) or 'none'}"
         )
+    if "eidolon_vision" in wanted and revisions.vision is None:
+        raise PreparationError(
+            "a declared capability needs an eidolon_vision revision: "
+            f"{sorted(declared)} selects eidolon_vision and none was given"
+        )
+    if "eidolon_vision" not in wanted and revisions.vision is not None:
+        raise PreparationError(
+            "an eidolon_vision revision was given and no capability selects it, so the "
+            "release would carry a component no unit on this Host runs: "
+            f"declared capabilities are {sorted(declared) or 'none'}"
+        )
 
     root = host_root.resolve()
     canonical_root = _RELEASES / release_id
@@ -185,6 +201,9 @@ def seal_prepared_release(
             raise PreparationError(f"release source directory is missing: {source.name}")
     if models is not None and not models.is_dir():
         raise PreparationError("release source directory is missing: eidolon_models")
+    vision = release_root / "eidolon_vision" if revisions.vision is not None else None
+    if vision is not None and not vision.is_dir():
+        raise PreparationError("release source directory is missing: eidolon_vision")
 
     environment_inspector = inspector or SubprocessEnvironmentInspector()
     component_inputs = (
@@ -239,6 +258,18 @@ def seal_prepared_release(
                     revisions.models,
                     models,
                     tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_models"]),
+                ),
+            )
+        ),
+        *(
+            ()
+            if vision is None
+            else (
+                (
+                    "eidolon_vision",
+                    revisions.vision,
+                    vision,
+                    tuple(str(item) for item in V2_COMPONENT_ENTRYPOINTS["eidolon_vision"]),
                 ),
             )
         ),

@@ -316,6 +316,9 @@ def test_supervisord_targets_name_the_macos_source_topology() -> None:
         "laya": "external",
         # The role team's participation model beside it, a service of its own.
         "laya-participation": "external",
+        # Face identity: Ops' supervisor starts it on a source run that declares
+        # the capability, and eidolond only observes it.
+        "vision": "external",
     }
     assert services["data"]["endpoints"][0]["contract"] == (
         "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"

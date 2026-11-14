@@ -74,6 +74,7 @@ _READINESS_UNITS = {
     "tts": "eidolon-tts.service",
     "laya": "eidolon-laya.service",
     "laya-participation": "eidolon-laya-participation.service",
+    "vision": "eidolon-vision.service",
 }
 _RELEASE_UNITS = (
     "eidolon-bootstrapd.service",
@@ -151,6 +152,10 @@ _TOPOLOGY_EXPANSION_STEPS = (
     #: Its own step, because it does not arrive with anything: a Host gains and
     #: loses this one on its own whenever its declared capabilities change.
     frozenset({"eidolon_models"}),
+    #: Conditional in the same way, and a step of its own for the same reason:
+    #: a Host that already runs local models gains this one alone when it
+    #: declares face identity, and a Host with neither gains both at once.
+    frozenset({"eidolon_vision"}),
 )
 _TOPOLOGY_EXPANSION_COMPONENTS = frozenset().union(*_TOPOLOGY_EXPANSION_STEPS)
 

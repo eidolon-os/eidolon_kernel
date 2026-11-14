@@ -292,6 +292,30 @@ services:
         # The task route: 200 only once the pinned participation profile is
         # loaded against its model revision.
         health_url: http://127.0.0.1:8773/participation/readyz
+  - service_id: vision
+    description: Local face embedding and comparison against enrolled faces
+    required: true
+    enabled_by_default: true
+    # eidolon_vision, on a Host that declares face identity. Loopback only and
+    # without a credential: it stores nothing, and the templates it compares
+    # arrive with each request. Admin resolves it here to enroll a reference
+    # photo; a Host without the capability has no such service, which is how
+    # Admin knows to answer that face recognition is unavailable.
+    requires_capability: local_face_identity
+    dependencies: []
+    host_targets:
+      systemd: eidolon-vision.service
+      # As with Laya on a source run: Ops' supervisor starts it where the Host
+      # declares the capability, and eidolond observes it by its readiness.
+      supervisord: external
+    endpoints:
+      - endpoint_id: face-identity.http
+        protocol: http
+        address: http://127.0.0.1:18085
+        contract: eidolon.vision.faces.v1
+        # The face routes' own readiness: 200 only once the pinned model
+        # package is loaded and the routes would answer.
+        health_url: http://127.0.0.1:18085/v1/faces/readyz
   - service_id: channel
     description: LiveKit voice interaction worker
     required: true

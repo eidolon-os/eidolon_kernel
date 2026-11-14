@@ -68,6 +68,7 @@ def _repositories(
         "eidolon_memory": "memory",
         "eidolon_sdk": "sdk",
         **({"eidolon_models": "models"} if "eidolon_models" in extra else {}),
+        **({"eidolon_vision": "vision"} if "eidolon_vision" in extra else {}),
     }
     for source_id, revision_name in revision_names.items():
         repository = tmp_path / source_id
@@ -1095,6 +1096,55 @@ def test_a_bundle_for_a_declaring_host_carries_and_prepares_the_extra_source(
     assert prepare_target._validate_bundle(output)["capabilities"] == ["local_asr"]
     assert "eidolon_models" in prepare_target._project_ids(["local_asr"])
     assert "eidolon_sdk" not in prepare_target._project_ids(["local_asr"])
+
+
+def test_a_face_identity_host_carries_the_service_and_the_contract_that_owns_its_weights(
+    tmp_path: Path,
+) -> None:
+    """One capability, two extra sources, in the same order on both sides.
+
+    Vision is the unit; Models declares the face weights as its artifact. The
+    preparer on the Host checks the bundle's sources positionally against its
+    own copy of the pairing, so the two tables must agree on the order as well
+    as on the set, alone and beside a capability that already selects Models.
+    """
+
+    for name, capabilities in (
+        ("face-only", frozenset({"local_face_identity"})),
+        ("face-and-laya", frozenset({"local_face_identity", "local_laya"})),
+    ):
+        repositories, revisions = _repositories(tmp_path / name / "repositories", capabilities)
+        assert revisions.vision is not None and revisions.models is not None
+        output = tmp_path / name / "bundle"
+        build_source_bundle(
+            release_id=name,
+            repositories=repositories,
+            revisions=revisions,
+            output=output,
+            capabilities=capabilities,
+        )
+
+        document = json.loads((output / "bundle.json").read_text(encoding="utf-8"))
+        carried = [item["source_id"] for item in document["sources"]]
+        assert carried == list(bundle.bundle_source_ids(capabilities))
+        # Name order, whichever capability selected Models first: Ops reads the
+        # records back by position against its own sorted list of extra sources.
+        assert carried[-2:] == ["eidolon_models", "eidolon_vision"]
+        with tarfile.open(output / "sources/eidolon_vision.tar", "r:") as archive:
+            assert "deploy/systemd/eidolon-vision.service" in archive.getnames()
+
+        prepared = prepare_target._validate_bundle(output)
+        assert prepared["capabilities"] == sorted(capabilities)
+        assert prepare_target._source_ids(sorted(capabilities)) == tuple(carried)
+        projects = prepare_target._project_ids(sorted(capabilities))
+        assert {"eidolon_vision", "eidolon_models"} <= set(projects)
+        assert set(prepare_target._REVISION_FLAGS) >= set(carried)
+
+    # A Host that does not declare it carries neither the service nor its flag.
+    assert "eidolon_vision" not in bundle.bundle_source_ids(frozenset({"local_laya"}))
+    assert prepare_target._HOST_CAPABILITIES == bundle.require_known_capabilities(
+        sorted(prepare_target._HOST_CAPABILITIES)
+    )
 
 
 def test_speaker_asset_host_can_build_and_prepare_without_extra_services(tmp_path):

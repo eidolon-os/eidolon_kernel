@@ -380,6 +380,68 @@ def test_sealing_refuses_a_capability_without_its_revision_and_the_reverse(
         )
 
 
+def test_sealing_a_face_identity_host_carries_the_service_and_its_model_owner(
+    tmp_path: Path,
+) -> None:
+    """The second conditional component, selected by one capability with Models.
+
+    Vision runs the unit; Models is carried for the contract that declares the
+    face weights. Each needs its revision, and neither may arrive unselected.
+    """
+
+    release_id = "20261114-face-seal"
+    capabilities = frozenset({"local_face_identity"})
+    root = _prepared_tree(tmp_path, release_id, capabilities)
+
+    path = seal_prepared_release(
+        host_root=root,
+        release_id=release_id,
+        revisions=_revisions(models="3" * 40, vision="4" * 40),
+        inspector=FakeInspector(),
+        system="linux",
+        machine="aarch64",
+        capabilities=capabilities,
+    )
+
+    release = load_release_descriptor(path)
+    assert release.capabilities == capabilities
+    components = {item.component_id: item for item in release.components}
+    assert {"eidolon_models", "eidolon_vision"} <= set(components)
+    assert components["eidolon_vision"].revision == "4" * 40
+    assert [str(item) for item in components["eidolon_vision"].required_entrypoints] == [
+        "scripts/eidolon-vision"
+    ]
+    assert release.affected_units[-1] == "eidolon-vision.service"
+    checks = {check.check_id: check for check in release.readiness_checks}
+    assert checks["vision"].url == "http://127.0.0.1:18085/v1/faces/readyz"
+    assert "/etc/systemd/system/eidolon-vision.service" in {
+        str(asset.destination) for asset in release.system_assets
+    }
+
+    missing = _prepared_tree(tmp_path / "missing", "20261114-a", capabilities)
+    with pytest.raises(PreparationError, match="needs an eidolon_vision revision"):
+        seal_prepared_release(
+            host_root=missing,
+            release_id="20261114-a",
+            revisions=_revisions(models="3" * 40),
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+            capabilities=capabilities,
+        )
+    unselected = _prepared_tree(tmp_path / "unselected", "20261114-b", frozenset({"local_laya"}))
+    with pytest.raises(PreparationError, match="eidolon_vision revision was given"):
+        seal_prepared_release(
+            host_root=unselected,
+            release_id="20261114-b",
+            revisions=_revisions(models="3" * 40, vision="4" * 40),
+            inspector=FakeInspector(),
+            system="linux",
+            machine="aarch64",
+            capabilities=frozenset({"local_laya"}),
+        )
+
+
 def test_sealing_refuses_a_capability_nobody_defined(tmp_path: Path) -> None:
     """An unknown name would otherwise select nothing, silently."""
 

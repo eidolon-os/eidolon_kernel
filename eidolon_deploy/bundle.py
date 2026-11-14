@@ -42,6 +42,12 @@ _CAPABILITY_SOURCE_IDS = {
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
     "local_speaker_verification": ("eidolon_models",),
+    # The service's own repository, and Models for the contract that declares
+    # the face weights (the weights themselves are export-ignored there and
+    # reach the Host as a component artifact). Models first: Ops checks a
+    # bundle's source records positionally against the baseline followed by the
+    # extra sources in name order, and this is the one capability that adds two.
+    "local_face_identity": ("eidolon_models", "eidolon_vision"),
 }
 _REVISION_BY_SOURCE = {
     "eidolon_kernel": "kernel",
@@ -53,6 +59,7 @@ _REVISION_BY_SOURCE = {
     "eidolon_memory": "memory",
     "eidolon_sdk": "sdk",
     "eidolon_models": "models",
+    "eidolon_vision": "vision",
 }
 
 # These directories contain the Git/LFS-backed model payloads. The service
@@ -836,7 +843,10 @@ def _build_dependency_cache(
 KEPT_DEPENDENCY_CACHE_ENV = "EIDOLON_RELEASE_UV_CACHE"
 
 _MODEL_CACHE_CAPABILITIES = frozenset(
-    {"local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation", "local_speaker_verification"}
+    {
+        "local_asr", "local_tts", "local_llm", "local_laya", "local_laya_participation",
+        "local_speaker_verification", "local_face_identity",
+    }
 )
 
 

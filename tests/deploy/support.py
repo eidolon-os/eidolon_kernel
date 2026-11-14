@@ -13,7 +13,10 @@ def with_capability(document: dict, capability: str = "local_asr") -> dict:
     """
 
     from eidolon_deploy.manifest import (
+        BASE_COMPONENTS,
+        V2_COMPONENT_ENTRYPOINTS,
         expected_affected_units,
+        expected_components,
         expected_readiness,
         expected_system_assets,
     )
@@ -24,16 +27,23 @@ def with_capability(document: dict, capability: str = "local_asr") -> dict:
     result["capabilities"] = [capability]
     result["components"] = [
         *document["components"],
-        {
-            "component_id": "eidolon_models",
-            "revision": "e" * 40,
-            "release_path": f"{release_root}/eidolon_models",
-            "current_link": "/opt/eidolon/current/eidolon_models",
-            "source_tree_sha256": "7" * 64,
-            "lock_sha256": "8" * 64,
-            "environment_sha256": "9" * 64,
-            "required_entrypoints": ["scripts/eidolon-asr"],
-        },
+        # Whichever conditional components this capability selects: Models for
+        # the local-model capabilities, Vision and Models for face identity.
+        *(
+            {
+                "component_id": component_id,
+                "revision": "e" * 40,
+                "release_path": f"{release_root}/{component_id}",
+                "current_link": f"/opt/eidolon/current/{component_id}",
+                "source_tree_sha256": "7" * 64,
+                "lock_sha256": "8" * 64,
+                "environment_sha256": "9" * 64,
+                "required_entrypoints": [
+                    str(item) for item in V2_COMPONENT_ENTRYPOINTS[component_id]
+                ],
+            }
+            for component_id in sorted(expected_components(declared) - BASE_COMPONENTS)
+        ),
     ]
     known = {item["destination"] for item in document["system_assets"]}
     result["system_assets"] = [

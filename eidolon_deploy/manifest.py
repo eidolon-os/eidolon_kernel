@@ -27,10 +27,15 @@ _COMPONENT_LINKS = {
     # BASE_COMPONENTS. Linked the same way as the rest when it is present,
     # which is why it is in this table unconditionally.
     "eidolon_models": Path("/opt/eidolon/current/eidolon_models"),
+    # Likewise conditional: the face identity service, and nothing else yet.
+    "eidolon_vision": Path("/opt/eidolon/current/eidolon_vision"),
 }
 
+#: The components only some Hosts run: each is selected by a capability below.
+CONDITIONAL_COMPONENTS: frozenset[str] = frozenset({"eidolon_models", "eidolon_vision"})
+
 #: The components every Host runs, whatever it can do.
-BASE_COMPONENTS: frozenset[str] = frozenset(set(_COMPONENT_LINKS) - {"eidolon_models"})
+BASE_COMPONENTS: frozenset[str] = frozenset(set(_COMPONENT_LINKS) - CONDITIONAL_COMPONENTS)
 
 #: What a capability adds to that. Three capabilities name one component
 #: because speech in, speech out and the conversation are three things one
@@ -42,6 +47,9 @@ CAPABILITY_COMPONENTS: dict[str, tuple[str, ...]] = {
     "local_laya": ("eidolon_models",),
     "local_laya_participation": ("eidolon_models",),
     "local_speaker_verification": ("eidolon_models",),
+    # Two components for one capability: Vision is the service, and Models owns
+    # the face weights it loads, which arrive as that component's artifact.
+    "local_face_identity": ("eidolon_models", "eidolon_vision"),
 }
 V2_COMPONENT_ENTRYPOINTS = {
     "eidolon_kernel": (
@@ -73,6 +81,8 @@ V2_COMPONENT_ENTRYPOINTS = {
     # A shell entry point rather than a console script: the ASR service is
     # started through `scripts/eidolon-asr`, which is what its unit ExecStarts.
     "eidolon_models": (Path("scripts/eidolon-asr"),),
+    # Likewise a shell entry point: what eidolon-vision.service ExecStarts.
+    "eidolon_vision": (Path("scripts/eidolon-vision"),),
 }
 #: Every file a release writes outside its own release root, and which component
 #: it comes from.
@@ -257,6 +267,14 @@ CAPABILITY_SYSTEM_ASSETS: dict[str, dict[Path, tuple[str, Path]]] = {
             Path("deploy/systemd/eidolon-asr.service"),
         ),
     },
+    # The unit is the whole of what a face identity Host is sent: the service
+    # takes no settings file and no credential, and its unit names the model
+    # artifact directory itself.
+    "local_face_identity": {
+        Path("/etc/systemd/system/eidolon-vision.service"): (
+            "eidolon_vision", Path("deploy/systemd/eidolon-vision.service"),
+        ),
+    },
     "local_llm": {
         Path("/etc/systemd/system/eidolon-llm.service"): (
             "eidolon_models",
@@ -295,6 +313,7 @@ CAPABILITY_AFFECTED_UNITS: dict[str, tuple[str, ...]] = {
     "local_laya": ("eidolon-laya.service",),
     "local_laya_participation": ("eidolon-laya-participation.service",),
     "local_asr": ("eidolon-asr.service",),
+    "local_face_identity": ("eidolon-vision.service",),
     "local_llm": ("eidolon-llm.service",),
     "local_tts": ("eidolon-tts.service",),
 }
@@ -317,6 +336,12 @@ CAPABILITY_READINESS: dict[str, dict[str, tuple[str, str, Path | None, str]]] = 
         # to know before it calls itself activated. `http_2xx` because the
         # document reports `ok` rather than a `status` field.
         "asr": ("http", "http://127.0.0.1:8768/readyz", None, "http_2xx"),
+    },
+    "local_face_identity": {
+        # The face route's own readiness, not /healthz: the process answers
+        # /healthz with 200 whether or not the model package loaded, and this
+        # one answers 200 only once the routes Admin and Channel call would.
+        "vision": ("http", "http://127.0.0.1:18085/v1/faces/readyz", None, "http_2xx"),
     },
     "local_llm": {
         # llama-server's own route, and the same reason: it binds the port
